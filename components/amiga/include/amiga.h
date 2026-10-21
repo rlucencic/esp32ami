@@ -149,6 +149,27 @@ typedef struct {
 
 void amiga_floppy_status(amiga_floppy_status_t *status);
 
+/* ---- Hard disks: HDF images as IDE drives on Gayle (the A600's, and the
+ * other models' while a hard disk is in), read and written in place;
+ * Kickstart 2.05 and 3.1 mount a disk with an RDB
+ */
+#define AMIGA_HARD_DISKS    2
+
+bool amiga_hd_insert(int n, const char *path);
+void amiga_hd_eject(int n);
+const char *amiga_hd_path(int n);           /* NULL: none */
+bool amiga_hd_write_protected(int n);
+
+typedef struct {
+    int light;                      /* the drive last used (-1: none) */
+    uint32_t reads[AMIGA_HARD_DISKS], writes[AMIGA_HARD_DISKS];    /* sectors */
+} amiga_hd_status_t;
+
+void amiga_hd_get_status(amiga_hd_status_t *status);
+
+/* An RP9 package with a hard disk image (else floppies) */
+bool amiga_rp9_hard_disk(const char *path);
+
 /* Debugging: called as the 68000 takes each exception (vector number), as
  * a disk DMA starts (DSKLEN's value, DSKSYNC, ADKCON, the drive's
  * cylinder and side, DSKPT)

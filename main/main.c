@@ -3,12 +3,14 @@
  *
  * The board side (tasks, LCD, touch, WiFi, Bluetooth, setup screen, web
  * page, console) is the shared runtime in ../esp32emu; this file plugs the
- * Amiga into it: memory, Kickstart, settings, floppy drives, the clock,
- * keyboard, mouse, joystick and touch, sound, status, console commands.
+ * Amiga into it: memory, Kickstart, settings, drives (floppies, a hard
+ * disk), the clock, keyboard, mouse, joystick and touch, sound, status,
+ * console commands.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
@@ -461,11 +463,62 @@ static const char *const *choice_names(int i)
     }
 }
 
-/* ---- Floppy drives: DF0:, DF1: (ADF), written tracks to the card ---- */
+/* ---- Drives: DF0:, DF1: (ADF, written tracks to the card), DH0: (HDF,
+ * Gayle's IDE: Kickstart 2.05 and 3.1 mount it) ---- */
 
-static const char *const extensions[] = { ".adf", ".rp9", NULL };
-static const char *const drive_names[AMIGA_FLOPPIES] = { "DF0:", "DF1:" };
+#define DRIVES          (AMIGA_FLOPPIES + 1)
+
+static const char *const extensions[] = { ".adf", ".rp9", ".hdf", NULL };
+static const char *const drive_names[DRIVES] = { "DF0:", "DF1:", "DH0:" };
 static const disks_size_t sizes[] = { { 901120, "880 KB" } };
+
+static bool has_ext(const char *name, const char *ext)
+{
+    size_t n = strlen(name), e = strlen(ext);
+    return n > e && strcasecmp(name + n - e, ext) == 0;
+}
+
+/* Hard disk images (and RP9s with one) for DH0:, the rest for the floppies */
+static bool disk_accepts(int drive, const char *name)
+{
+    bool hd = drive >= AMIGA_FLOPPIES;
+    if (has_ext(name, ".rp9")) {
+        char path[200];
+        snprintf(path, sizeof(path), "%s/%s", disks_folder(), name);
+        return amiga_rp9_hard_disk(path) == hd;
+    }
+    return has_ext(name, ".hdf") == hd;
+}
+
+static bool disk_takes_blank(int drive)
+{
+    return drive < AMIGA_FLOPPIES;
+}
+
+static bool disk_insert(int drive, const char *path)
+{
+    return drive >= AMIGA_FLOPPIES ? amiga_hd_insert(drive - AMIGA_FLOPPIES, path) : amiga_floppy_insert(drive, path);
+}
+
+static void disk_eject(int drive)
+{
+    if (drive >= AMIGA_FLOPPIES) {
+        amiga_hd_eject(drive - AMIGA_FLOPPIES);
+    } else {
+        amiga_floppy_eject(drive);
+    }
+}
+
+static const char *disk_path(int drive)
+{
+    return drive >= AMIGA_FLOPPIES ? amiga_hd_path(drive - AMIGA_FLOPPIES) : amiga_floppy_path(drive);
+}
+
+static bool disk_write_protected(int drive)
+{
+    return drive >= AMIGA_FLOPPIES ? amiga_hd_write_protected(drive - AMIGA_FLOPPIES)
+                                   : amiga_floppy_write_protected(drive);
+}
 
 static bool disk_create(const char *path, uint32_t bytes)
 {
@@ -473,25 +526,48 @@ static bool disk_create(const char *path, uint32_t bytes)
     return amiga_floppy_create(path);
 }
 
+/* A package deleted or replaced: its unpacked disks go too
+ * (".<name>.rp9.<n>.adf", ".<name>.rp9.hdf")
+ */
+static void disk_removed(const char *path)
+{
+    if (!has_ext(path, ".rp9")) {
+        return;
+    }
+    const char *slash = strrchr(path, '/');
+    int dir = slash ? (int)(slash - path + 1) : 0;
+    const char *base = slash ? slash + 1 : path;
+    char copy[256];
+    for (int n = 1; n <= 8; n++) {
+        snprintf(copy, sizeof(copy), "%.*s.%s.%d.adf", dir, path, base, n);
+        remove(copy);
+    }
+    snprintf(copy, sizeof(copy), "%.*s.%s.hdf", dir, path, base);
+    remove(copy);
+}
+
 static const disks_config_t disks = {
     .folder = "floppies",
     .extensions = extensions,
-    .description = "Disk images (.ADF) and Amiga Forever games (.RP9)",
-    .title = "Floppy disks",
-    .button = "Floppy",
+    .description = "Disk images (.ADF, .HDF) and Amiga Forever games (.RP9)",
+    .title = "Disks",
+    .button = "Disks",
     .nvs_namespace = "amifloppy",
-    .drives = AMIGA_FLOPPIES,
+    .drives = DRIVES,
     .drive_names = drive_names,
     .new_prefix = "BLANK",
     .new_extension = ".adf",
     .sizes = sizes,
     .size_count = 1,
-    .max_upload = 16 * 1024 * 1024,
-    .insert = amiga_floppy_insert,
-    .eject = amiga_floppy_eject,
-    .path = amiga_floppy_path,
-    .write_protected = amiga_floppy_write_protected,
+    .max_upload = 256ull * 1024 * 1024,
+    .insert = disk_insert,
+    .eject = disk_eject,
+    .path = disk_path,
+    .write_protected = disk_write_protected,
     .create = disk_create,
+    .removed = disk_removed,
+    .accepts = disk_accepts,
+    .takes_blank = disk_takes_blank,
 };
 
 static void flush(void *arg)
@@ -549,6 +625,11 @@ static void status(emu_json_t *j, int section)
             emu_json_drive(j, drive_names[d], name, amiga_floppy_write_protected(d), fs.light == d, fs.reads[d],
                            fs.writes[d], name ? text : NULL);
         }
+        amiga_hd_status_t hs;
+        amiga_hd_get_status(&hs);
+        const char *name = disks_name(AMIGA_FLOPPIES);
+        emu_json_drive(j, drive_names[AMIGA_FLOPPIES], name, amiga_hd_write_protected(0), hs.light == 0, hs.reads[0],
+                       hs.writes[0], name ? "IDE on Gayle: Kickstart 2.05 and 3.1 mount a disk with an RDB" : NULL);
         return;
     }
     if (section != EMU_STATUS_ROWS) {

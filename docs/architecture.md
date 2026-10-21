@@ -506,7 +506,15 @@ measurements written down.
   from fast RAM or the ROM: SysInfo 4.4 gives 1.00 times a B2000 in fast
   RAM and 1.00 times an A600 in chip RAM; xSysInfo 1.00 (B2000) and 1.09
   (A600), its fast RAM 2.92 MB/s.
-- Next: Gayle's IDE with HDF drives (the A600's 2.05 and 3.1 drive it
-  themselves), then our own hard disk board for Kickstart 1.2-2.04 (the
-  RP9s for 1.3 bring FFS in their RDB: the board must load it), then
-  `.adz`/`.dms` on the web page.
+- **Gayle's IDE and hard disks** (`gayle.c`): the A600's port (on the
+  other models too while a hard disk is in), ATA drives on HDF images,
+  DH0: on the setup screen and the web page (RP9 packages with a hard disk
+  go there, unpacked once). Kickstart 3.1 on an A600 boots Amiga Forever's
+  workbench-135.hdf to Workbench 1.3.5 on the Tab5 (2.05 mounts it too).
+  Found: Gayle swaps the bus's bytes (IDENTIFY's words arrive swapped), the
+  ROMs' scsi.device only ever uses the master, SD writes need aligned
+  buffers (the unpack: 20 s to 3.3 s).
+- The RP9 games' hard disks are data volumes (AF-Application) for Amiga
+  Forever's system disk: next, one virtual disk with both partitions;
+  then our own hard disk board for Kickstart 1.2-2.04; then `.adz`/`.dms`
+  on the web page.

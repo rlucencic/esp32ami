@@ -12,6 +12,7 @@ idf_component_register(SRCS "amiga.c"
                             "audio.c"
                             "rp9.c"
                             "autoconf.c"
+                            "gayle.c"
                        INCLUDE_DIRS "include"
                        PRIV_INCLUDE_DIRS "."
                        REQUIRES musashi

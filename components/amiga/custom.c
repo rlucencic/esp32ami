@@ -148,9 +148,9 @@ void custom_write(uint32_t reg, uint16_t v, int at, bool copper)
         ami.intena = set_clr(ami.intena, v, 0x7FFF);
         ami_update_irq();
         break;
-    case 0x09C:                     /* INTREQ: the CIAs' lines stay asserted */
+    case 0x09C:                     /* INTREQ: the CIAs' (and Gayle's) lines stay asserted */
         ami.intreq = set_clr(ami.intreq, v, 0x7FFF);
-        if (cia[0].irq) {
+        if (cia[0].irq || gayle_irq()) {
             ami.intreq |= INT_PORTS;
         }
         if (cia[1].irq) {

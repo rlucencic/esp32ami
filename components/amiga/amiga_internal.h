@@ -135,6 +135,16 @@ void ami_cpu_wake(void);            /* an earlier event was scheduled: end the C
 /* mem.c */
 void mem_update_map(void);
 
+/* gayle.c: the A600's IDE port and the hard disks */
+bool gayle_present(void);
+bool gayle_irq(void);               /* its level 2 interrupt */
+void gayle_reset(void);
+void gayle_line(void);
+uint8_t gayle_read8(uint32_t a);
+uint16_t gayle_read16(uint32_t a);
+void gayle_write8(uint32_t a, uint8_t v);
+void gayle_write16(uint32_t a, uint16_t v);
+
 /* autoconf.c: the expansion boards at $E80000 */
 void autoconf_reset(void);
 uint8_t autoconf_read8(uint32_t a);

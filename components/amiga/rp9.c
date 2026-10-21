@@ -10,10 +10,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <unistd.h>
 #include "amiga_internal.h"
 #include "rp9.h"
 
 #ifdef ESP_PLATFORM
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_heap_caps.h"
 #include "miniz.h"
 #else
 #include <zlib.h>
@@ -145,6 +149,162 @@ bool rp9_member(const char *path, const char *name, uint8_t *dst, uint32_t max, 
     return ok;
 }
 
+#define CHUNK           (16 * 1024)
+#define OUT_CHUNK       (64 * 1024)
+
+#ifdef ESP_PLATFORM
+/* Straight to the file system, past stdio's buffer */
+static bool write_all(FILE *f, const uint8_t *p, size_t n)
+{
+    fflush(f);
+    while (n > 0) {
+        ssize_t w = write(fileno(f), p, n);
+        if (w <= 0) {
+            return false;
+        }
+        p += w;
+        n -= (size_t)w;
+    }
+    return true;
+}
+#endif
+
+/* Unpack len bytes of deflated data from f into out (streaming) */
+static bool inflate_file(FILE *f, uint32_t packed, uint32_t size, FILE *out)
+{
+    uint8_t *in = malloc(CHUNK);
+    uint32_t total = 0;
+    bool ok = false;
+#ifdef ESP_PLATFORM
+    /* The output gathered into a buffer aligned to the cache line and
+     * written whole past stdio: the SD card then gets runs of sectors
+     * (written from the window as it filled: 0.35 MB/s, 20 s for 7 MB). A
+     * yield now and then: it runs on the web server's task, which the
+     * watchdog watches.
+     */
+    tinfl_decompressor *d = malloc(sizeof(tinfl_decompressor));
+    uint8_t *dict = malloc(TINFL_LZ_DICT_SIZE);
+    uint8_t *outbuf = heap_caps_aligned_alloc(128, OUT_CHUNK, MALLOC_CAP_SPIRAM);
+    size_t outlen = 0;
+    if (in && d && dict && outbuf) {
+        tinfl_init(d);
+        size_t avail = 0, pos = 0, ofs = 0;
+        tinfl_status st;
+        for (;;) {
+            if (avail == 0 && packed) {
+                avail = fread(in, 1, packed < CHUNK ? packed : CHUNK, f);
+                if (avail == 0) {
+                    break;
+                }
+                packed -= (uint32_t)avail;
+                pos = 0;
+            }
+            size_t in_bytes = avail, out_bytes = TINFL_LZ_DICT_SIZE - ofs;
+            st = tinfl_decompress(d, in + pos, &in_bytes, dict, dict + ofs, &out_bytes,
+                                  packed ? TINFL_FLAG_HAS_MORE_INPUT : 0);
+            pos += in_bytes;
+            avail -= in_bytes;
+            const uint8_t *src = dict + ofs;
+            size_t left = out_bytes;
+            bool failed = false;
+            while (left) {
+                size_t n = OUT_CHUNK - outlen < left ? OUT_CHUNK - outlen : left;
+                memcpy(outbuf + outlen, src, n);
+                outlen += n;
+                src += n;
+                left -= n;
+                if (outlen == OUT_CHUNK) {
+                    failed = !write_all(out, outbuf, outlen);
+                    outlen = 0;
+                    vTaskDelay(1);
+                }
+            }
+            if (failed) {
+                break;
+            }
+            total += (uint32_t)out_bytes;
+            ofs = (ofs + out_bytes) & (TINFL_LZ_DICT_SIZE - 1);
+            if (st <= TINFL_STATUS_DONE) {
+                ok = st == TINFL_STATUS_DONE && write_all(out, outbuf, outlen);
+                break;
+            }
+        }
+    }
+    heap_caps_free(outbuf);
+    free(dict);
+    free(d);
+#else
+    uint8_t *buf = malloc(CHUNK);
+    z_stream z = { 0 };
+    if (in && buf && inflateInit2(&z, -15) == Z_OK) {
+        int r = Z_OK;
+        while (r != Z_STREAM_END) {
+            if (z.avail_in == 0 && packed) {
+                z.avail_in = (uInt)fread(in, 1, packed < CHUNK ? packed : CHUNK, f);
+                packed -= z.avail_in;
+                z.next_in = in;
+            }
+            z.next_out = buf;
+            z.avail_out = CHUNK;
+            r = inflate(&z, Z_NO_FLUSH);
+            if (r != Z_OK && r != Z_STREAM_END) {
+                break;
+            }
+            size_t n = CHUNK - z.avail_out;
+            if (n && fwrite(buf, 1, n, out) != n) {
+                break;
+            }
+            total += (uint32_t)n;
+            if (n == 0 && z.avail_in == 0 && !packed) {
+                break;
+            }
+        }
+        ok = r == Z_STREAM_END;
+        inflateEnd(&z);
+    }
+    free(buf);
+#endif
+    free(in);
+    return ok && total == size;
+}
+
+bool rp9_extract(const char *path, const char *name, const char *out_path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        return false;
+    }
+    member_t m;
+    bool ok = false;
+    uint8_t local[30];
+    if (find(f, name, &m) && fseek(f, m.local, SEEK_SET) == 0 && fread(local, 1, 30, f) == 30 &&
+        le32(local) == 0x04034B50) {
+        fseek(f, m.local + 30 + le16(local + 26) + le16(local + 28), SEEK_SET);
+        FILE *out = fopen(out_path, "wb");
+        if (out) {
+            if (m.method == 0) {
+                uint8_t *buf = malloc(CHUNK);
+                uint32_t left = m.size;
+                ok = buf != NULL && m.packed == m.size;
+                while (ok && left) {
+                    size_t n = left < CHUNK ? left : CHUNK;
+                    ok = fread(buf, 1, n, f) == n && fwrite(buf, 1, n, out) == n;
+                    left -= (uint32_t)n;
+                }
+                free(buf);
+            } else if (m.method == 8) {
+                ok = inflate_file(f, m.packed, m.size, out);
+            }
+            ok = fclose(out) == 0 && ok;
+            if (!ok) {
+                remove(out_path);
+            }
+        }
+    }
+    fclose(f);
+    return ok;
+}
+
 /* The text of an element (<tag ...>text</tag>) after *from; false at the end */
 static bool element(const char *xml, const char *tag, const char **from, char *text, size_t len, int *priority)
 {
@@ -219,7 +379,7 @@ bool rp9_read(const char *path, rp9_t *r)
         snprintf(r->disk[i], RP9_NAME, "%s", name);
     }
     p = xml;
-    r->harddrive = element(xml, "harddrive", &p, name, sizeof(name), NULL);
+    r->harddrive = element(xml, "harddrive", &p, r->hd, sizeof(r->hd), NULL);
     r->turbo = strstr(xml, "<compatibility>turbo-floppy</compatibility>") != NULL;
     free(xml);
     return true;

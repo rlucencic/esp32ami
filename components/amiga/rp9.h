@@ -15,9 +15,12 @@ typedef struct {
     int rom;                        /* systemrom: 120 = Kickstart 1.2, 310 = 3.1 */
     int disks;                      /* floppies, in their order */
     char disk[RP9_DISKS][RP9_NAME];
-    bool harddrive;                 /* (a hard disk image too) */
+    bool harddrive;                 /* a hard disk image too: */
+    char hd[RP9_NAME];              /* its member's name */
     bool turbo;                     /* fine with fast floppy disks */
 } rp9_t;
 
 bool rp9_read(const char *path, rp9_t *rp9);
 bool rp9_member(const char *path, const char *name, uint8_t *dst, uint32_t max, uint32_t *size);
+/* A member into a file of its own, unpacked as it goes (hard disk images) */
+bool rp9_extract(const char *path, const char *name, const char *out_path);

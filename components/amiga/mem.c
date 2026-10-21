@@ -9,6 +9,8 @@
  *   $C00000-$D7FFFF  slow RAM (the A500's trapdoor); above it, the custom
  *                    chips' mirror Kickstart sizes it by (1.2 takes any
  *                    space that isn't the mirror for RAM)
+ *   $DA0000-$DAFFFF  Gayle's IDE and its registers, $DE1000 its ID (gayle.c;
+ *                    the A600's, the others' with a hard disk in)
  *   $DC0000-$DCFFFF  the battery-backed clock (rtc.c)
  *   $DFF000-$DFFFFF  the custom chips (registers mirrored every $200)
  *   $E80000-$E8FFFF  autoconfig: the next board to configure
@@ -114,6 +116,11 @@ static inline bool is_autoconf(uint32_t a)
     return a >= 0xE80000 && a < 0xE90000;
 }
 
+static inline bool is_gayle(uint32_t a)
+{
+    return ((a >= 0xDA0000 && a < 0xDB0000) || (a >= 0xDE1000 && a < 0xDE2000)) && gayle_present();
+}
+
 static uint16_t slow_read16(uint32_t a)
 {
     if (is_custom(a)) {
@@ -134,6 +141,9 @@ static uint16_t slow_read16(uint32_t a)
     if (is_autoconf(a)) {
         return autoconf_read16(a);
     }
+    if (is_gayle(a)) {
+        return gayle_read16(a);
+    }
     return 0;
 }
 
@@ -151,6 +161,9 @@ static uint8_t slow_read8(uint32_t a)
     }
     if (is_autoconf(a)) {
         return autoconf_read8(a);
+    }
+    if (is_gayle(a)) {
+        return gayle_read8(a);
     }
     return 0;
 }
@@ -171,6 +184,8 @@ static void slow_write16(uint32_t a, uint16_t v)
         rtc_write((a >> 2) & 15, v & 0xFF);
     } else if (is_autoconf(a)) {
         autoconf_write16(a, v);
+    } else if (is_gayle(a)) {
+        gayle_write16(a, v);
     }
 }
 
@@ -185,6 +200,8 @@ static void slow_write8(uint32_t a, uint8_t v)
         rtc_write((a >> 2) & 15, v);
     } else if (is_autoconf(a)) {
         autoconf_write8(a, v);
+    } else if (is_gayle(a)) {
+        gayle_write8(a, v);
     }
 }
 

@@ -11,7 +11,8 @@
  * (the machine's state every n frames), AMI_RING=<n> (the last n
  * instructions at the end), AMI_STOP=<pc>[:<frame>], AMI_TRACE=<pc>:<n>,
  * AMI_EXC (exceptions other than interrupts; "all" with them),
- * AMI_DEBUG=<port> (serve the debugger, in real time), AMI_DF0, AMI_DF1
+ * AMI_DEBUG=<port> (serve the debugger, in real time), AMI_MODEL (0 A500, 1
+ * A2000, 2 A600), AMI_HD0, AMI_HD1 (HDF images, written: use copies), AMI_DF0, AMI_DF1
  * (ADF images in the drives: written to!), AMI_INSERT=<frame>:<drive>:<adf>
  * [;...] (later; an empty name ejects), AMI_INPUT=<frame>:m:<dx>:<dy>:<buttons>
  * | <frame>:k:<code hex>:<1|0> | <frame>:j:<bits hex> [;...] (the mouse,
@@ -226,7 +227,7 @@ int main(int argc, char **argv)
     const char *out = argc > 3 ? argv[3] : "screen.ppm";
 
     amiga_config_t cfg = { 0 };
-    cfg.model = AMIGA_A500;
+    cfg.model = (amiga_model_t)env_int("AMI_MODEL", AMIGA_A500);
     cfg.ecs = getenv("AMI_ECS") != NULL;
     cfg.ntsc = getenv("AMI_NTSC") != NULL;
     cfg.chip_size = env_int("AMI_CHIP_KB", 512) * 1024;
@@ -250,6 +251,14 @@ int main(int argc, char **argv)
         char name[8];
         snprintf(name, sizeof(name), "AMI_DF%d", d);
         if (getenv(name) && !amiga_floppy_insert(d, getenv(name))) {
+            fprintf(stderr, "%s: can't use %s\n", name, getenv(name));
+            return 1;
+        }
+    }
+    for (int d = 0; d < AMIGA_HARD_DISKS; d++) {
+        char name[8];
+        snprintf(name, sizeof(name), "AMI_HD%d", d);
+        if (getenv(name) && !amiga_hd_insert(d, getenv(name))) {
             fprintf(stderr, "%s: can't use %s\n", name, getenv(name));
             return 1;
         }

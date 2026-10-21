@@ -42,9 +42,12 @@ bash -c '. $IDF_PATH/export.sh >/dev/null 2>&1; \
   `chip_kb`, `slow_kb`, `fast_kb`, `ntsc`, `rtc_ofs`: the clock's offset
   in seconds),
   its drives `amifloppy`.
-- Disk images: `.adf` and Amiga Forever's `.rp9` games in the SD card's
-  `floppies/` folder (shared with esp32arc: its 800 KB ADFS images are
-  refused by size). Upload with
+- Disk images: `.adf`, `.hdf` and Amiga Forever's `.rp9` games in the SD
+  card's `floppies/` folder (shared with esp32arc: its 800 KB ADFS images
+  are refused by size; its hard disks are `.hdf` too:
+  leave them). Drives DF0:, DF1: (ADFs, RP9s with floppies; the API's 1,
+  2) and DH0: (HDFs, RP9s with a hard disk; 3). Uploads up to 256 MB.
+  Upload with
   `curl -T disk.adf http://amiga.local/disks/`, insert with
   `curl -X PUT --data "disk.adf" http://amiga.local/api/drive/1` (2: DF1:).
 - `../esp32emu/tools/emu_console.py PORT log N | lcd F.png | send "cmd" | info`
@@ -134,6 +137,20 @@ images.
   read the last word the 68000 put on the chip bus (`ami.bus`: Dr. Mario
   counts in $DFF0FA). No bus errors; empty space reads 0. Words in host
   order, byte n at n ^ 1 (the ST's convention).
+- **Gayle** (`gayle.c`, the A600's; on the other models while a hard disk
+  is in): its IDE port at $DA0000 (register (address >> 2) & 7, the
+  control block with bit 12: $DA2000-$DA201C and $DA3018 are what
+  scsi.device uses), interrupt status/enable at $DA9000/$DAA000 (level 2,
+  sticky like the CIAs'), the ID at $DE1000 ($D0, a bit a read). Two ATA
+  drives on HDF images (read and written in place, `read()`/`write()` past
+  stdio from a buffer aligned to the cache line): CHS through a geometry
+  that divides the image exactly (Hannibal's 14336 blocks: 16/16/56) or
+  LBA, READ/WRITE (MULTIPLE), IDENTIFY, INITIALIZE DEVICE PARAMETERS, SET
+  MULTIPLE, the rest accepted; two lines a sector, then the interrupt.
+  Kickstart 2.05 and 3.1 (the A600's ROMs) mount an RDB disk on the
+  master (their FFS); they never look for a slave. An RP9's hard disk is
+  unpacked once into `.<name>.rp9.hdf` beside it (3.3 s for 7 MB on the
+  board; the package replaced or deleted: the copies go, `disk_removed()`).
 - **Autoconfig** (`autoconf.c`): the boards at $E80000 one after another
   (nibbles, all but er_Type inverted; the address written low nibble
   first, the high one configures; $4C shuts up), unconfigured by a reset
@@ -275,6 +292,15 @@ images.
   Off's panel, high score tables' last rows, Test Kit's PAL frame) showed
   43 or more lines early, or not at all. With it the next compare falls
   in line 256 (vertical 0).
+- **Gayle swaps the IDE bus's bytes**: a sector reads in its own byte
+  order (an HDF's), so IDENTIFY's 16-bit words arrive swapped and
+  scsi.device swaps them back. Sent in the Amiga's order, the geometry
+  came out as 4096 heads and 0 sectors: INITIALIZE DEVICE PARAMETERS
+  selected the absent slave and the boot waited forever.
+- **SD writes from an unaligned buffer go sector by sector**: unpacking
+  an RP9's hard disk wrote at 0.35 MB/s (20 s for 7 MB; the inflating took
+  0.25 s) until the output was gathered into 64 KB aligned to the cache
+  line and written past stdio (3.3 s), as the runtime's uploads do.
 - **Inflating on the httpd's stack rebooted the board**: miniz's
   `tinfl_decompressor` is ~10.5 KB; inserting an RP9 from the web page
   (the web server's 6 KB stack) crashed the board. On the heap now.
@@ -310,6 +336,16 @@ images.
   image), the clock (`Date >DF0:When`; `Date 01-Jan-25`, `SetClock SAVE`,
   `SetClock LOAD`, `Date >DF0:When`). Checked on the host and the Tab5
   (the board: the image downloaded back from the web page).
+- **Hard disks**: `AMI_MODEL=2 AMI_ECS=1 AMI_CHIP_KB=1024 AMI_SLOW_KB=0
+  AMI_FAST_KB=1024 AMI_HD0=<copy of an HDF>` with the A600's 2.05 or 3.1.
+  Amiga Forever's workbench-135.hdf (an RDB disk, FFS in the RDB) boots to
+  Workbench 1.3.5's desktop, on the host and the Tab5. The RP9 games' own
+  disks (af-application.hdf, volume AF-Application) aren't bootable alone:
+  no C: or S:Startup-Sequence; Amiga Forever boots its system disk
+  (`<boot type="hdf">135</boot>`: workbench-135.hdf), whose startup runs
+  `AF-Application:S/user-startup`. Alone they stop at the `1>` prompt.
+  `scratchpad`-style tools: an RDB lister and an FFS tree lister were
+  enough to see that (not in the repo).
 - **Amiga Test Kit** 1.21 (Keir Fraser, public domain,
   `github.com/keirf/amiga-stuff` releases; `AmigaTestKit.adf` is on the
   Tab5's card): F-keys pick the tests ($50 F1 ...), Esc goes up, Ctrl+Left
@@ -347,6 +383,10 @@ images.
   on the setup screen yet.
 - `.adz`/`.dms` converters for the web page (the user's collection has
   DMS files beside the ADFs); extended ADFs can't be written.
+- The RP9 games with a hard disk need their system disk beside it: next,
+  one virtual disk made of the system HDF's and the game's partitions (an
+  RDB of our own: Gayle's scsi.device mounts the master only), then our
+  own hard disk board for Kickstart 1.2-2.04 (their RP9s want 1.3).
 - A local git repository (`main`), not on GitHub yet. The attach modes
   of Paula's channels, absolute touch positioning (the pointer under the
   finger) are not done. Collisions are checked by the test disks only:
