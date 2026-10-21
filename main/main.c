@@ -41,6 +41,7 @@ static void rtc_changed(int64_t offset)
 
 #define CHIP_MAX        (2 * 1024 * 1024)
 #define SLOW_MAX        (512 * 1024)
+#define FAST_MAX        (8 * 1024 * 1024)
 
 static void reserve_memory(void)
 {
@@ -48,19 +49,20 @@ static void reserve_memory(void)
     s_rtc_offset = settings_load_rtc();
     s_cfg.chip = heap_caps_aligned_alloc(16, CHIP_MAX, MALLOC_CAP_SPIRAM);
     s_cfg.slow = heap_caps_aligned_alloc(16, SLOW_MAX, MALLOC_CAP_SPIRAM);
+    s_cfg.fast = heap_caps_aligned_alloc(16, FAST_MAX, MALLOC_CAP_SPIRAM);
     s_cfg.rom = heap_caps_aligned_alloc(16, ROM_MAX_SIZE, MALLOC_CAP_SPIRAM);
     s_kick_image = heap_caps_malloc(ROM_MAX_SIZE, MALLOC_CAP_SPIRAM);
     s_cfg.opcode_tables = heap_caps_malloc(AMIGA_OPCODE_TABLES_SIZE, MALLOC_CAP_SPIRAM);
     s_cfg.picture = heap_caps_calloc(1, amiga_picture_size(), MALLOC_CAP_SPIRAM);
-    ESP_LOGI(TAG, "memory %s", s_cfg.chip && s_cfg.slow && s_cfg.rom && s_kick_image && s_cfg.opcode_tables &&
-             s_cfg.picture ? "ok" : "MISSING");
+    ESP_LOGI(TAG, "memory %s", s_cfg.chip && s_cfg.slow && s_cfg.fast && s_cfg.rom && s_kick_image &&
+             s_cfg.opcode_tables && s_cfg.picture ? "ok" : "MISSING");
 }
 
 /* ---- Starting ---- */
 
 static bool start(void)
 {
-    if (!s_cfg.chip || !s_cfg.slow || !s_cfg.rom || !s_kick_image || !s_cfg.picture) {
+    if (!s_cfg.chip || !s_cfg.slow || !s_cfg.fast || !s_cfg.rom || !s_kick_image || !s_cfg.picture) {
         emu_set_message("Not enough memory for the Amiga.");
         return false;
     }
@@ -80,6 +82,7 @@ static bool start(void)
     s_cfg.model = settings.model;
     s_cfg.chip_size = settings.chip_kb * 1024u;
     s_cfg.slow_size = settings.slow_kb * 1024u;
+    s_cfg.fast_size = settings.fast_kb * 1024u;
     s_cfg.ecs = settings.model == AMIGA_A600 || settings.chip_kb > 512 || settings.kick == KICK_204;
     s_cfg.ntsc = settings.ntsc;
     s_cfg.kickstart = s_kick_image;
@@ -306,7 +309,7 @@ static void touch(int x, int y, bool pressed)
 
 /* ---- Setup screen choices ---- */
 
-enum { CHOICE_MODEL, CHOICE_KICK, CHOICE_CHIP, CHOICE_SLOW, CHOICE_VIDEO, CHOICES };
+enum { CHOICE_MODEL, CHOICE_KICK, CHOICE_CHIP, CHOICE_SLOW, CHOICE_FAST, CHOICE_VIDEO, CHOICES };
 
 static const char *const model_names[] = { "A500", "A2000", "A600", "" };
 static const char *const kick_names_a500[] = { "1.2", "1.3", "2.04", "3.1", "" };
@@ -317,11 +320,13 @@ static const char *const chip_names[] = { "512 KB", "1 MB", "" };
 static const char *const chip_names_a600[] = { "512 KB", "1 MB", "2 MB", "" };
 static const uint16_t chip_sizes[] = { 512, 1024, 2048 };
 /* The A500's trapdoor RAM (the A501 card) at $C00000: on the chip bus but
- * not for the chips, "slow RAM"; fast RAM (its own bus) comes with
- * autoconfig
+ * not for the chips, "slow RAM"; fast RAM (the 68000's own) is an
+ * autoconfig board
  */
-static const char *const slow_names[] = { "None", "512 KB trapdoor\n(slow RAM at $C00000)", "" };
+static const char *const slow_names[] = { "None", "512 KB trapdoor\n(at $C00000)", "" };
 static const char *const slow_names_a600[] = { "None", "" };
+static const char *const fast_names[] = { "None", "1 MB", "2 MB", "4 MB", "8 MB", "" };
+static const uint16_t fast_sizes[] = { 0, 1024, 2048, 4096, 8192 };
 static const char *const video_names[] = { "PAL\n50 Hz", "NTSC\n60 Hz", "" };
 
 static bool a600(void)
@@ -401,6 +406,24 @@ static void slow_set(int i)
     }
 }
 
+static int fast_get(void)
+{
+    for (int i = 0; i < 5; i++) {
+        if (fast_sizes[i] == settings.fast_kb) {
+            return i;
+        }
+    }
+    return 0;
+}
+
+static void fast_set(int i)
+{
+    if (i >= 0 && i < 5) {
+        settings.fast_kb = fast_sizes[i];
+        settings_save();
+    }
+}
+
 static int video_get(void)
 {
     return settings.ntsc;
@@ -418,7 +441,8 @@ static const emu_choice_t choices[CHOICES] = {
     { "Model", model_names, model_get, model_set, false },
     { "Kickstart", kick_names_a500, kick_get, kick_set, false },
     { "Chip RAM", chip_names, chip_get, chip_set, false },
-    { "More RAM", slow_names, slow_get, slow_set, false },
+    { "Slow RAM", slow_names, slow_get, slow_set, false },
+    { "Fast RAM", fast_names, fast_get, fast_set, false },
     { "Video", video_names, video_get, video_set, false },
 };
 
@@ -530,11 +554,13 @@ static void status(emu_json_t *j, int section)
     if (section != EMU_STATUS_ROWS) {
         return;
     }
+    int n = snprintf(text, sizeof(text), "%s, %u KB chip RAM", models[s_cfg.model],
+                     (unsigned)(s_cfg.chip_size >> 10));
     if (s_cfg.slow_size) {
-        snprintf(text, sizeof(text), "%s, %u KB chip RAM + %u KB trapdoor (slow) RAM", models[s_cfg.model],
-                 (unsigned)(s_cfg.chip_size >> 10), (unsigned)(s_cfg.slow_size >> 10));
-    } else {
-        snprintf(text, sizeof(text), "%s, %u KB chip RAM", models[s_cfg.model], (unsigned)(s_cfg.chip_size >> 10));
+        n += snprintf(text + n, sizeof(text) - n, " + %u KB slow RAM", (unsigned)(s_cfg.slow_size >> 10));
+    }
+    if (s_cfg.fast_size) {
+        snprintf(text + n, sizeof(text) - n, " + %u MB fast RAM", (unsigned)(s_cfg.fast_size >> 20));
     }
     emu_json_row(j, "System", text);
     emu_json_row(j, "Kickstart", s_kick_name ? s_kick_name : "-");
@@ -558,8 +584,9 @@ static void console_info(char *buf, size_t len)
  *   K <hex> <0|1>      key down (1) or up (0)
  *   m <dx> <dy> <btn>  move the mouse; buttons 1 left, 2 right, 4 middle
  *   j <hex>            the joystick: 1 up, 2 down, 4 left, 8 right, 10 fire
- *   R <model> <kick> [chip KB] [slow KB]   restart as model 0 A500, 1 A2000,
- *                      2 A600 with Kickstart 0 1.3, 1 2.04, 2 2.05, 3 3.1, 4 1.2
+ *   R <model> <kick> [chip KB] [slow KB] [fast KB]   restart as model 0 A500,
+ *                      1 A2000, 2 A600 with Kickstart 0 1.3, 1 2.04, 2 2.05,
+ *                      3 3.1, 4 1.2
  */
 static bool console_command(const char *line)
 {
@@ -596,8 +623,8 @@ static bool console_command(const char *line)
         amiga_joystick((uint8_t)strtoul(line + 1, NULL, 16));
         return true;
     case 'R': {
-        int model = 0, kick = 0, chip = 0, slow = -1;
-        int n = sscanf(line + 1, "%d %d %d %d", &model, &kick, &chip, &slow);
+        int model = 0, kick = 0, chip = 0, slow = -1, fast = -1;
+        int n = sscanf(line + 1, "%d %d %d %d %d", &model, &kick, &chip, &slow, &fast);
         if (n >= 2 && model >= AMIGA_A500 && model <= AMIGA_A600 && settings_kick_ok(model, kick)) {
             settings_model_defaults(model);
             settings.kick = (uint8_t)kick;
@@ -606,6 +633,9 @@ static bool console_command(const char *line)
             }
             if (n >= 4 && settings_slow_ok(model, slow)) {
                 settings.slow_kb = (uint16_t)slow;
+            }
+            if (n >= 5 && settings_fast_ok(model, fast)) {
+                settings.fast_kb = (uint16_t)fast;
             }
             settings_save();
             emu_restart();

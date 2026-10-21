@@ -90,6 +90,7 @@ static void reset_instruction(void)
 {
     cia_reset();
     ami.ovl = true;
+    autoconf_reset();               /* (the boards too: Kickstart configures them again) */
     mem_update_map();
     custom_reset();
     copper_reset();
@@ -238,6 +239,7 @@ void amiga_reset(void)
     ami.ipl = 0;
     ami.stall = 0;
     ami.ovl = true;
+    autoconf_reset();
     mem_update_map();
     cia_reset();
     custom_reset();
@@ -259,6 +261,7 @@ static void warm_reset(void)
     ami.halted = false;
     ami.ipl = 0;
     ami.ovl = true;
+    autoconf_reset();
     mem_update_map();
     cia_reset();
     custom_reset();
@@ -273,13 +276,24 @@ static void warm_reset(void)
 
 /* ---- The frame loop ---- */
 
+static inline bool on_cpu_bus(uint32_t pc)
+{
+    pc &= 0xFFFFFF;
+    return pc >= 0xF80000 || (ami.fast_base && pc - ami.fast_base < ami.fast_size);
+}
+
 static void run_cpu(int until)
 {
     if (ami.halted) {
         ami.cycle = until;
         return;
     }
-    /* clocks the chips' DMA took from the 68000 pass without it */
+    /* clocks the chips' DMA took from the 68000 pass without it; running
+     * from fast RAM or the ROM (its own bus) it doesn't wait for them
+     */
+    if (ami.stall > 0 && on_cpu_bus(m68k_get_reg(NULL, M68K_REG_PC))) {
+        ami.stall = 0;
+    }
     if (ami.stall > 0) {
         int s = until - ami.cycle;
         s = s < ami.stall ? s : ami.stall;

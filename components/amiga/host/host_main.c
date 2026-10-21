@@ -4,7 +4,8 @@
  *
  *   ./ami_host <kickstart.rom> [frames] [out.ppm]
  *
- * Environment: AMI_CHIP_KB (512), AMI_SLOW_KB (512; 0 for none), AMI_ECS,
+ * Environment: AMI_CHIP_KB (512), AMI_SLOW_KB (512; 0 for none), AMI_FAST_KB
+ * (0; 1024-8192: an autoconfig board), AMI_ECS,
  * AMI_NTSC, AMI_SERIAL (print what's sent on the serial port),
  * AMI_SHOTS=<n> (a picture every n frames, <out>-<frame>.ppm), AMI_LOG=<n>
  * (the machine's state every n frames), AMI_RING=<n> (the last n
@@ -232,6 +233,8 @@ int main(int argc, char **argv)
     cfg.chip = malloc(cfg.chip_size);
     cfg.slow_size = env_int("AMI_SLOW_KB", 512) * 1024;
     cfg.slow = cfg.slow_size ? malloc(cfg.slow_size) : NULL;
+    cfg.fast_size = env_int("AMI_FAST_KB", 0) * 1024;
+    cfg.fast = cfg.fast_size ? malloc(cfg.fast_size) : NULL;
     cfg.kickstart = load(argv[1], &cfg.kickstart_size);
     cfg.rom = malloc(cfg.kickstart_size);
     cfg.serial = serial;

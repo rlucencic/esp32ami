@@ -495,3 +495,18 @@ measurements written down.
   Exile waits for a click with the display off, then plays; Powerball and
   Tie Break were between screens (Tie Break loads at real speed).
 - Not yet: blitter timing per slot; games played by hand on the board.
+
+### Phase 5 (2026-10-21): under way
+
+- **Autoconfig and fast RAM**: the expansion boards at $E80000
+  (`autoconf.c`), the first one fast RAM (1, 2, 4 or 8 MB, the setup
+  screen's own Fast RAM row beside Chip RAM and Slow RAM; the A2000's
+  default 2 MB). Kickstart 1.3 configures it at $200000 and adds it to the
+  free memory. The 68000 doesn't wait for the chips' DMA while it runs
+  from fast RAM or the ROM: SysInfo 4.4 gives 1.00 times a B2000 in fast
+  RAM and 1.00 times an A600 in chip RAM; xSysInfo 1.00 (B2000) and 1.09
+  (A600), its fast RAM 2.92 MB/s.
+- Next: Gayle's IDE with HDF drives (the A600's 2.05 and 3.1 drive it
+  themselves), then our own hard disk board for Kickstart 1.2-2.04 (the
+  RP9s for 1.3 bring FFS in their RDB: the board must load it), then
+  `.adz`/`.dms` on the web page.

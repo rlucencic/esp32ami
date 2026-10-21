@@ -27,6 +27,12 @@ bool settings_slow_ok(int model, int kb)
     return kb == 0 || (kb == 512 && model != AMIGA_A600);
 }
 
+bool settings_fast_ok(int model, int kb)
+{
+    (void)model;
+    return kb == 0 || kb == 1024 || kb == 2048 || kb == 4096 || kb == 8192;
+}
+
 void settings_model_defaults(int model)
 {
     settings.model = (uint8_t)model;
@@ -35,16 +41,19 @@ void settings_model_defaults(int model)
         settings.kick = KICK_13;
         settings.chip_kb = 1024;
         settings.slow_kb = 0;
+        settings.fast_kb = 2048;
         break;
     case AMIGA_A600:
         settings.kick = KICK_205;
         settings.chip_kb = 1024;
         settings.slow_kb = 0;
+        settings.fast_kb = 0;
         break;
     default:
         settings.kick = KICK_13;
         settings.chip_kb = 512;
         settings.slow_kb = 512;
+        settings.fast_kb = 0;
         break;
     }
 }
@@ -71,6 +80,9 @@ void settings_load(void)
     }
     if (nvs_get_u16(h, "slow_kb", &u16) == ESP_OK && settings_slow_ok(settings.model, u16)) {
         settings.slow_kb = u16;
+    }
+    if (nvs_get_u16(h, "fast_kb", &u16) == ESP_OK && settings_fast_ok(settings.model, u16)) {
+        settings.fast_kb = u16;
     }
     if (nvs_get_u8(h, "ntsc", &u8) == ESP_OK && u8 <= 1) {
         settings.ntsc = u8;
@@ -110,6 +122,7 @@ void settings_save(void)
     nvs_set_u8(h, "kick", settings.kick);
     nvs_set_u16(h, "chip_kb", settings.chip_kb);
     nvs_set_u16(h, "slow_kb", settings.slow_kb);
+    nvs_set_u16(h, "fast_kb", settings.fast_kb);
     nvs_set_u8(h, "ntsc", settings.ntsc);
     nvs_commit(h);
     nvs_close(h);

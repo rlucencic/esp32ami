@@ -39,7 +39,8 @@ bash -c '. $IDF_PATH/export.sh >/dev/null 2>&1; \
   (512K each); `app-flash` only the app. The Tab5 is shared with the other
   projects: after another one, a full `flash`. NVS (WiFi, BLE pairings) is
   shared; this project's settings are namespace `ami` (`model`, `kick`,
-  `chip_kb`, `slow_kb`, `ntsc`, `rtc_ofs`: the clock's offset in seconds),
+  `chip_kb`, `slow_kb`, `fast_kb`, `ntsc`, `rtc_ofs`: the clock's offset
+  in seconds),
   its drives `amifloppy`.
 - Disk images: `.adf` and Amiga Forever's `.rp9` games in the SD card's
   `floppies/` folder (shared with esp32arc: its 800 KB ADFS images are
@@ -59,10 +60,10 @@ dy btn` (the mouse; 1 left, 2 right, 4 middle; held until the next `m`;
 moves over 100 spread over 25 ms steps: one `m 0 0 1` then `m 0 0 0` is a
 click, two pairs a double-click), `j <hex>` the joystick (1 up, 2 down, 4
 left, 8 right, 10 fire, 20 second button), `R <model> <kick> [chip KB]
-[slow KB]`: restart as model 0 A500, 1 A2000, 2 A600 with Kickstart 0
+[slow KB] [fast KB]`: restart as model 0 A500, 1 A2000, 2 A600 with Kickstart 0
 1.3, 1 2.04, 2 2.05, 3 3.1, 4 1.2 (the model's own: the A600 2.05 or 3.1,
 the others 1.2, 1.3, 2.04 or 3.1), chip RAM 512/1024 (2048 the A600), slow RAM
-0/512 (not the A600). Workbench 1.3 from the console: the pointer starts
+0/512 (not the A600), fast RAM 0/1024/2048/4096/8192. Workbench 1.3 from the console: the pointer starts
 top left; `m 300 100 0` then `m 291 0 0` reaches the disk icon (counts
 are hires pixels across, half lines down), the Shell icon in its window
 is `m -523 136 0` from there.
@@ -73,13 +74,14 @@ keys and keypad the joystick in port 2, Alt fire), mice in port 1, touch as
 a touchpad (move, tap left click, tap then touch again to drag, hold still
 0.5 s for the right button: the menus).
 
-Setup screen on the Tab5: Start `t 1065 637`; the rows scroll (the shared
-setup screen's box): Model (y 227), Kickstart (298), Chip RAM (369), More
-RAM (440), Video below (`t 425 440 800 425 240` drags them up: then
-Kickstart 258, Chip RAM 329, More RAM 400, Video 470); three-button rows at
-x 367, 604, 841, four-button ones 337, 514, 692, 870, two-button ones 426,
-781. The status lines show the WiFi name and IP: keep them out of
-published images.
+Setup screen on the Tab5: Start `t 1065 637`; the six rows scroll (the
+shared setup screen's box): Model (y 227), Kickstart (298), Chip RAM
+(369), Slow RAM (440), Fast RAM and Video below (`t 425 440 800 425 240`
+drags them up: then Chip RAM 258, Slow RAM 329, Fast RAM 400, Video 470);
+three-button rows at x 367, 604, 841, four-button ones 337, 514, 692,
+870, two-button ones 426, 781, Fast RAM's five 320, 461, 603, 745, 887.
+The status lines show the WiFi name and IP: keep them out of published
+images.
 
 ## Layout
 
@@ -87,7 +89,7 @@ published images.
 |---|---|
 | `main/main.c` | The Amiga as an `emu_machine_t`: memory, start, setup rows, drives (DF0:, DF1:, written tracks to the card), the clock's offset, key map, mouse, joystick keys, touch, sound, status, console |
 | `main/rom_store.c` | Kickstarts from their flash partitions, else files in the SD card's `roms/` with that version |
-| `main/settings.c` | NVS `ami`, which Kickstart and RAM each model takes, its defaults |
+| `main/settings.c` | NVS `ami`, which Kickstart and RAM each model takes, its defaults (A2000: 1 MB chip, 2 MB fast) |
 | `components/amiga/` | The machine, platform independent (`include/amiga.h`) |
 | `components/amiga/host/` | Host build for testing on the Mac (see Testing) |
 | `tools/adf.py` | Reads ADFs and patches files in them (test disks, see Testing) |
@@ -115,20 +117,30 @@ published images.
   planes 3-4 a slot per word fetched, the copper two per instruction, the
   blitter its channels' slots (3/4 of them without BLTPRI), spread over
   its lines; `SLOT_WAIT` (3) clocks a slot (it wants the bus about 3/4 of
-  the time); at most 4 lines owed. ROM and CIA accesses pay it too (not
-  per access). SysInfo 4.4 and xSysInfo 0.12 on their 3-plane hires
-  screens: 1.06 and 1.14 times a real A600 (from 1.46 for bare Musashi).
+  the time); at most 4 lines owed, dropped when a slice begins with the
+  PC in fast RAM or the ROM (the 68000's own bus; data accesses from
+  there to chip RAM aren't counted). SysInfo 4.4: 1.00 times a real A600
+  (chip and slow RAM), 1.00 times a B2000 (fast RAM); xSysInfo 0.12: 1.09
+  and 1.00 (bare Musashi was 1.46 times an A600).
 - **Memory** (`mem.c`): 64 KB banks to host pointers for reads and writes
   (chip RAM mirrored by its size over $000000-$1FFFFF, the ROM over it for
-  reads while OVL is set, slow RAM at $C00000, the ROM at $F80000 and
-  256 KB ones mirrored); NULL banks take the slow path: CIAs ($A00000-
+  reads while OVL is set, slow RAM at $C00000, fast RAM where autoconfig
+  put it, the ROM at $F80000 and 256 KB ones mirrored); NULL banks take
+  the slow path: CIAs ($A00000-
   $BFFFFF: CIA-A when A12 is low on odd bytes, CIA-B when A13 is low on
   even ones; a byte write goes to both halves of the bus), custom chips
   ($DFF000, and $C00000-$D7FFFF without slow RAM, above it with: the
   mirror Kickstart 1.x tests for). Write-only and missing custom registers
   read the last word the 68000 put on the chip bus (`ami.bus`: Dr. Mario
-  counts in $DFF0FA). No bus errors; empty space reads 0 (autoconfig too:
-  no boards). Words in host order, byte n at n ^ 1 (the ST's convention).
+  counts in $DFF0FA). No bus errors; empty space reads 0. Words in host
+  order, byte n at n ^ 1 (the ST's convention).
+- **Autoconfig** (`autoconf.c`): the boards at $E80000 one after another
+  (nibbles, all but er_Type inverted; the address written low nibble
+  first, the high one configures; $4C shuts up), unconfigured by a reset
+  (the RESET instruction too). Now one board: fast RAM, 1-8 MB (Zorro II,
+  "into the memory list", Commodore's prototype ID $07DB): Kickstart 1.3
+  and later put it at $200000 and add it to the free memory. The board
+  allocates 8 MB at power-on whatever the setting.
 - **Paula's interrupts** (`amiga.c`, `custom.c`): INTENA/INTREQ to levels
   1-6, autovectored (VERTB 8 clocks into line 0: `VERTB_DELAY`); the CIAs' lines are levels (PORTS/EXTER set again
   while a CIA still asserts after INTREQ is cleared).

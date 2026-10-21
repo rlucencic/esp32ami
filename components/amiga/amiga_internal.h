@@ -95,6 +95,7 @@ typedef struct {
     uint32_t slow_size;
     uint8_t *fast;
     uint32_t fast_size;
+    uint32_t fast_base;             /* where autoconfig put it (0: not yet) */
     uint8_t *rom;
     uint32_t rom_size;
     bool ovl;                       /* the ROM over chip RAM (reads) after reset */
@@ -133,6 +134,13 @@ void ami_cpu_wake(void);            /* an earlier event was scheduled: end the C
 
 /* mem.c */
 void mem_update_map(void);
+
+/* autoconf.c: the expansion boards at $E80000 */
+void autoconf_reset(void);
+uint8_t autoconf_read8(uint32_t a);
+uint16_t autoconf_read16(uint32_t a);
+void autoconf_write8(uint32_t a, uint8_t v);
+void autoconf_write16(uint32_t a, uint16_t v);
 uint16_t chip_read16(uint32_t address);
 void chip_write16(uint32_t address, uint16_t value);
 

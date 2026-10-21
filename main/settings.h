@@ -20,6 +20,7 @@ typedef struct {
     uint8_t kick;           /* kick_t */
     uint16_t chip_kb;       /* 512, 1024, 2048 (2 MB: the A600) */
     uint16_t slow_kb;       /* 0 or 512: the A500's and A2000's trapdoor RAM at $C00000 */
+    uint16_t fast_kb;       /* 0, 1024 ... 8192: an autoconfig board's (Zorro II) */
     uint8_t ntsc;
 } settings_t;
 
@@ -32,6 +33,7 @@ void settings_save(void);
 bool settings_kick_ok(int model, int kick);
 bool settings_chip_ok(int model, int kb);
 bool settings_slow_ok(int model, int kb);
+bool settings_fast_ok(int model, int kb);
 /* A model's defaults */
 void settings_model_defaults(int model);
 

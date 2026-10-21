@@ -3,7 +3,7 @@
  *
  *   $000000-$1FFFFF  chip RAM (mirrored by its size); the ROM for reads
  *                    while OVL is set (after reset), writes still to RAM
- *   $200000-$9FFFFF  fast RAM once autoconfigured (not yet)
+ *   $200000-$9FFFFF  fast RAM once autoconfigured (autoconf.c)
  *   $A00000-$BFFFFF  the CIAs: CIA-A while A12 is low (odd bytes), CIA-B
  *                    while A13 is low (even bytes), a register every 256
  *   $C00000-$D7FFFF  slow RAM (the A500's trapdoor); above it, the custom
@@ -11,6 +11,7 @@
  *                    space that isn't the mirror for RAM)
  *   $DC0000-$DCFFFF  the battery-backed clock (rtc.c)
  *   $DFF000-$DFFFFF  the custom chips (registers mirrored every $200)
+ *   $E80000-$E8FFFF  autoconfig: the next board to configure
  *   $F80000-$FFFFFF  Kickstart (256 KB ones mirrored)
  *
  * No bus errors: an Amiga 500's empty space just reads nothing (0 here).
@@ -48,6 +49,9 @@ void mem_update_map(void)
     }
     for (uint32_t b = 0; b < (ami.slow_size >> 16); b++) {
         s_rmap[0xC0 + b] = s_wmap[0xC0 + b] = ami.slow + (b << 16);
+    }
+    for (uint32_t b = 0; ami.fast_base && b < (ami.fast_size >> 16); b++) {
+        s_rmap[(ami.fast_base >> 16) + b] = s_wmap[(ami.fast_base >> 16) + b] = ami.fast + (b << 16);
     }
     for (uint32_t b = 0xF8; b < 0x100; b++) {
         s_rmap[b] = ami.rom + ((b << 16) & (ami.rom_size - 1));
@@ -105,6 +109,11 @@ static inline bool is_rtc(uint32_t a)
     return a >= 0xDC0000 && a < 0xDD0000;
 }
 
+static inline bool is_autoconf(uint32_t a)
+{
+    return a >= 0xE80000 && a < 0xE90000;
+}
+
 static uint16_t slow_read16(uint32_t a)
 {
     if (is_custom(a)) {
@@ -122,6 +131,9 @@ static uint16_t slow_read16(uint32_t a)
         uint16_t lo = (a & 0x1000) ? 0xFF : cia_read(&cia[0], reg);
         return (hi << 8) | lo;
     }
+    if (is_autoconf(a)) {
+        return autoconf_read16(a);
+    }
     return 0;
 }
 
@@ -136,6 +148,9 @@ static uint8_t slow_read8(uint32_t a)
     }
     if (is_rtc(a)) {
         return (a & 1) ? 0xF0 | rtc_read((a >> 2) & 15) : 0xFF;
+    }
+    if (is_autoconf(a)) {
+        return autoconf_read8(a);
     }
     return 0;
 }
@@ -154,6 +169,8 @@ static void slow_write16(uint32_t a, uint16_t v)
         }
     } else if (is_rtc(a)) {
         rtc_write((a >> 2) & 15, v & 0xFF);
+    } else if (is_autoconf(a)) {
+        autoconf_write16(a, v);
     }
 }
 
@@ -166,6 +183,8 @@ static void slow_write8(uint32_t a, uint8_t v)
         cia_write8(a, v);
     } else if (is_rtc(a)) {
         rtc_write((a >> 2) & 15, v);
+    } else if (is_autoconf(a)) {
+        autoconf_write8(a, v);
     }
 }
 
