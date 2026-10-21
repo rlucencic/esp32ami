@@ -22,8 +22,10 @@
  * its even partner's (15 colours).
  *
  * The picture: lores pixels 108-467 (hires 216-935) of lines 29-312, in
- * hires pixels (lores ones doubled), its lines doubled (interlace: the
- * field being drawn, for now).
+ * hires pixels (lores ones doubled), its lines doubled. Interlaced (LACE
+ * in BPLCON0 during the frame, LOF then toggles): each field has its own
+ * frames, and the presenter weaves them, the long field's lines even, the
+ * short one's odd, once both have been drawn.
  */
 #include <stdlib.h>
 #include <string.h>
@@ -94,12 +96,18 @@ static struct {
     uint16_t clxcon, clxdat;
     int clx_frames;                 /* worked out while > 0 (a CLXDAT read sets it) */
 
-    /* the frames */
+    /* the frames: each field's three (an interlaced picture's short
+     * frames go to field 1, everything else to field 0)
+     */
     row_t *rows;
-    uint32_t signature[3];
+    uint32_t signature[2][3];
+    bool lace[2][3];                /* drawn with BPLCON0's LACE on */
     uint32_t hash;
-    uint32_t state;                 /* latest | pinned << 2 */
-    int writing;
+    uint32_t state[2];              /* latest | pinned << 2 */
+    int writing[2];
+    int field;                      /* the one this frame draws */
+    bool lace_seen;                 /* LACE on at some point in this frame */
+    bool field1;                    /* field 1 drawn since interlace began */
     int first_line;
 } s;
 
@@ -112,7 +120,14 @@ static uint8_t s_pf1[64], s_pf2[64];
 
 size_t amiga_picture_size(void)
 {
-    return 3 * PIC_LINES * sizeof(row_t);
+    return 6 * PIC_LINES * sizeof(row_t);
+}
+
+#define BPLCON0_LACE    0x0004
+
+static row_t *buffer(int field, int b)
+{
+    return s.rows + (field * 3 + b) * PIC_LINES;
 }
 
 void display_init(void *picture)
@@ -145,7 +160,7 @@ void display_reset(void)
     s.rows = rows;
     memset(s.rows, 0, amiga_picture_size());
     s.fetch_at = NEVER;
-    s.writing = 1;
+    s.writing[0] = s.writing[1] = 1;
     s.first_line = ami.ntsc ? FIRST_LINE_NTSC : FIRST_LINE_PAL;
     s.hash = 0x811C9DC5u;
 }
@@ -434,6 +449,7 @@ void display_write(uint32_t reg, uint16_t v, int at)
         break;
     case 0x100:
         s.bplcon0 = v;
+        s.lace_seen |= (v & BPLCON0_LACE) != 0;
         display_dma_changed(at);
         break;
     case 0x102:
@@ -696,7 +712,7 @@ AMI_HOT void display_line_end(void)
     uint32_t key = h | 1;
     s.hash = mix(s.hash, key);
 
-    row_t *r = &s.rows[s.writing * PIC_LINES + row];
+    row_t *r = &buffer(s.field, s.writing[s.field])[row];
     if (r->key != key) {
         r->key = key;
         r->con0 = s.con0;
@@ -728,24 +744,45 @@ AMI_HOT void display_line_end(void)
     apply_changes();
 }
 
-void display_frame_end(void)
+/* The frame's records become its field's latest; true when it was
+ * interlaced (the long frames then alternate with short ones)
+ */
+bool display_frame_end(void)
 {
     if (s.clx_frames) {
         s.clx_frames--;
     }
-    s.signature[s.writing] = s.hash;
+    int f = s.field, w = s.writing[f];
+    bool lace = s.lace_seen;
+    s.signature[f][w] = s.hash;
+    s.lace[f][w] = lace;
     s.hash = 0x811C9DC5u;
-    uint32_t st = __atomic_load_n(&s.state, __ATOMIC_ACQUIRE), want;
+    if (f == 1) {
+        s.field1 = true;
+    } else if (!lace) {
+        s.field1 = false;
+    }
+    uint32_t st = __atomic_load_n(&s.state[f], __ATOMIC_ACQUIRE), want;
     do {
-        want = (st & ~3u) | (uint32_t)s.writing;
-    } while (!__atomic_compare_exchange_n(&s.state, &st, want, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+        want = (st & ~3u) | (uint32_t)w;
+    } while (!__atomic_compare_exchange_n(&s.state[f], &st, want, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
     uint32_t pinned = PINNED(want);
     for (int i = 0; i < 3; i++) {
-        if (i != s.writing && (uint32_t)i != pinned) {
-            s.writing = i;
+        if (i != w && (uint32_t)i != pinned) {
+            s.writing[f] = i;
             break;
         }
     }
+    s.lace_seen = (s.bplcon0 & BPLCON0_LACE) != 0;
+    return lace;
+}
+
+/* The next frame's field: its LOF (a short frame of an interlaced picture
+ * draws the odd lines)
+ */
+void display_next_field(bool lace)
+{
+    s.field = lace && !ami.lof ? 1 : 0;
 }
 
 /* ---- The presenter's side: drawing the records ---- */
@@ -976,13 +1013,29 @@ static void draw(const row_t *r, uint16_t *out)
     }
 }
 
-uint32_t amiga_screen_signature(void)
+/* The presenter's frame of a field: its latest, pinned (the writer then
+ * leaves it alone)
+ */
+static uint32_t pin(int f)
 {
-    uint32_t st = __atomic_load_n(&s.state, __ATOMIC_ACQUIRE), want;
+    uint32_t st = __atomic_load_n(&s.state[f], __ATOMIC_ACQUIRE), want;
     do {
         want = (st & ~(3u << 2)) | LATEST(st) << 2;
-    } while (!__atomic_compare_exchange_n(&s.state, &st, want, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
-    return s.signature[LATEST(st)];
+    } while (!__atomic_compare_exchange_n(&s.state[f], &st, want, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+    return LATEST(st);
+}
+
+static bool s_weave;                /* (the presenter's) both fields, line by line */
+
+uint32_t amiga_screen_signature(void)
+{
+    uint32_t b0 = pin(0);
+    s_weave = s.lace[0][b0] && s.field1;
+    if (!s_weave) {
+        return s.signature[0][b0];
+    }
+    uint32_t b1 = pin(1);
+    return s.signature[0][b0] ^ (s.signature[1][b1] * 0x9E3779B1u);
 }
 
 void amiga_render_line_rgb565(int y, uint16_t *dst)
@@ -992,8 +1045,9 @@ void amiga_render_line_rgb565(int y, uint16_t *dst)
         memset(dst, 0, PIC_W * sizeof(uint16_t));
         return;
     }
-    uint32_t pinned = PINNED(__atomic_load_n(&s.state, __ATOMIC_ACQUIRE));
-    const row_t *r = &s.rows[pinned * PIC_LINES + row];
+    int f = s_weave ? y & 1 : 0;
+    uint32_t pinned = PINNED(__atomic_load_n(&s.state[f], __ATOMIC_ACQUIRE));
+    const row_t *r = &buffer(f, (int)pinned)[row];
     if (r != d.row || r->key != d.key) {
         draw(r, d.line);
         d.row = r;

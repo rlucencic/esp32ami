@@ -244,7 +244,8 @@ void display_line_start(void);
 int display_fetch_at(void);
 void display_fetch(void);
 void display_line_end(void);
-void display_frame_end(void);
+bool display_frame_end(void);       /* true: the frame was interlaced */
+void display_next_field(bool lace);
 void display_dma_changed(int at);
 uint16_t display_clxdat(void);      /* CLXDAT read (and cleared) */
 void display_clxcon(uint16_t value);

@@ -418,7 +418,12 @@ void amiga_run_frame(void)
         cop.at -= frame_cycles;
     }
     ami.e_phase = (ami.e_phase + frame_cycles) % 10;
-    display_frame_end();
+    /* interlace: long and short frames by turns (each field's lines) */
+    bool lace = display_frame_end();
+    if (lace) {
+        ami.lof = !ami.lof;
+    }
+    display_next_field(lace);
     if (blit.busy && blit.end <= ami.cycle) {
         blitter_finish();
     }

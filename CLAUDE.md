@@ -104,6 +104,7 @@ images.
 | `tools/adf.py` | Reads ADFs and patches files in them (test disks, see Testing) |
 | `tools/rdb.py`, `tools/ffsls.py` | An HDF's RDB, its first partition's files |
 | `tools/clxboot.py` | Boot disks that test sprite collisions |
+| `tools/laceboot.py` | A boot disk that tests interlace (white long frames, black short ones) |
 | `tools/mkinstall.py` | A Workbench floppy that formats DH0: and copies itself onto it (the hard disk test) |
 | `tools/hdrom.py` | Assembles the hard disk board's boot ROM into `components/amiga/hdrom.h` |
 | `main/web/amifiles.js` | The web page's converters (served as /machine.js): DMS archives, gzipped images |
@@ -291,8 +292,12 @@ images.
   matches where CLXCON's enabled planes have its values; a plane not
   fetched is 0), odd planes against even, inside the window. Sprite DMA:
   control words on the line before the first bitplane line (25 PAL) and
-  at each VSTOP, data words from VSTART. Interlace shows the field being
-  drawn (both fields: later).
+  at each VSTOP, data words from VSTART. **Interlace**: a frame with
+  BPLCON0's LACE on at any time toggles LOF; each field (long: even
+  picture lines, short: odd) has its own three frames of line records, and
+  the presenter weaves them once both have been drawn (frames without
+  LACE go to the long field's buffers, their lines doubled). Sprites show in both
+  fields (their lines doubled, as on the real one).
 - **The picture**: 720 x 568 (lores pixels 108-467 doubled, lines 29-312
   doubled), 4:3 at 960 x 720 on the Tab5 (`view_width` 800).
 
@@ -417,6 +422,10 @@ images.
   read ORed into $7F000 (`AMI_DUMP=7F000:2:out.bin`, 700 frames). Cases
   checked (expected values from the HRM's rules, lores and hires):
   overlapping or not by one pixel, MVBP 0/1, sprite pairs, ENSP1.
+- **Interlace**: `tools/laceboot.py out.adf`: the woven picture's lines
+  alternate white and black (host and Tab5). Workbench 1.3 interlaced:
+  `devs/system-configuration` byte 185 bit 0 (LaceWB) set with
+  `tools/adf.py`; 640 x 512 on the host and the Tab5 (100%, core 1 22%).
 - Amiga Test Kit's video tests (F6): all six draw; F1's PAL/NTSC frame
   (markers at lines 44, 243, 299) as its source describes.
 - **Installing on a blank hard disk** (phase 5's check): `AMI_NEWHD=<path>:50`
@@ -454,7 +463,7 @@ images.
 - Phases 4-7 (`docs/architecture.md`): games (the rest of phase 4:
   blitter timing per slot), A2000/A600
   specifics (autoconfig fast RAM, Gayle IDE, the hard disk board, the RP9s
-  with hard disk images), NTSC details, interlace's two fields, the A1200
+  with hard disk images), NTSC details, the A1200
   (the 25 A1200 RP9s). The chip bus model is an average (`SLOT_WAIT`), not
   per access: a slot-exact one (the 68000's accesses against the line's
   DMA slots) would bring SysInfo and xSysInfo to 1.0; the Tab5 has the

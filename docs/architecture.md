@@ -549,3 +549,15 @@ measurements written down.
   installing with Commodore's Installer (format and copy instead).
 - Later: an RP9 setting the machine from its manifest (the user: a nice
   thing for the future).
+
+### Phase 6 (2026-10-21): under way
+
+- **Interlace, both fields**: LOF toggles in frames with LACE on; each
+  field keeps its own line records (three frames each, 6 x 284 rows), the
+  presenter weaves the long field's lines (even) with the short one's
+  (odd). Checked with `tools/laceboot.py` (a white line in long frames, a
+  black one in short ones: the picture alternates, host and Tab5) and
+  Workbench 1.3 with LaceWB, 640 x 512 (host and Tab5: 100%, core 1 22%,
+  core 0 3%). Pictures without LACE unchanged.
+- Not yet: Workbench 3.1 in an interlaced screen mode, NTSC details, the
+  speed measurements and profile, the debugger's machine view.
