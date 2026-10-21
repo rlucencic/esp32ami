@@ -22,7 +22,19 @@ static void beam(int *line, int *h)
     }
 }
 
+static uint16_t read_reg(uint32_t reg);
+
+/* What the 68000 reads; a write-only register gives the last word on the
+ * bus (Dr. Mario keeps a counter in one)
+ */
 uint16_t custom_read(uint32_t reg)
+{
+    uint16_t v = read_reg(reg);
+    ami.bus = v;
+    return v;
+}
+
+static uint16_t read_reg(uint32_t reg)
 {
     int line, h;
     switch (reg) {
@@ -34,9 +46,10 @@ uint16_t custom_read(uint32_t reg)
     case 0x006:                     /* VHPOSR */
         beam(&line, &h);
         return ((line & 0xFF) << 8) | h;
-    case 0x00A:                     /* JOY0DAT, JOY1DAT */
-    case 0x00C:
-        return ami.joytest;
+    case 0x00A:                     /* JOY0DAT: the mouse */
+        return input_joy0dat();
+    case 0x00C:                     /* JOY1DAT: the joystick */
+        return input_joy1dat();
     case 0x00E:                     /* CLXDAT */
         return 0x8000;
     case 0x010:                     /* ADKCONR */
@@ -44,13 +57,15 @@ uint16_t custom_read(uint32_t reg)
     case 0x012:                     /* POT0DAT, POT1DAT */
     case 0x014:
         return 0;
-    case 0x016: {                   /* POTGOR: outputs as written, inputs pulled up */
+    case 0x016: {                   /* POTGOR: outputs as written, inputs pulled up;
+                                       a button pulls a pin low either way (input.device
+                                       drives them high: $FF00) */
         uint16_t v = 0;
         for (int pin = 0; pin < 4; pin++) {
             uint16_t out = 0x0200 << (pin * 2), dat = 0x0100 << (pin * 2);
             v |= (ami.potgo & out) ? (ami.potgo & dat) : dat;
         }
-        return v;
+        return v & ~input_pot_low();
     }
     case 0x018:                     /* SERDATR: transmitter empty, line idle */
         return 0x3000 | 0x0800;
@@ -61,9 +76,9 @@ uint16_t custom_read(uint32_t reg)
     case 0x01E:                     /* INTREQR */
         return ami.intreq;
     case 0x07C:                     /* DENISEID: ECS Denise 8373; OCS's isn't there */
-        return ami.ecs ? 0xFFFC : 0xFFFF;
+        return ami.ecs ? 0xFFFC : ami.bus;
     default:
-        return 0xFFFF;
+        return ami.bus;
     }
 }
 
@@ -74,12 +89,19 @@ static uint16_t set_clr(uint16_t reg, uint16_t v, uint16_t mask)
 
 void custom_write(uint32_t reg, uint16_t v, int at, bool copper)
 {
+    if (!copper) {
+        ami.bus = v;
+    }
     if (reg >= 0x040 && reg <= 0x074) {
         blitter_write(reg, v, at);
         return;
     }
     if ((reg >= 0x080 && reg <= 0x08C) || reg == 0x02E) {
         copper_write(reg, v, at, copper);
+        return;
+    }
+    if (reg >= 0x0A0 && reg <= 0x0DE) {
+        audio_write(reg, v);
         return;
     }
     if ((reg >= 0x08E && reg <= 0x094) || (reg >= 0x0E0 && reg <= 0x1BE) || reg == 0x1E4) {
@@ -103,7 +125,7 @@ void custom_write(uint32_t reg, uint16_t v, int at, bool copper)
         ami.potgo = v;
         break;
     case 0x036:                     /* JOYTEST */
-        ami.joytest = v & 0xFCFC;
+        input_joytest(v);
         break;
     case 0x02A:                     /* VPOSW: the long frame bit */
         ami.lof = (v & 0x8000) != 0;
@@ -115,6 +137,7 @@ void custom_write(uint32_t reg, uint16_t v, int at, bool copper)
             copper_dma_changed(at);
             blitter_dma_changed(at);
             display_dma_changed(at);
+            audio_dma_changed();
         }
         break;
     }
@@ -150,7 +173,6 @@ void custom_reset(void)
     ami.intena = ami.intreq = 0;
     ami.dmacon = ami.adkcon = 0;
     ami.potgo = 0;
-    ami.joytest = 0;
     ami.beamcon0 = ami.ntsc ? 0 : 0x0020;
     ami_update_irq();
 }

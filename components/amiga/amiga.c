@@ -190,8 +190,20 @@ bool amiga_init(const amiga_config_t *config)
 
     m68k_init();
     m68k_set_cpu_type(M68K_CPU_TYPE_68000);
-    if (config->opcode_tables != NULL) {
-        m68k_use_table_copies(config->opcode_tables);
+    /* The 68000's memory cycles fall on the chip bus's slots (2 colour
+     * clocks): code running from chip RAM takes whole multiples of 4 clocks
+     * an instruction (xSysInfo measured 10.3 MHz on Musashi's bare counts)
+     */
+    static void *tables;
+    if (!tables) {
+        tables = config->opcode_tables ? config->opcode_tables : ami_malloc(AMIGA_OPCODE_TABLES_SIZE);
+    }
+    if (tables) {
+        m68k_use_table_copies(tables);
+        uint8_t *cycles = (uint8_t *)tables + 0x10000 * sizeof(void *);
+        for (int op = 0; op < 0x10000; op++) {
+            cycles[op] = (uint8_t)((cycles[op] + 3) & ~3);
+        }
     }
     m68k_set_int_ack_callback(int_ack);
     m68k_set_reset_instr_callback(reset_instruction);
@@ -224,6 +236,7 @@ void amiga_reset(void)
     ami.frames = 0;
     ami.halted = false;
     ami.ipl = 0;
+    ami.stall = 0;
     ami.ovl = true;
     mem_update_map();
     cia_reset();
@@ -232,6 +245,28 @@ void amiga_reset(void)
     blitter_reset();
     display_reset();
     floppy_reset();
+    input_reset();
+    audio_reset();
+    m68k_set_irq(0);
+    m68k_pulse_reset();
+}
+
+/* The reset line (the keyboard's Ctrl-Amiga-Amiga): the CPU and the chips
+ * start again, memory stays (Kickstart warm-starts)
+ */
+static void warm_reset(void)
+{
+    ami.halted = false;
+    ami.ipl = 0;
+    ami.ovl = true;
+    mem_update_map();
+    cia_reset();
+    custom_reset();
+    copper_reset();
+    blitter_reset();
+    floppy_reset();
+    input_reset();
+    audio_reset();
     m68k_set_irq(0);
     m68k_pulse_reset();
 }
@@ -244,6 +279,16 @@ static void run_cpu(int until)
         ami.cycle = until;
         return;
     }
+    /* clocks the chips' DMA took from the 68000 pass without it */
+    if (ami.stall > 0) {
+        int s = until - ami.cycle;
+        s = s < ami.stall ? s : ami.stall;
+        ami.cycle += s;
+        ami.stall -= s;
+        if (ami.cycle >= until) {
+            return;
+        }
+    }
     ami.cpu_running = true;
     int used = m68k_execute(until - ami.cycle);
     ami.cpu_running = false;
@@ -255,9 +300,17 @@ static inline int min_int(int a, int b)
     return a < b ? a : b;
 }
 
+/* The vertical blank interrupt reaches the 68000 a few clocks into line 0
+ * (Paula's interrupt lines, the instruction under way): a program waiting
+ * in a loop for line 0 sees it (F1 GP Circuits does)
+ */
+#define VERTB_DELAY     8
+static int s_vertb_at = NEVER;
+
 static int next_event(void)
 {
     int t = min_int(display_fetch_at(), copper_next());
+    t = min_int(t, s_vertb_at);
     if (blit.busy) {
         t = min_int(t, blit.end);
     }
@@ -282,7 +335,10 @@ static void run_line(void)
             continue;
         }
         /* the earliest event is due */
-        if (next == display_fetch_at()) {
+        if (next == s_vertb_at) {
+            s_vertb_at = NEVER;
+            ami_set_intreq(INT_VERTB);
+        } else if (next == display_fetch_at()) {
             display_fetch();
         } else if (next == copper_next()) {
             int fetch = display_fetch_at();
@@ -310,14 +366,20 @@ void amiga_run_frame(void)
         if (ami.line == 0) {
             /* the vertical blank */
             copper_vblank();
-            ami_set_intreq(INT_VERTB);
+            s_vertb_at = VERTB_DELAY;
             cia_tod_tick(&cia[0]);
         }
         display_line_start();
+        ami.stall += blitter_steal_line();
+        if (ami.stall > 4 * CYCLES_LINE) {
+            ami.stall = 4 * CYCLES_LINE;
+        }
         run_line();
         display_line_end();
         cia_tod_tick(&cia[1]);
         floppy_line(CYCLES_LINE);
+        input_line();
+        audio_line();
     }
 
     /* everything that keeps a time moves back by the frame */
@@ -338,6 +400,14 @@ void amiga_run_frame(void)
         blitter_finish();
     }
     ami.frames++;
+    /* the keyboard's reset: a few frames after its warning, for the OS */
+    static int reset_in;
+    if (input_reset_wanted()) {
+        reset_in = 10;
+    }
+    if (reset_in > 0 && --reset_in == 0) {
+        warm_reset();
+    }
 #ifndef ESP_PLATFORM
     (void)insns_before;
 #endif
@@ -351,6 +421,8 @@ int amiga_screen_hz(void)
 void amiga_get_status(amiga_status_t *st)
 {
     st->frames = ami.frames;
+    st->line = ami.line;
+    st->cycle = ami_now() - ami.line_start;
     st->pc = m68k_get_reg(NULL, M68K_REG_PC);
     st->sr = (uint16_t)m68k_get_reg(NULL, M68K_REG_SR);
     st->intena = ami.intena;

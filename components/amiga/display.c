@@ -11,7 +11,15 @@
  *
  * The presenter (core 0) draws the records: the planes turned into pixel
  * indices through a table (odd and even planes apart: their scroll delays
- * differ), the colours changed at the pixels the beam was at.
+ * differ), the colours changed at the pixels the beam was at, the sprites
+ * over them as BPLCON2's priorities say.
+ *
+ * Sprites: their DMA fetches the control words (SPRxPOS, SPRxCTL) on the
+ * first line after vertical blank and at each sprite's VSTOP, the data
+ * words on the lines from VSTART; written directly, writing DATA arms a
+ * sprite and CTL disarms it. Lores pixels, the display window's
+ * horizontal coordinates; an odd sprite with ATT set adds its two bits to
+ * its even partner's (15 colours).
  *
  * The picture: lores pixels 108-467 (hires 216-935) of lines 29-312, in
  * hires pixels (lores ones doubled), its lines doubled (interlace: the
@@ -42,14 +50,26 @@ typedef struct {
     int16_t x0, x1;                 /* the window, in the picture's pixels */
     uint8_t planes, words;          /* planes 0: no bitplanes on this line */
     uint16_t changes;
+    uint8_t sprites;                /* shown on this line */
+    uint8_t spr_num[8];             /* the sprite (bit 7: attached to the one before) */
+    int16_t spr_x[8];               /* lores pixels from the picture's left edge */
+    uint16_t spr_a[8], spr_b[8];    /* DATA, DATB */
     uint16_t color[32];             /* as the line began */
     uint32_t change[MAX_CHANGES];   /* x << 20 | colour << 12 | value */
     uint16_t data[MAX_WORDS];       /* plane after plane */
 } row_t;
 
+typedef struct {
+    uint32_t pt;
+    uint16_t pos, ctl, data, datb;
+    bool armed;                     /* its data words show on this line */
+    uint8_t dma;                    /* 0 idle, 1 waiting for VSTART, 2 showing */
+} sprite_t;
+
 static struct {
     /* registers */
     uint16_t bplcon0, bplcon1, bplcon2, bplcon3;
+    sprite_t spr[8];
     uint16_t diwstrt, diwstop, ddfstrt, ddfstop;
     uint16_t diwhigh;               /* ECS: the window's high bits, if written since DIWSTRT/DIWSTOP */
     bool diwhigh_set;
@@ -201,6 +221,63 @@ static void diw(int *vstart, int *vstop, int *hstart, int *hstop)
     }
 }
 
+static int spr_vstart(const sprite_t *sp)
+{
+    return (sp->pos >> 8) | ((sp->ctl & 4) << 6);
+}
+
+static int spr_vstop(const sprite_t *sp)
+{
+    return (sp->ctl >> 8) | ((sp->ctl & 2) << 7);
+}
+
+static void spr_fetch_control(sprite_t *sp)
+{
+    sp->pos = chip_read16(sp->pt);
+    sp->ctl = chip_read16(sp->pt + 2);
+    sp->pt += 4;
+    sp->armed = false;
+}
+
+/* The sprites' DMA for this line */
+static void sprite_dma(void)
+{
+    int first = (ami.ntsc ? VBLANK_END_NTSC : VBLANK_END_PAL) - 1;
+    bool dma = (ami.dmacon & (DMA_EN | DMA_SPR)) == (DMA_EN | DMA_SPR);
+    for (int i = 0; i < 8; i++) {
+        sprite_t *sp = &s.spr[i];
+        if (ami.line == 0) {
+            sp->dma = 0;
+        }
+        if (!dma || ami.line < first) {
+            continue;
+        }
+        if (ami.line == first) {
+            spr_fetch_control(sp);
+            sp->dma = 1;
+            continue;
+        }
+        if (sp->dma == 0) {
+            continue;
+        }
+        sp->armed = false;
+        if (sp->dma == 1 && ami.line == spr_vstart(sp)) {
+            sp->dma = 2;
+        }
+        if (sp->dma == 2) {
+            if (ami.line == spr_vstop(sp)) {
+                spr_fetch_control(sp);
+                sp->dma = 1;
+            } else {
+                sp->data = chip_read16(sp->pt);
+                sp->datb = chip_read16(sp->pt + 2);
+                sp->pt += 4;
+                sp->armed = true;
+            }
+        }
+    }
+}
+
 void display_line_start(void)
 {
     s.fetched = false;
@@ -217,6 +294,7 @@ void display_line_start(void)
         s.vwin = false;
     }
     plan(ami.line_start);
+    sprite_dma();
 }
 
 AMI_HOT void display_fetch(void)
@@ -251,6 +329,13 @@ AMI_HOT void display_fetch(void)
         s.pt[p] = ptr + s.mod[p & 1];
     }
     s.data_key = key;
+    /* lores planes 5-6 and hires planes 3-4 fetch in the 68000's (even)
+     * slots: a slot a word
+     */
+    int even = planes - (hires ? 2 : 4);
+    if (even > 0) {
+        ami.stall += even * words * SLOT_WAIT;
+    }
 }
 
 /* ---- Registers ---- */
@@ -291,6 +376,25 @@ void display_write(uint32_t reg, uint16_t v, int at)
 {
     if (reg >= 0x180 && reg <= 0x1BE) {
         log_color((reg - 0x180) >> 1, v, at);
+        return;
+    }
+    if (reg >= 0x120 && reg <= 0x13E) {
+        sprite_t *sp = &s.spr[(reg - 0x120) >> 2];
+        if (reg & 2) {
+            sp->pt = (sp->pt & 0xFFFF0000) | (v & 0xFFFE);
+        } else {
+            sp->pt = (sp->pt & 0xFFFF) | ((uint32_t)(v & 0x1F) << 16);
+        }
+        return;
+    }
+    if (reg >= 0x140 && reg <= 0x17E) {
+        sprite_t *sp = &s.spr[(reg - 0x140) >> 3];
+        switch (reg & 6) {
+        case 0: sp->pos = v; break;
+        case 2: sp->ctl = v; sp->armed = false; break;
+        case 4: sp->data = v; sp->armed = true; break;
+        default: sp->datb = v; break;
+        }
         return;
     }
     if (reg >= 0x0E0 && reg <= 0x0F6) {
@@ -389,11 +493,23 @@ AMI_HOT void display_line_end(void)
     int x0, x1;
     window(&x0, &x1);
     bool bpl = s.fetched && x0 < x1;
+    /* the sprites showing their data on this line */
+    int nspr = 0;
+    uint8_t num[8];
+    for (int i = 0; i < 8 && x0 < x1; i++) {
+        const sprite_t *sp = &s.spr[i];
+        if (sp->armed) {
+            num[nspr++] = (uint8_t)(i | ((i & 1) && (sp->ctl & 0x80) ? 0x80 : 0));
+        }
+    }
     uint32_t h = 0x811C9DC5u;
     if (bpl) {
         h = mix(h, s.data_key);
         h = mix(h, (uint32_t)s.con0 << 16 | s.con1);
-        h = mix(h, (uint32_t)s.con2 << 16 | (uint32_t)(s.first & 0xFFFF));
+        h = mix(h, (uint32_t)(s.first & 0xFFFF));
+    }
+    if (bpl || nspr) {
+        h = mix(h, (uint32_t)s.con2 << 16 | s.bplcon2);
         h = mix(h, (uint32_t)x0 << 16 | (uint32_t)x1);
         const uint32_t *c = (const uint32_t *)s.color;
         for (int i = 0; i < 16; i++) {
@@ -401,6 +517,11 @@ AMI_HOT void display_line_end(void)
         }
     } else {
         h = mix(h, s.color[0]);
+    }
+    for (int i = 0; i < nspr; i++) {
+        const sprite_t *sp = &s.spr[num[i] & 7];
+        h = mix(h, (uint32_t)num[i] << 24 | (uint32_t)(sp->pos & 0xFF) << 8 | (sp->ctl & 1));
+        h = mix(h, (uint32_t)sp->data << 16 | sp->datb);
     }
     for (int i = 0; i < s.changes; i++) {
         h = mix(h, s.change[i]);
@@ -420,6 +541,17 @@ AMI_HOT void display_line_end(void)
         r->planes = bpl ? (uint8_t)s.planes : 0;
         r->words = (uint8_t)s.words;
         r->changes = (uint16_t)s.changes;
+        r->sprites = (uint8_t)nspr;
+        for (int i = 0; i < nspr; i++) {
+            const sprite_t *sp = &s.spr[num[i] & 7];
+            r->spr_num[i] = num[i];
+            r->spr_x[i] = (int16_t)((((sp->pos & 0xFF) << 1) | (sp->ctl & 1)) - FIRST_LORES);
+            r->spr_a[i] = sp->data;
+            r->spr_b[i] = sp->datb;
+        }
+        if (!bpl) {
+            r->con2 = s.bplcon2;
+        }
         memcpy(r->color, s.color, sizeof(r->color));
         memcpy(r->change, s.change, s.changes * sizeof(uint32_t));
         if (bpl) {
@@ -547,6 +679,93 @@ static void span(const row_t *r, uint16_t *out, int a, int b)
     fill(out, we, b, d.rgb[0]);
 }
 
+/* The playfield's priority code at a picture pixel (BPLCON2: a sprite pair
+ * shows in front of a playfield whose code is above the pair's number), or
+ * 8 where the playfields are transparent
+ */
+static int pf_code(const row_t *r, int x)
+{
+    if (r->planes == 0 || x < r->x0 || x >= r->x1) {
+        return 8;
+    }
+    uint16_t con0 = r->con0;
+    int d1 = r->con1 & 15, d2 = (r->con1 >> 4) & 15;
+    int v;
+    if (con0 & BPLCON0_HIRES) {
+        v = d.odd[MARGIN + 2 * (FIRST_LORES - r->first - d1) + x] | d.even[MARGIN + 2 * (FIRST_LORES - r->first - d2) + x];
+    } else {
+        int p = x / 2;
+        v = d.odd[MARGIN + FIRST_LORES - r->first - d1 + p] | d.even[MARGIN + FIRST_LORES - r->first - d2 + p];
+    }
+    int pf1p = r->con2 & 7, pf2p = (r->con2 >> 3) & 7;
+    if (con0 & BPLCON0_DPF) {
+        int p1 = s_pf1[v], p2 = s_pf2[v];
+        bool pri2 = r->con2 & BPLCON2_PF2PRI;
+        if (pri2 ? p2 : !p1 && p2) {
+            return pf2p;
+        }
+        return p1 ? pf1p : 8;
+    }
+    return v ? pf2p : 8;
+}
+
+/* The sprites over the line: lower numbers in front, then the playfields'
+ * priorities
+ */
+static void draw_sprites(const row_t *r, uint16_t *out)
+{
+    static uint8_t col[360];            /* colour (16-31) or 0, per lores pixel */
+    static uint8_t pair[360];
+    int lo = 360, hi = 0;
+    for (int k = r->sprites - 1; k >= 0; k--) {
+        int n = r->spr_num[k] & 7;
+        bool attached = r->spr_num[k] & 0x80;
+        int x = r->spr_x[k];
+        uint16_t a = r->spr_a[k], b = r->spr_b[k];
+        /* an attached odd sprite: its bits over its partner's (k - 1) */
+        uint16_t pa = 0, pb = 0;
+        if (attached && k > 0 && (r->spr_num[k - 1] & 7) == n - 1) {
+            pa = r->spr_a[k - 1];
+            pb = r->spr_b[k - 1];
+        }
+        for (int i = 0; i < 16; i++) {
+            int p = x + i;
+            if (p < 0 || p >= 360) {
+                continue;
+            }
+            int bit = 15 - i;
+            int v = ((a >> bit) & 1) | (((b >> bit) & 1) << 1);
+            int c;
+            if (attached) {
+                v = (v << 2) | ((pa >> bit) & 1) | (((pb >> bit) & 1) << 1);
+                c = 16 + v;
+            } else {
+                c = 16 + (n >> 1) * 4 + v;
+            }
+            if (v) {
+                col[p] = (uint8_t)c;
+                pair[p] = (uint8_t)(n >> 1);
+                lo = p < lo ? p : lo;
+                hi = p > hi ? p : hi;
+            }
+        }
+        if (attached && k > 0 && (r->spr_num[k - 1] & 7) == n - 1) {
+            k--;                        /* (its partner drawn with it) */
+        }
+    }
+    for (int p = lo; p <= hi; p++) {
+        if (!col[p]) {
+            continue;
+        }
+        for (int x = 2 * p; x < 2 * p + 2; x++) {
+            if (x >= r->x0 && x < r->x1 && pair[p] < pf_code(r, x)) {
+                out[x] = d.rgb[col[p]];
+            }
+        }
+        col[p] = 0;
+    }
+}
+
 static void draw(const row_t *r, uint16_t *out)
 {
     if (r->key == 0) {
@@ -581,6 +800,9 @@ static void draw(const row_t *r, uint16_t *out)
         int end = ci < n ? (int)(r->change[ci] >> 20) : PIC_W;
         span(r, out, x, end);
         x = end;
+    }
+    if (r->sprites) {
+        draw_sprites(r, out);
     }
 }
 

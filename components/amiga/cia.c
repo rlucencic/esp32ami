@@ -145,6 +145,14 @@ void cia_tod_tick(cia_t *c)
     }
 }
 
+/* A byte shifted in from outside (CIA-A: the keyboard) */
+void cia_serial_in(cia_t *c, uint8_t v)
+{
+    c->sdr = v;
+    c->icr |= ICR_SP;
+    check_irq(c);
+}
+
 void cia_flag(cia_t *c)
 {
     c->icr |= ICR_FLG;
@@ -154,8 +162,8 @@ void cia_flag(cia_t *c)
 static uint8_t port_a_in(const cia_t *c)
 {
     if (c->index == 0) {
-        /* the fire buttons (not pressed), the drives' lines, LED and OVL pulled up */
-        return 0xC3 | floppy_status();
+        /* the fire buttons, the drives' lines, LED and OVL pulled up */
+        return input_fire() | 0x03 | floppy_status();
     }
     return 0xFF;
 }
@@ -294,12 +302,7 @@ void cia_write(cia_t *c, int reg, uint8_t v)
         break;
     }
     case SDR:
-        c->sdr = v;
-        if (c->cra & CRA_SPMODE) {
-            /* shifted out at once (nothing listens yet) */
-            c->icr |= ICR_SP;
-            check_irq(c);
-        }
+        c->sdr = v;                 /* (shifted out to nobody) */
         break;
     case ICR:
         cia_sync(c, ami_now());
@@ -316,6 +319,9 @@ void cia_write(cia_t *c, int reg, uint8_t v)
         cia_sync(c, ami_now());
         if (v & CR_LOAD) {
             c->ta = c->ta_latch;
+        }
+        if (c->index == 0 && (c->cra & CRA_SPMODE) && !(v & CRA_SPMODE)) {
+            input_handshake();      /* KDAT was pulled low */
         }
         c->cra = v & ~CR_LOAD;
         plan(c);

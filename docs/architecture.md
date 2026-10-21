@@ -404,3 +404,74 @@ measurements written down.
 - Not yet: Amiga Test Kit (needs a keyboard or mouse: phase 3), the
   pointer (sprites: phase 3), a faster floppy option, `.adz`/`.dms` on the
   web page (phase 5).
+
+### Phase 3 (2026-10-21): input, the pointer, sound
+
+- **Keyboard**: key codes through CIA-A's serial port with the handshake,
+  the power-up codes, Ctrl-Amiga-Amiga's warm reset; on the board by
+  position (Windows/Command as the Amiga keys, F11 Help, Caps Lock
+  toggling), F12 switching the cursor keys and keypad to the joystick.
+- **Mouse** (port 1) and **joystick** (port 2): counters, buttons, POTGO;
+  Bluetooth/USB mice; touch as a touchpad (tap, tap-and-drag, hold for
+  the menus).
+- **Sprites**: DMA, direct writes, attached pairs, priorities against the
+  playfields: Intuition's pointer.
+- **Sound**: Paula's four channels with DMA and the interrupts, mixed to
+  44.1 kHz stereo with the A500's filters, played through the runtime's
+  speaker (which then paces the emulation).
+- **Checked**: on the host, Workbench 1.3 used by scripted input (the disk
+  opened by a double-click, the Shell opened, `dir` typed and run, `say
+  hello` spoken); Amiga Test Kit 1.21's CIA, chipset, memory, keyboard,
+  ports, audio, clock and floppy tests all pass (see CLAUDE.md, Testing).
+  On the Tab5: the same Workbench steps through the console, `say hello`,
+  Test Kit's music; 100% speed, core 1 20% (Workbench) to 37% (Test Kit
+  playing four channels).
+- **Found on the way**: the right mouse button is read with the pot pins
+  driven high (POTGO $FF00): a button must pull them low anyway. Drives
+  now take 400 ms to be ready after the motor starts (Test Kit flagged the
+  instant /RDY as a Gotek-like drive).
+- Not yet: Test Kit's video tests, sprite collisions, touch taps placing
+  the pointer where the finger is; heard and felt on the board only by
+  the user (the speaker, touch, a Bluetooth keyboard and mouse).
+
+
+### Phase 4 (2026-10-21): under way, games
+
+- **RP9** (Amiga Forever's packages, the user's game collection): the
+  manifest read (title, model, Kickstart, disks by priority, turbo
+  floppy), the floppies unpacked beside the package and inserted as ADFs;
+  the same package again gives its next disk. Of the collection's 96, the
+  65 floppy games for an A500/A500+/A2000 all boot on the host (title,
+  intro, menu or their insert-disk screen after 80 s); the 19 with hard
+  disk images wait for phase 5, the 25 for the A1200 for phase 7.
+- **Kickstart 1.2** (33.180) as a choice on the A500 and A2000 (59 of the
+  games name it), with the custom chips mirrored above the slow RAM (1.2
+  sizes the slow RAM by that mirror).
+- **Floppies**: extended ADFs (raw MFM tracks, read-only); Paula's sync
+  bit by bit (custom loaders at any bit offset); the speed decided per
+  disk instead of a setup row (the user's call): 8x for AmigaDOS disks and
+  RP9s marked turbo, real for the rest (Workbench 1.3's desktop in ~40 s).
+- **Fixes from the games**: write-only custom registers read the last word
+  on the bus (Dr. Mario), VERTB 8 clocks into line 0 (F1 GP Circuits).
+- **The 68000 on the chip bus**: instructions rounded up to 4 clocks
+  (bus slots) and the DMA's even slots taken from it (lores planes 5-6,
+  hires 3-4, the copper, the blitter; 3 clocks a slot on average).
+  Measured with SysInfo 4.4 and xSysInfo 0.12 (A500, Kickstart 1.3,
+  512 KB chip + 512 KB slow RAM), the host and the Tab5 alike:
+
+  | | SysInfo Dhrystones | x A600 | xSysInfo Dhrystones | x A600 | its MHz |
+  |---|---|---|---|---|---|
+  | bare Musashi | | | | 1.46 | 10.29 |
+  | + 4-clock rounding | 693 | 1.31 | | 1.40 | 9.26 |
+  | + DMA slots, 2 clocks each | 607 | 1.14 | 1241 | 1.23 | 8.13 |
+  | + 3 clocks a slot (now) | 564 | 1.06 | 1144 | 1.14 | 7.46 |
+
+  Both programs open 3-plane hires screens (their own DMA takes every
+  other even slot in 212 lines). A real A600 is 1.0 by definition; the
+  rest of the gap is the average model (a slot-exact one would close it).
+  The 65 games boot as before (21 pictures differ: the same screens at
+  another moment); Test Kit's CIA timers pass.
+- **The setup screen's rows scroll** (the shared runtime, the user's
+  request): five rows at a three-row card's height instead of squeezed.
+- Not yet: blitter timing per slot, Test Kit's video tests, collisions;
+  games played by hand on the board.

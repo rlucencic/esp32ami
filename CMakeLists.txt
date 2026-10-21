@@ -26,7 +26,7 @@ project(esp32ami)
 
 # The Kickstart images (not in git) go to their own partitions on "idf.py
 # flash" (roms/README.md)
-foreach(rom amiga-os-130 amiga-os-204 amiga-os-205-a600 amiga-os-310-a600 aros-20250422 aros-20250422-ext)
+foreach(rom amiga-os-120 amiga-os-130 amiga-os-204 amiga-os-205-a600 amiga-os-310-a600 aros-20250422 aros-20250422-ext)
     string(REPLACE "-" "_" part "${rom}")
     string(REPLACE "amiga_os_" "" part "${part}")
     string(REPLACE "aros_20250422" "aros" part "${part}")

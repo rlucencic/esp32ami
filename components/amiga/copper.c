@@ -184,10 +184,12 @@ void copper_run(int now, int limit)
             }
             cop.pc += 4;
             cop.at += 8;
+            ami.stall += 2 * SLOT_WAIT; /* (two even slots) */
             custom_write(reg, ir2, when, true);
             continue;
         }
         cop.pc += 4;
+        ami.stall += 2 * SLOT_WAIT;
         int t = cop.at + 8;
         if (ir2 & 1) {
             /* SKIP the next instruction once the beam is there */

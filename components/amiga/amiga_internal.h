@@ -60,6 +60,13 @@
 #define DMA_BZERO           0x2000
 #define DMA_BBUSY           0x4000
 
+/* The clocks the 68000 loses for each of its (even) chip bus slots that
+ * DMA takes: a slot is 4 clocks and the 68000 is on the bus about 3/4 of
+ * the time (SysInfo and xSysInfo against a real A600 on their 3-plane
+ * hires screens)
+ */
+#define SLOT_WAIT       3
+
 typedef struct {
     uint8_t pra, prb, ddra, ddrb;
     uint8_t cra, crb;
@@ -107,7 +114,9 @@ typedef struct {
     uint16_t intena, intreq;
     int ipl;
     uint16_t dmacon, adkcon;
-    uint16_t potgo, joytest;
+    uint16_t potgo;
+    uint16_t bus;                   /* the last word on the chip bus (CPU accesses) */
+    int stall;                      /* clocks the 68000 owes the chips' DMA (even slots taken) */
     uint16_t beamcon0;
     void (*serial)(int ch);
 } amiga_t;
@@ -160,12 +169,15 @@ typedef struct {
     uint32_t height, width;
     bool busy, pending, zero;
     int end;
+    int steal;                      /* the 68000's clocks it still takes (spread over its lines) */
+    int steal_line;                 /* of a line */
 } blitter_t;
 extern blitter_t blit;
 void blitter_reset(void);
 void blitter_write(uint32_t reg, uint16_t value, int at);
 void blitter_dma_changed(int at);
 void blitter_finish(void);
+int blitter_steal_line(void);       /* the clocks the blitter takes from the 68000 this line */
 bool blitter_busy(int at);
 
 /* display.c: Agnus's bitplane DMA and Denise */
@@ -186,7 +198,25 @@ void cia_write(cia_t *c, int reg, uint8_t value);
 void cia_sync(cia_t *c, int now);
 void cia_tod_tick(cia_t *c);
 void cia_flag(cia_t *c);            /* a falling edge on FLAG (CIA-B: the drives' index) */
+void cia_serial_in(cia_t *c, uint8_t value);
 void cia_rebase(cia_t *c, int frame_cycles);
+
+/* input.c: the keyboard, the mouse, the joystick */
+void input_reset(void);
+void input_line(void);
+void input_handshake(void);
+bool input_reset_wanted(void);      /* Ctrl-Amiga-Amiga */
+uint16_t input_joy0dat(void);
+uint16_t input_joy1dat(void);
+void input_joytest(uint16_t value);
+uint8_t input_fire(void);           /* CIA-A PRA bits 7-6 */
+uint16_t input_pot_low(void);       /* POTGOR bits a button pulls low */
+
+/* audio.c: Paula's sound */
+void audio_reset(void);
+void audio_write(uint32_t reg, uint16_t value);
+void audio_dma_changed(void);
+void audio_line(void);
 
 /* rtc.c: the battery-backed clock at $DC0000 (register 0-15) */
 void rtc_init(int64_t offset, void (*changed)(int64_t offset), bool past_99);

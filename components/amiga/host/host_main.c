@@ -12,7 +12,11 @@
  * AMI_EXC (exceptions other than interrupts; "all" with them),
  * AMI_DEBUG=<port> (serve the debugger, in real time), AMI_DF0, AMI_DF1
  * (ADF images in the drives: written to!), AMI_INSERT=<frame>:<drive>:<adf>
- * [;...] (later; an empty name ejects).
+ * [;...] (later; an empty name ejects), AMI_INPUT=<frame>:m:<dx>:<dy>:<buttons>
+ * | <frame>:k:<code hex>:<1|0> | <frame>:j:<bits hex> [;...] (the mouse,
+ * a key, the joystick at that frame; a mouse move of more than 100 is
+ * spread over the frames after), AMI_WAV=<file> (the sound), AMI_DISKLOG
+ * (each disk DMA), AMI_DUMP=<addr hex>:<bytes>:<file> (memory at the end).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -107,6 +111,13 @@ static void exception(unsigned int vector)
            m68k_get_reg(NULL, M68K_REG_SR));
 }
 
+static void disk_dma(uint16_t len, uint16_t sync, uint16_t adkcon, int cylinder, int side, uint32_t pt)
+{
+    printf("-- disk %s %u words, sync %04x%s, cylinder %d side %d, to $%06x (frame %lu)\n",
+           (len & 0x4000) ? "write" : "read", len & 0x3FFF, sync, (adkcon & 0x0400) ? "" : " (not used)",
+           cylinder, side, (unsigned)pt, (unsigned long)s_frame);
+}
+
 static void serial(int ch)
 {
     static int on = -1;
@@ -139,6 +150,43 @@ static void write_ppm(const char *path)
         }
     }
     fclose(f);
+}
+
+/* AMI_WAV: 16-bit stereo at AMIGA_AUDIO_HZ */
+static FILE *s_wav;
+static uint32_t s_wav_frames;
+
+static void wav_header(void)
+{
+    uint32_t bytes = s_wav_frames * 4, rate = AMIGA_AUDIO_HZ;
+    uint8_t h[44] = { 'R', 'I', 'F', 'F' };
+    uint32_t v;
+    v = 36 + bytes; memcpy(h + 4, &v, 4);
+    memcpy(h + 8, "WAVEfmt ", 8);
+    v = 16; memcpy(h + 16, &v, 4);
+    uint16_t w = 1; memcpy(h + 20, &w, 2);
+    w = 2; memcpy(h + 22, &w, 2);
+    memcpy(h + 24, &rate, 4);
+    v = rate * 4; memcpy(h + 28, &v, 4);
+    w = 4; memcpy(h + 32, &w, 2);
+    w = 16; memcpy(h + 34, &w, 2);
+    memcpy(h + 36, "data", 4);
+    memcpy(h + 40, &bytes, 4);
+    fseek(s_wav, 0, SEEK_SET);
+    fwrite(h, 1, sizeof(h), s_wav);
+    fseek(s_wav, 0, SEEK_END);
+}
+
+static void wav_drain(void)
+{
+    int16_t buf[2 * 1024];
+    int n;
+    while ((n = amiga_audio_render(buf, 1024)) > 0) {
+        if (s_wav) {
+            fwrite(buf, 4, (size_t)n, s_wav);
+            s_wav_frames += (uint32_t)n;
+        }
+    }
 }
 
 static uint8_t *load(const char *path, uint32_t *size)
@@ -188,6 +236,9 @@ int main(int argc, char **argv)
     cfg.rom = malloc(cfg.kickstart_size);
     cfg.serial = serial;
     amiga_exception_hook = exception;
+    if (getenv("AMI_DISKLOG")) {
+        amiga_disk_hook = disk_dma;
+    }
     if (!amiga_init(&cfg)) {
         return 1;
     }
@@ -203,10 +254,46 @@ int main(int argc, char **argv)
 
     emudbg_host_run("AMI_DEBUG", amiga_run_frame, amiga_screen_hz());
 
+    if (getenv("AMI_WAV")) {
+        s_wav = fopen(getenv("AMI_WAV"), "wb");
+        if (s_wav) {
+            wav_header();
+            amiga_audio_enable(true);
+        }
+    }
+
     int shots = env_int("AMI_SHOTS", 0), log_every = env_int("AMI_LOG", 0);
     clock_t t0 = clock();
     const char *inserts = getenv("AMI_INSERT");
+    const char *inputs = getenv("AMI_INPUT");
+    int move_x = 0, move_y = 0, buttons = 0;
     for (s_frame = 0; s_frame < (uint32_t)frames; s_frame++) {
+        for (const char *p = inputs; p && *p;) {
+            unsigned at = 0;
+            char kind = 0;
+            int a = 0, b = 0, c = 0;
+            int n = sscanf(p, "%u:%c:%x:%x", &at, &kind, (unsigned *)&a, (unsigned *)&b);
+            if (n >= 2 && at == s_frame) {
+                if (kind == 'm' && sscanf(p, "%u:m:%d:%d:%d", &at, &a, &b, &c) == 4) {
+                    move_x += a;
+                    move_y += b;
+                    buttons = c;
+                } else if (kind == 'k' && n == 4) {
+                    amiga_key((uint8_t)a, b != 0);
+                } else if (kind == 'j' && n >= 3) {
+                    amiga_joystick((uint8_t)a);
+                }
+            }
+            const char *end = strchr(p, ';');
+            p = end ? end + 1 : NULL;
+        }
+        {
+            int dx = move_x > 100 ? 100 : move_x < -100 ? -100 : move_x;
+            int dy = move_y > 100 ? 100 : move_y < -100 ? -100 : move_y;
+            move_x -= dx;
+            move_y -= dy;
+            amiga_mouse(dx, dy, (uint8_t)buttons);
+        }
         for (const char *p = inserts; p && *p;) {
             unsigned at = 0;
             int drive = 0, used = 0;
@@ -227,6 +314,7 @@ int main(int argc, char **argv)
             p = end ? end + 1 : NULL;
         }
         amiga_run_frame();
+        wav_drain();
         if (log_every && (s_frame + 1) % log_every == 0) {
             amiga_status_t st;
             amiga_get_status(&st);
@@ -249,5 +337,22 @@ int main(int argc, char **argv)
     }
     write_ppm(out);
     amiga_floppy_flush();
+    if (getenv("AMI_DUMP")) {
+        unsigned addr = 0, len = 0;
+        char file[400] = "";
+        if (sscanf(getenv("AMI_DUMP"), "%x:%u:%399s", &addr, &len, file) == 3) {
+            FILE *f = fopen(file, "wb");
+            for (unsigned i = 0; f && i < len; i++) {
+                fputc(amiga_peek8(addr + i), f);
+            }
+            if (f) {
+                fclose(f);
+            }
+        }
+    }
+    if (s_wav) {
+        wav_header();
+        fclose(s_wav);
+    }
     return 0;
 }

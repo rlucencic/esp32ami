@@ -15,7 +15,8 @@ typedef enum {
     AMIGA_A600,
 } amiga_model_t;
 
-#define AMIGA_OPCODE_TABLES_SIZE    0x50000
+/* The CPU core's handler and cycle tables, copied (see amiga_config_t) */
+#define AMIGA_OPCODE_TABLES_SIZE    (0x10000 * sizeof(void *) + 0x10000)
 
 /* The picture: PAL's overscan window in hires pixels (lores ones doubled),
  * its lines doubled (an interlaced frame's two fields line by line)
@@ -38,8 +39,8 @@ typedef struct {
     uint32_t kickstart_size;
     uint8_t *rom;               /* kickstart_size bytes: the working copy */
     /* AMIGA_OPCODE_TABLES_SIZE bytes for copies of the CPU core's opcode
-     * tables, or NULL (on the ESP32 read-only data is in flash, slow to
-     * read: these in PSRAM)
+     * tables (the cycle counts are adjusted to the Amiga's bus), or NULL to
+     * allocate them
      */
     void *opcode_tables;
     /* amiga_picture_size() bytes for three frames of the lines' records
@@ -56,6 +57,7 @@ typedef struct {
 
 typedef struct {
     uint32_t frames;            /* video frames emulated */
+    int line, cycle;            /* the beam's line, the 68000's clocks into it */
     uint32_t pc;
     uint16_t sr;
     uint16_t intena, intreq, dmacon;
@@ -90,11 +92,47 @@ uint16_t amiga_peek16(uint32_t address);
 uint8_t amiga_peek8(uint32_t address);
 void amiga_poke8(uint32_t address, uint8_t value);
 
+/* ---- Input (from any task) ---- */
+
+/* A key by its Amiga raw code ($00-$67: $45 Esc, $44 Return, $40 Space,
+ * $60/$61 Shift, $63 Ctrl, $64/$65 Alt, $66/$67 the Amiga keys, $62 Caps
+ * Lock: down while it's on). Ctrl and both Amiga keys reset the machine.
+ */
+void amiga_key(uint8_t code, bool pressed);
+/* The mouse in port 1: counts moved (down positive), buttons bit 0 left,
+ * 1 right, 2 middle
+ */
+void amiga_mouse(int dx, int dy, uint8_t buttons);
+
+#define AMIGA_JOY_UP        0x01
+#define AMIGA_JOY_DOWN      0x02
+#define AMIGA_JOY_LEFT      0x04
+#define AMIGA_JOY_RIGHT     0x08
+#define AMIGA_JOY_FIRE      0x10
+#define AMIGA_JOY_FIRE2     0x20
+
+/* The joystick in port 2 */
+void amiga_joystick(uint8_t bits);
+
+/* ---- Sound: 16-bit stereo for the speaker's task ---- */
+
+#define AMIGA_AUDIO_HZ      44100
+
+void amiga_audio_enable(bool on);
+int amiga_audio_render(int16_t *dst, int frames);   /* frames given */
+int amiga_audio_pending(void);                      /* frames waiting */
+
 /* ---- Floppy disks: ADF images in DF0: and DF1: ---- */
 
 #define AMIGA_FLOPPIES      2
 
-bool amiga_floppy_insert(int drive, const char *path);  /* read only if the file is */
+/* An ADF (read only if the file is; an extended one always), or an RP9
+ * package's first disk (unpacked once into a hidden ADF beside it; the
+ * same package again: its next disk). The disk turns 8x as fast when it
+ * can take it: an AmigaDOS disk with a filesystem, an RP9 marked
+ * "turbo-floppy"; others (own loaders, copy protection) at the real speed.
+ */
+bool amiga_floppy_insert(int drive, const char *path);
 void amiga_floppy_eject(int drive);
 const char *amiga_floppy_path(int drive);
 bool amiga_floppy_write_protected(int drive);
@@ -106,12 +144,18 @@ typedef struct {
     int light;                  /* the drive whose motor is on, or -1 */
     uint32_t reads[AMIGA_FLOPPIES], writes[AMIGA_FLOPPIES];     /* tracks */
     uint8_t cylinder[AMIGA_FLOPPIES];
+    uint8_t disk[AMIGA_FLOPPIES], disks[AMIGA_FLOPPIES];    /* an RP9's disk n of disks (0: none) */
 } amiga_floppy_status_t;
 
 void amiga_floppy_status(amiga_floppy_status_t *status);
 
-/* Debugging: called as the 68000 takes each exception (vector number) */
+/* Debugging: called as the 68000 takes each exception (vector number), as
+ * a disk DMA starts (DSKLEN's value, DSKSYNC, ADKCON, the drive's
+ * cylinder and side, DSKPT)
+ */
 extern void (*amiga_exception_hook)(unsigned int vector);
+extern void (*amiga_disk_hook)(uint16_t dsklen, uint16_t sync, uint16_t adkcon, int cylinder, int side,
+                               uint32_t pt);
 
 /* The Kickstart's version (e.g. 34.5) from its header; false if the image
  * isn't one (size, checksum)

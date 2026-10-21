@@ -15,11 +15,20 @@
  * format (sync words, header, checksums, odd/even MFM), so trackdisk and
  * the games' own loaders both read it through the DMA; a track written
  * through the DMA is decoded back into sectors when the write ends.
+ *
+ * UAE's extended ADFs ("UAE-1ADF": per track AmigaDOS sectors or raw MFM
+ * of its own length, as copy-protected disks need) are read-only. An RP9
+ * package's disks are unpacked once each into a hidden ADF beside it
+ * (".<name>.rp9.<n>.adf", written to like any ADF); putting the package in
+ * the same drive again takes its next disk.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/stat.h>
 #include "amiga_internal.h"
+#include "rp9.h"
 
 #define DRIVES          4
 #define CYLINDERS       80
@@ -27,9 +36,13 @@
 #define SECTORS         11
 #define ADF_SIZE        (CYLINDERS * 2 * SECTORS * 512)
 #define TRACK_WORDS     6334            /* a turn: 12668 bytes of MFM */
+#define MFM_MAX         8192            /* (an extended ADF's longest track) */
+#define EXT_MAX         (2560 * 1024)
+#define EXT_TRACKS      168
 #define WORD_CYCLES     224             /* 16 bit cells of 2 us, in 68000 clocks */
 #define SECTOR_WORDS    544
 #define SYNC            0x4489
+#define SPINUP_CYCLES   (7093790 * 2 / 5)   /* /RDY 400 ms after the motor starts */
 #define ADK_WORDSYNC    0x0400
 
 typedef struct {
@@ -38,12 +51,21 @@ typedef struct {
     bool selected;
     int cylinder;
     bool changed;                   /* /CHNG low: a disk was out since the last step */
+    int spinup;                     /* clocks until the motor is up to speed */
     int id_bit;                     /* the drive's ID, read through /RDY with the motor off */
 
     uint8_t *data;                  /* the image (NULL: no disk) */
+    uint32_t size;
+    bool ext;                       /* an extended ADF */
+    int ext_tracks;
+    uint32_t ext_off[EXT_TRACKS];   /* where each track's data is */
     uint16_t *mfm;                  /* the track under the head */
     int mfm_track;                  /* which (cylinder * 2 + side), -1: none */
-    char path[256];
+    int track_words;                /* its length */
+    char path[256];                 /* the file (an RP9's: its hidden copy; "": none) */
+    char shown[256];                /* what the drive has in it (the .rp9 itself) */
+    int rp9_disk, rp9_disks;
+    bool fast;                      /* turning 8x as fast (amiga_floppy_insert()) */
     bool protect;
     uint8_t dirty[CYLINDERS * 2 / 8];
     bool any_dirty;
@@ -56,6 +78,8 @@ typedef struct {
 static drive_t s_drive[DRIVES];
 static int s_side;
 
+void (*amiga_disk_hook)(uint16_t dsklen, uint16_t sync, uint16_t adkcon, int cylinder, int side, uint32_t pt);
+
 /* Paula's side */
 static struct {
     uint32_t pt;
@@ -63,6 +87,8 @@ static struct {
     uint16_t sync;
     bool active, writing, synced;
     int left;
+    uint16_t shift;                 /* the last 16 bits off the disk */
+    int bits;                       /* of the word being put together */
     int drive;                      /* the drive being written */
     bool wordequal;
     bool byte_ready;
@@ -121,7 +147,7 @@ static uint32_t be32(const uint8_t *p)
     return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
 }
 
-static void make_track(drive_t *d, int track)
+static void make_track(drive_t *d, int track, const uint8_t *sectors)
 {
     track_writer_t t = { .w = d->mfm, .n = 0, .last = 0 };
     for (int s = 0; s < SECTORS; s++) {
@@ -134,7 +160,7 @@ static void make_track(drive_t *d, int track)
         uint32_t hsum = put_odd_even(&t, &info, 1);
         hsum ^= put_odd_even(&t, label, 4);
         uint32_t data[128];
-        const uint8_t *src = d->data + ((size_t)track * SECTORS + s) * 512;
+        const uint8_t *src = sectors + (size_t)s * 512;
         for (int i = 0; i < 128; i++) {
             data[i] = be32(src + i * 4);
         }
@@ -149,9 +175,53 @@ static void make_track(drive_t *d, int track)
     while (t.n < TRACK_WORDS) {
         put_word(&t, (t.last & 1) ? 0x2AAA : 0xAAAA);
     }
-    d->mfm_track = track;
+    d->track_words = TRACK_WORDS;
 }
 
+static void blank_track(drive_t *d)
+{
+    for (int i = 0; i < TRACK_WORDS; i++) {
+        d->mfm[i] = 0xAAAA;
+    }
+    d->track_words = TRACK_WORDS;
+}
+
+/* The track under the head from the image */
+static void load_track(drive_t *d, int track)
+{
+    d->mfm_track = track;
+    if (!d->ext) {
+        if (track < CYLINDERS * 2) {
+            make_track(d, track, d->data + (size_t)track * SECTORS * 512);
+        } else {
+            blank_track(d);
+        }
+    } else if (track < d->ext_tracks) {
+        const uint8_t *e = d->data + 12 + track * 12;
+        int type = (e[2] << 8) | e[3];
+        uint32_t bits = ((uint32_t)e[8] << 24) | (e[9] << 16) | (e[10] << 8) | e[11];
+        const uint8_t *src = d->data + d->ext_off[track];
+        if (type == 0 && bits >= SECTORS * 512 * 8) {
+            make_track(d, track, src);
+        } else if (type == 1 && bits >= 16 * 1024) {
+            int words = (int)(bits / 16);
+            words = words > MFM_MAX ? MFM_MAX : words;
+            for (int i = 0; i < words; i++) {
+                d->mfm[i] = (uint16_t)((src[2 * i] << 8) | src[2 * i + 1]);
+            }
+            d->track_words = words;
+        } else {
+            blank_track(d);
+        }
+    } else {
+        blank_track(d);
+    }
+    if (d->pos >= d->track_words) {
+        d->pos %= d->track_words;
+    }
+}
+
+/* (a written track: a standard one, TRACK_WORDS) */
 static uint32_t get_long(const uint16_t *w, int i)
 {
     return ((uint32_t)w[i % TRACK_WORDS] << 16) | w[(i + 1) % TRACK_WORDS];
@@ -225,6 +295,9 @@ void floppy_control(uint8_t old, uint8_t prb)
             } else if (!motor) {
                 d->id_bit = (d->id_bit + 1) & 31;
             }
+            if (motor && !d->motor) {
+                d->spinup = SPINUP_CYCLES;
+            }
             d->motor = motor;
         }
         d->selected = now;
@@ -259,9 +332,11 @@ uint8_t floppy_status(void)
             continue;
         }
         /* a 3.5" double density drive: ID all ones (/RDY low while the
-         * motor is off); ready with it on
+         * motor is off); ready once its motor is up to speed
          */
-        v &= ~0x20;
+        if (!d->motor || d->spinup <= 0) {
+            v &= ~0x20;
+        }
         if (d->cylinder == 0) {
             v &= ~0x10;
         }
@@ -296,7 +371,8 @@ static void end_dma(void)
 {
     if (dk.writing) {
         drive_t *d = &s_drive[dk.drive];
-        if (d->data && d->mfm_track >= 0 && d->mfm_track < CYLINDERS * 2 && !d->protect) {
+        if (d->data && !d->ext && d->mfm_track >= 0 && d->mfm_track < CYLINDERS * 2 && !d->protect &&
+            d->track_words == TRACK_WORDS) {
             decode_track(d, d->mfm_track);
         }
         d->writes++;
@@ -305,45 +381,72 @@ static void end_dma(void)
     ami_set_intreq(INT_DSKBLK);
 }
 
-/* A word passes under the head of the drive Paula reads */
+static void deliver(uint16_t w)
+{
+    chip_write16(dk.pt, w);
+    dk.pt += 2;
+    if (--dk.left == 0) {
+        s_drive[dk.drive].reads++;
+        end_dma();
+    }
+}
+
+/* A word passes under the head of the drive Paula reads. With WORDSYNC
+ * its bits go through Paula's shift register one at a time: DSKSYNC is
+ * found at any bit (raw tracks needn't have it on a word boundary), starts
+ * the transfer (not itself transferred) and puts the words in step again
+ * wherever it comes. Without, the words go as they are.
+ */
 static void word_passes(drive_t *d)
 {
     int track = d->cylinder * 2 + s_side;
     if (d->mfm_track != track) {
-        if (d->cylinder < CYLINDERS) {
-            make_track(d, track);
-        } else {
-            for (int i = 0; i < TRACK_WORDS; i++) {
-                d->mfm[i] = 0xAAAA;
-            }
-            d->mfm_track = track;
-        }
+        load_track(d, track);
     }
     uint16_t w = d->mfm[d->pos];
-    dk.wordequal = w == dk.sync;
+    bool dma = dk.active && dma_on();
     dk.byte_ready = true;
-    if (dk.wordequal) {
-        ami_set_intreq(INT_DSKSYN);
-    }
-    if (!dk.active || !dma_on()) {
-        return;
-    }
-    if (dk.writing) {
+    dk.wordequal = false;
+    if (dma && dk.writing) {
         d->mfm[d->pos] = chip_read16(dk.pt);
         dk.pt += 2;
         dk.drive = (int)(d - s_drive);
-    } else if (!(ami.adkcon & ADK_WORDSYNC) || dk.synced) {
-        chip_write16(dk.pt, w);
-        dk.pt += 2;
-        if (dk.left == 1) {
-            d->reads++;
+        if (--dk.left == 0) {
+            end_dma();
         }
-    } else {
-        dk.synced = dk.wordequal;   /* (the sync word itself isn't transferred) */
         return;
     }
-    if (--dk.left == 0) {
-        end_dma();
+    if (!(ami.adkcon & ADK_WORDSYNC)) {
+        dk.shift = w;
+        if (w == dk.sync) {
+            dk.wordequal = true;
+            ami_set_intreq(INT_DSKSYN);
+        }
+        if (dma) {
+            deliver(w);
+        }
+        return;
+    }
+    for (int b = 15; b >= 0; b--) {
+        dk.shift = (uint16_t)((dk.shift << 1) | ((w >> b) & 1));
+        dk.bits++;
+        if (dk.shift == dk.sync) {
+            dk.wordequal = true;
+            ami_set_intreq(INT_DSKSYN);
+            if (dma && !dk.synced) {
+                dk.synced = true;
+                dk.bits = 0;
+                continue;
+            }
+            dk.bits = 16;
+        }
+        if (dk.bits >= 16) {
+            dk.bits = 0;
+            if (dma && dk.synced && dk.active) {
+                deliver(dk.shift);
+                dma = dk.active;
+            }
+        }
     }
 }
 
@@ -352,16 +455,19 @@ void floppy_line(int cycles)
     drive_t *r = reading();
     for (int i = 0; i < DRIVES; i++) {
         drive_t *d = &s_drive[i];
+        if (d->motor && d->spinup > 0) {
+            d->spinup -= cycles;
+        }
         if (!d->motor || !d->data) {
             continue;
         }
-        d->frac += cycles;
+        d->frac += d->fast ? cycles * 8 : cycles;
         while (d->frac >= WORD_CYCLES) {
             d->frac -= WORD_CYCLES;
             if (d == r) {
                 word_passes(d);
             }
-            if (++d->pos == TRACK_WORDS) {
+            if (++d->pos >= d->track_words) {
                 d->pos = 0;
                 if (d->selected) {
                     cia_flag(&cia[1]);      /* the index pulse */
@@ -386,6 +492,10 @@ void floppy_write(uint32_t reg, uint16_t v)
         if (!(v & 0x8000)) {
             dk.active = false;
         } else if (dk.len & 0x8000) {
+            if (amiga_disk_hook) {
+                drive_t *rd = reading();
+                amiga_disk_hook(v, dk.sync, ami.adkcon, rd ? rd->cylinder : -1, s_side, dk.pt);
+            }
             dk.active = (v & 0x3FFF) != 0;
             dk.writing = (v & 0x4000) != 0;
             dk.left = v & 0x3FFF;
@@ -411,8 +521,7 @@ uint16_t floppy_dskbytr(void)
     uint16_t v = 0;
     drive_t *d = reading();
     if (d && d->mfm_track >= 0) {
-        uint16_t w = d->mfm[d->pos];
-        v = d->frac < WORD_CYCLES / 2 ? (w >> 8) : (w & 0xFF);
+        v = dk.shift & 0xFF;
     }
     if (dk.byte_ready) {
         v |= 0x8000;
@@ -434,7 +543,7 @@ uint16_t floppy_dskbytr(void)
 
 static void flush_drive(drive_t *d)
 {
-    if (!d->data || !d->any_dirty || d->protect) {
+    if (!d->data || !d->any_dirty || d->protect || !d->path[0]) {
         return;
     }
     FILE *f = fopen(d->path, "r+b");
@@ -452,13 +561,84 @@ static void flush_drive(drive_t *d)
     d->any_dirty = false;
 }
 
-bool amiga_floppy_insert(int drive, const char *path)
+/* The drives' image and track buffers, kept for the next disk (big blocks
+ * fragment PSRAM); an extended ADF's bigger one when one comes
+ */
+static bool buffers(int drive, uint32_t size)
 {
-    if (drive < 0 || drive >= AMIGA_FLOPPIES) {
+    static uint8_t *images[AMIGA_FLOPPIES];
+    static uint32_t sizes[AMIGA_FLOPPIES];
+    static uint16_t *tracks[AMIGA_FLOPPIES];
+    drive_t *d = &s_drive[drive];
+    if (!tracks[drive]) {
+        tracks[drive] = ami_malloc(MFM_MAX * sizeof(uint16_t));
+    }
+    if (sizes[drive] < size) {
+        free(images[drive]);
+        images[drive] = ami_malloc(size > ADF_SIZE ? EXT_MAX : ADF_SIZE);
+        sizes[drive] = images[drive] ? (size > ADF_SIZE ? EXT_MAX : ADF_SIZE) : 0;
+    }
+    d->data = images[drive];
+    d->mfm = tracks[drive];
+    return d->data && d->mfm;
+}
+
+/* An AmigaDOS disk with a filesystem (a bootblock saying DOS, a root block
+ * in the middle), which loads through trackdisk: fine turning fast
+ */
+static bool dos_filesystem(const uint8_t *adf)
+{
+    const uint8_t *root = adf + 880 * 512;
+    return adf[0] == 'D' && adf[1] == 'O' && adf[2] == 'S' && root[0] == 0 && root[1] == 0 && root[2] == 0 &&
+           root[3] == 2 && root[508] == 0 && root[509] == 0 && root[510] == 0 && root[511] == 1;
+}
+
+/* An extended ADF's track table; false if it isn't one */
+static bool ext_tracks(drive_t *d)
+{
+    if (d->size < 12 || memcmp(d->data, "UAE-1ADF", 8) != 0) {
         return false;
     }
+    int n = (d->data[10] << 8) | d->data[11];
+    n = n > EXT_TRACKS ? EXT_TRACKS : n;
+    uint32_t off = 12 + (uint32_t)n * 12;
+    for (int t = 0; t < n; t++) {
+        const uint8_t *e = d->data + 12 + t * 12;
+        d->ext_off[t] = off;
+        off += ((uint32_t)e[4] << 24) | (e[5] << 16) | (e[6] << 8) | e[7];
+    }
+    if (off > d->size) {
+        return false;
+    }
+    d->ext_tracks = n;
+    return true;
+}
+
+/* The image now in d->data (d->size bytes) into the drive */
+static bool take(int drive, const char *file, bool ro)
+{
     drive_t *d = &s_drive[drive];
-    amiga_floppy_eject(drive);
+    d->ext = d->size != ADF_SIZE;
+    if (d->ext && !ext_tracks(d)) {
+        AMI_LOGW("DF%d: %s: %lu bytes is not an ADF", drive, file, (unsigned long)d->size);
+        d->data = NULL;
+        return false;
+    }
+    d->mfm_track = -1;
+    d->protect = ro || d->ext;
+    d->changed = true;
+    memset(d->dirty, 0, sizeof(d->dirty));
+    d->any_dirty = false;
+    snprintf(d->path, sizeof(d->path), "%s", file);
+    snprintf(d->shown, sizeof(d->shown), "%s", file);
+    d->rp9_disks = 0;
+    d->fast = !d->ext && dos_filesystem(d->data);
+    return true;
+}
+
+static bool load_file(int drive, const char *path)
+{
+    drive_t *d = &s_drive[drive];
     bool ro = false;
     FILE *f = fopen(path, "r+b");
     if (!f) {
@@ -471,32 +651,101 @@ bool amiga_floppy_insert(int drive, const char *path)
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
-    if (size != ADF_SIZE) {
-        AMI_LOGW("DF%d: %s: %ld bytes is not an ADF (%d)", drive, path, size, ADF_SIZE);
+    if (size != ADF_SIZE && (size < 12 || size > EXT_MAX)) {
+        AMI_LOGW("DF%d: %s: %ld bytes is not an ADF", drive, path, size);
         fclose(f);
         return false;
     }
-    /* kept for the next disk (big blocks fragment PSRAM) */
-    static uint8_t *images[AMIGA_FLOPPIES];
-    static uint16_t *tracks[AMIGA_FLOPPIES];
-    if (!images[drive]) {
-        images[drive] = ami_malloc(ADF_SIZE);
-        tracks[drive] = ami_malloc(TRACK_WORDS * sizeof(uint16_t));
-    }
-    if (!images[drive] || !tracks[drive] || fread(images[drive], 1, ADF_SIZE, f) != ADF_SIZE) {
-        fclose(f);
-        return false;
-    }
+    bool ok = buffers(drive, (uint32_t)size) && fread(d->data, 1, (size_t)size, f) == (size_t)size;
     fclose(f);
-    d->data = images[drive];
-    d->mfm = tracks[drive];
-    d->mfm_track = -1;
-    d->protect = ro;
-    d->changed = true;
-    memset(d->dirty, 0, sizeof(d->dirty));
-    d->any_dirty = false;
-    snprintf(d->path, sizeof(d->path), "%s", path);
-    AMI_LOGI("DF%d: %s%s", drive, path, ro ? " (write protected)" : "");
+    if (!ok) {
+        d->data = NULL;
+        return false;
+    }
+    d->size = (uint32_t)size;
+    return take(drive, path, ro);
+}
+
+static bool has_ext(const char *name, const char *ext)
+{
+    size_t n = strlen(name), e = strlen(ext);
+    return n > e && strcasecmp(name + n - e, ext) == 0;
+}
+
+/* An RP9's disk n through its hidden copy (made the first time) */
+static bool load_rp9(int drive, const char *path, int n, const rp9_t *r)
+{
+    drive_t *d = &s_drive[drive];
+    char copy[sizeof(d->path)];
+    const char *slash = strrchr(path, '/');
+    const char *base = slash ? slash + 1 : path;
+    int dir = slash ? (int)(slash - path + 1) : 0;
+    const char *dot = strrchr(r->disk[n], '.');
+    snprintf(copy, sizeof(copy), "%.*s.%s.%d%s", dir, path, base, n + 1, dot ? dot : ".adf");
+    struct stat st;
+    if (stat(copy, &st) == 0 && st.st_size > 0 && load_file(drive, copy)) {
+        return true;
+    }
+    if (!buffers(drive, EXT_MAX)) {
+        return false;
+    }
+    uint32_t size = 0;
+    if (!rp9_member(path, r->disk[n], d->data, EXT_MAX, &size)) {
+        AMI_LOGW("DF%d: %s: no %s in it", drive, path, r->disk[n]);
+        d->data = NULL;
+        return false;
+    }
+    d->size = size;
+    FILE *f = fopen(copy, "wb");
+    bool saved = f && fwrite(d->data, 1, size, f) == size;
+    if (f) {
+        fclose(f);
+    }
+    if (saved) {
+        return take(drive, copy, false);
+    }
+    if (!take(drive, copy, true)) {     /* (kept in memory only: write protected) */
+        return false;
+    }
+    d->path[0] = 0;
+    return true;
+}
+
+bool amiga_floppy_insert(int drive, const char *path)
+{
+    if (drive < 0 || drive >= AMIGA_FLOPPIES) {
+        return false;
+    }
+    drive_t *d = &s_drive[drive];
+    if (!has_ext(path, ".rp9")) {
+        amiga_floppy_eject(drive);
+        if (!load_file(drive, path)) {
+            return false;
+        }
+        AMI_LOGI("DF%d: %s%s", drive, path, d->protect ? " (write protected)" : "");
+        return true;
+    }
+    rp9_t r;
+    if (!rp9_read(path, &r)) {
+        AMI_LOGW("DF%d: %s: not an RP9 package", drive, path);
+        return false;
+    }
+    if (r.disks == 0) {
+        AMI_LOGW("DF%d: %s has no floppy disks (a hard disk image: not yet)", drive, path);
+        return false;
+    }
+    /* the same package again: its next disk */
+    int n = d->data && d->rp9_disks && strcmp(d->shown, path) == 0 ? (d->rp9_disk + 1) % r.disks : 0;
+    amiga_floppy_eject(drive);
+    if (!load_rp9(drive, path, n, &r)) {
+        return false;
+    }
+    snprintf(d->shown, sizeof(d->shown), "%s", path);
+    d->rp9_disk = n;
+    d->rp9_disks = r.disks;
+    d->fast = r.turbo && !d->ext;
+    AMI_LOGI("DF%d: %s, disk %d of %d (%s, Kickstart %d.%d wanted)", drive, r.title, n + 1, r.disks, r.system,
+             r.rom / 100, r.rom % 100 / 10);
     return true;
 }
 
@@ -510,6 +759,8 @@ void amiga_floppy_eject(int drive)
     d->data = NULL;
     d->mfm_track = -1;
     d->path[0] = 0;
+    d->shown[0] = 0;
+    d->rp9_disks = 0;
     d->changed = true;
     if (dk.active && dk.drive == drive) {
         dk.active = false;
@@ -518,7 +769,7 @@ void amiga_floppy_eject(int drive)
 
 const char *amiga_floppy_path(int drive)
 {
-    return drive >= 0 && drive < AMIGA_FLOPPIES && s_drive[drive].data ? s_drive[drive].path : NULL;
+    return drive >= 0 && drive < AMIGA_FLOPPIES && s_drive[drive].data ? s_drive[drive].shown : NULL;
 }
 
 bool amiga_floppy_write_protected(int drive)
@@ -565,6 +816,8 @@ void amiga_floppy_status(amiga_floppy_status_t *st)
         st->reads[i] = d->reads;
         st->writes[i] = d->writes;
         st->cylinder[i] = (uint8_t)d->cylinder;
+        st->disk[i] = (uint8_t)(d->data ? d->rp9_disk + 1 : 0);
+        st->disks[i] = (uint8_t)(d->data ? d->rp9_disks : 0);
         if (d->motor && st->light < 0) {
             st->light = i;
         }

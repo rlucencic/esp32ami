@@ -6,8 +6,8 @@
 </p>
 
 <p align="center">
-  <b>Early work in progress:</b> Workbench boots from floppy disk images; there is no keyboard,
-  mouse, mouse pointer or sound yet. The plan is in <a href="docs/architecture.md">docs/architecture.md</a>.
+  <b>Early work in progress:</b> Workbench boots and can be used with a keyboard and mouse; games
+  are the next step. The plan is in <a href="docs/architecture.md">docs/architecture.md</a>.
 </p>
 
 ## What works
@@ -16,13 +16,16 @@
 - Two floppy drives (DF0:, DF1:) for ADF images on the SD card, read and written (at a real
   drive's speed), chosen on the setup screen or the web page.
 - The battery-backed clock, on every model (Kickstart 1.3's SetClock shows years after 1999 too).
+- Bluetooth or USB keyboard and mouse, the touch screen as a touchpad, a joystick on the cursor
+  keys (F12); the mouse pointer (sprites); Paula's four sound channels through the Tab5's speaker.
+- Amiga Test Kit's CIA, memory, keyboard, controller, audio, clock and floppy tests pass.
 - The memory map (chip RAM up to 2 MB, the A500's slow RAM, the ROM overlay), the CIAs,
   Paula's interrupts, the copper, the blitter (area and line modes, fill), Denise's bitplanes
   (lores and hires, dual playfield, extra half-brite, HAM).
 - The setup screen: model (A500, A2000, A600), Kickstart, chip RAM, slow RAM, PAL or NTSC.
 
-Next: keyboard, mouse, sprites (the pointer) and sound, then games, then the A2000's and A600's
-own hardware and hard disks (see the phases in the architecture document).
+Next: games (chip RAM timing, blitter timing, copper precision, collisions), then the A2000's and
+A600's own hardware and hard disks (see the phases in the architecture document).
 
 ## Building
 

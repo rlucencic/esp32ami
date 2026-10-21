@@ -4,13 +4,16 @@
  * The board side (tasks, LCD, touch, WiFi, Bluetooth, setup screen, web
  * page, console) is the shared runtime in ../esp32emu; this file plugs the
  * Amiga into it: memory, Kickstart, settings, floppy drives, the clock,
- * status, console commands. (No keyboard, mouse or sound yet.)
+ * keyboard, mouse, joystick and touch, sound, status, console commands.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "emu/console.h"
 #include "emu/emu.h"
 #include "amiga.h"
@@ -66,6 +69,7 @@ static bool start(void)
         static char text[200];
         static const char *const names[KICK_COUNT] = {
             "Kickstart 1.3 (34.5)", "Kickstart 2.04 (37.175)", "Kickstart 2.05 (37.350)", "Kickstart 3.1 (40.63)",
+            "Kickstart 1.2 (33.180)",
         };
         snprintf(text, sizeof(text),
                  "No %s: put it in roms/ and flash with idf.py flash, or copy it into the \"roms\" folder "
@@ -103,19 +107,220 @@ static bool halted(void)
     return st.halted;
 }
 
+/* ---- Keyboard, mouse, joystick, touch ----
+ *
+ * Keys by position (a US/UK keyboard onto the Amiga's): F11 is Help, the
+ * Windows/Command keys are the Amiga keys, Caps Lock toggles as the
+ * Amiga's does. F12 makes the cursor keys and the numeric keypad (8 4 6 2,
+ * 0 fire) the joystick in port 2, Alt its fire button.
+ */
+#define K(code)     ((code) | 0x80)
+static const uint8_t usage_to_amiga[0x68] = {
+    [0x04] = K(0x20), [0x05] = K(0x35), [0x06] = K(0x33), [0x07] = K(0x22),     /* a b c d */
+    [0x08] = K(0x12), [0x09] = K(0x23), [0x0A] = K(0x24), [0x0B] = K(0x25),     /* e f g h */
+    [0x0C] = K(0x17), [0x0D] = K(0x26), [0x0E] = K(0x27), [0x0F] = K(0x28),     /* i j k l */
+    [0x10] = K(0x37), [0x11] = K(0x36), [0x12] = K(0x18), [0x13] = K(0x19),     /* m n o p */
+    [0x14] = K(0x10), [0x15] = K(0x13), [0x16] = K(0x21), [0x17] = K(0x14),     /* q r s t */
+    [0x18] = K(0x16), [0x19] = K(0x34), [0x1A] = K(0x11), [0x1B] = K(0x32),     /* u v w x */
+    [0x1C] = K(0x15), [0x1D] = K(0x31),                                         /* y z */
+    [0x1E] = K(0x01), [0x1F] = K(0x02), [0x20] = K(0x03), [0x21] = K(0x04),     /* 1 2 3 4 */
+    [0x22] = K(0x05), [0x23] = K(0x06), [0x24] = K(0x07), [0x25] = K(0x08),     /* 5 6 7 8 */
+    [0x26] = K(0x09), [0x27] = K(0x0A),                                         /* 9 0 */
+    [0x28] = K(0x44),       /* Return */
+    [0x29] = K(0x45),       /* Esc */
+    [0x2A] = K(0x41),       /* Backspace */
+    [0x2B] = K(0x42),       /* Tab */
+    [0x2C] = K(0x40),       /* Space */
+    [0x2D] = K(0x0B),       /* - */
+    [0x2E] = K(0x0C),       /* = */
+    [0x2F] = K(0x1A),       /* [ */
+    [0x30] = K(0x1B),       /* ] */
+    [0x31] = K(0x0D),       /* \ */
+    [0x32] = K(0x2B),       /* non-US # (next to Return) */
+    [0x33] = K(0x29),       /* ; */
+    [0x34] = K(0x2A),       /* ' */
+    [0x35] = K(0x00),       /* ` */
+    [0x36] = K(0x38),       /* , */
+    [0x37] = K(0x39),       /* . */
+    [0x38] = K(0x3A),       /* / */
+    [0x3A] = K(0x50), [0x3B] = K(0x51), [0x3C] = K(0x52), [0x3D] = K(0x53),     /* F1-F4 */
+    [0x3E] = K(0x54), [0x3F] = K(0x55), [0x40] = K(0x56), [0x41] = K(0x57),     /* F5-F8 */
+    [0x42] = K(0x58), [0x43] = K(0x59),                                         /* F9 F10 */
+    [0x44] = K(0x5F),       /* F11 -> Help */
+    [0x4C] = K(0x46),       /* Delete -> Del */
+    [0x4F] = K(0x4E),       /* Right */
+    [0x50] = K(0x4F),       /* Left */
+    [0x51] = K(0x4D),       /* Down */
+    [0x52] = K(0x4C),       /* Up */
+    [0x53] = K(0x5A),       /* Num Lock -> keypad ( */
+    [0x54] = K(0x5C),       /* keypad / */
+    [0x55] = K(0x5D),       /* keypad * */
+    [0x56] = K(0x4A),       /* keypad - */
+    [0x57] = K(0x5E),       /* keypad + */
+    [0x58] = K(0x43),       /* keypad Enter */
+    [0x59] = K(0x1D), [0x5A] = K(0x1E), [0x5B] = K(0x1F),                       /* keypad 1 2 3 */
+    [0x5C] = K(0x2D), [0x5D] = K(0x2E), [0x5E] = K(0x2F),                       /* keypad 4 5 6 */
+    [0x5F] = K(0x3D), [0x60] = K(0x3E), [0x61] = K(0x3F),                       /* keypad 7 8 9 */
+    [0x62] = K(0x0F),       /* keypad 0 */
+    [0x63] = K(0x3C),       /* keypad . */
+    [0x64] = K(0x30),       /* non-US \ (the ISO key left of Z) */
+    [0x67] = K(0x5B),       /* keypad = -> keypad ) */
+};
+
+/* Modifiers $E0-$E7: LCtrl LShift LAlt LGUI RCtrl RShift RAlt RGUI (one Ctrl) */
+static const uint8_t modifier_to_amiga[8] = { 0x63, 0x60, 0x64, 0x66, 0x63, 0x61, 0x65, 0x67 };
+
+static uint8_t s_modifiers;
+static bool s_caps;
+static bool s_joy_keys;             /* F12: cursor keys and keypad are the joystick */
+static uint8_t s_joy_bits;
+
+static bool joystick_key(uint8_t usage, bool pressed)
+{
+    uint8_t b = 0;
+    switch (usage) {
+    case 0x4F: case 0x5E: b = AMIGA_JOY_RIGHT; break;
+    case 0x50: case 0x5C: b = AMIGA_JOY_LEFT; break;
+    case 0x51: case 0x5A: b = AMIGA_JOY_DOWN; break;
+    case 0x52: case 0x60: b = AMIGA_JOY_UP; break;
+    case 0x5F: b = AMIGA_JOY_UP | AMIGA_JOY_LEFT; break;
+    case 0x61: b = AMIGA_JOY_UP | AMIGA_JOY_RIGHT; break;
+    case 0x59: b = AMIGA_JOY_DOWN | AMIGA_JOY_LEFT; break;
+    case 0x5B: b = AMIGA_JOY_DOWN | AMIGA_JOY_RIGHT; break;
+    case 0x62: case 0x5D: b = AMIGA_JOY_FIRE; break;
+    default: return false;
+    }
+    s_joy_bits = pressed ? s_joy_bits | b : s_joy_bits & ~b;
+    amiga_joystick(s_joy_bits);
+    return true;
+}
+
+static void hid_key(uint8_t usage, bool pressed)
+{
+    if (usage >= 0xE0 && usage <= 0xE7) {
+        int bit = usage - 0xE0;
+        if (s_joy_keys && (bit == 2 || bit == 6)) {
+            /* Alt is fire while the keys are the joystick */
+            s_joy_bits = pressed ? s_joy_bits | AMIGA_JOY_FIRE : s_joy_bits & ~AMIGA_JOY_FIRE;
+            amiga_joystick(s_joy_bits);
+            return;
+        }
+        uint8_t code = modifier_to_amiga[bit];
+        uint8_t mask = 0;
+        for (int i = 0; i < 8; i++) {
+            mask |= modifier_to_amiga[i] == code ? 1u << i : 0;
+        }
+        bool was = (s_modifiers & mask) != 0;
+        s_modifiers = pressed ? s_modifiers | (1u << bit) : s_modifiers & ~(1u << bit);
+        bool now = (s_modifiers & mask) != 0;
+        if (was != now) {
+            amiga_key(code, now);
+        }
+        return;
+    }
+    if (usage == 0x45) {            /* F12: keys <-> joystick */
+        if (pressed) {
+            s_joy_keys = !s_joy_keys;
+            s_joy_bits = 0;
+            amiga_joystick(0);
+            ESP_LOGI(TAG, "cursor keys and keypad: %s", s_joy_keys ? "joystick" : "keys");
+        }
+        return;
+    }
+    if (usage == 0x39) {            /* Caps Lock: down while it's on */
+        if (pressed) {
+            s_caps = !s_caps;
+            amiga_key(0x62, s_caps);
+        }
+        return;
+    }
+    if (s_joy_keys && joystick_key(usage, pressed)) {
+        return;
+    }
+    if (usage < sizeof(usage_to_amiga) && usage_to_amiga[usage]) {
+        amiga_key(usage_to_amiga[usage] & 0x7F, pressed);
+    }
+}
+
+static uint8_t s_mouse_buttons;
+
+static void hid_mouse(int dx, int dy, uint8_t buttons)
+{
+    s_mouse_buttons = buttons & 7;
+    amiga_mouse(dx, dy, s_mouse_buttons);
+}
+
+/* The touch screen as a touchpad: a finger moving moves the pointer (in the
+ * picture's pixels: Workbench's hires pixels, half lines), a tap clicks the
+ * left button, a tap and then touching again within 300 ms drags with it,
+ * holding still for half a second holds the right one (the menus: move to
+ * an item, let go to choose it)
+ */
+#define TOUCH_SLOP      6
+#define TOUCH_RIGHT_US  500000
+#define TOUCH_AGAIN_US  300000
+
+static void touch(int x, int y, bool pressed)
+{
+    static enum { IDLE, PENDING, MOVE, DRAG, RIGHT } state;
+    static int lx, ly, x0, y0;
+    static int64_t t0, t_tap;
+    int64_t now = esp_timer_get_time();
+    if (!pressed) {
+        if (state == PENDING) {
+            amiga_mouse(0, 0, 1);
+            vTaskDelay(pdMS_TO_TICKS(60));
+            amiga_mouse(0, 0, 0);
+            t_tap = now;
+        } else if (state == DRAG || state == RIGHT) {
+            amiga_mouse(0, 0, 0);
+        }
+        state = IDLE;
+        return;
+    }
+    switch (state) {
+    case IDLE:
+        x0 = lx = x;
+        y0 = ly = y;
+        t0 = now;
+        state = PENDING;
+        break;
+    case PENDING:
+        if (abs(x - x0) > TOUCH_SLOP || abs(y - y0) > TOUCH_SLOP) {
+            state = now - t_tap < TOUCH_AGAIN_US ? DRAG : MOVE;
+            amiga_mouse(x - lx, y - ly, state == DRAG ? 1 : 0);
+            lx = x;
+            ly = y;
+        } else if (now - t0 >= TOUCH_RIGHT_US) {
+            state = RIGHT;
+            amiga_mouse(0, 0, 2);
+        }
+        break;
+    default:
+        amiga_mouse(x - lx, y - ly, state == DRAG ? 1 : state == RIGHT ? 2 : 0);
+        lx = x;
+        ly = y;
+        break;
+    }
+}
+
 /* ---- Setup screen choices ---- */
 
 enum { CHOICE_MODEL, CHOICE_KICK, CHOICE_CHIP, CHOICE_SLOW, CHOICE_VIDEO, CHOICES };
 
 static const char *const model_names[] = { "A500", "A2000", "A600", "" };
-static const char *const kick_names_a500[] = { "1.3", "2.04", "3.1", "" };
-static const uint8_t kicks_a500[] = { KICK_13, KICK_204, KICK_31 };
+static const char *const kick_names_a500[] = { "1.2", "1.3", "2.04", "3.1", "" };
+static const uint8_t kicks_a500[] = { KICK_12, KICK_13, KICK_204, KICK_31 };
 static const char *const kick_names_a600[] = { "2.05", "3.1", "" };
 static const uint8_t kicks_a600[] = { KICK_205, KICK_31 };
 static const char *const chip_names[] = { "512 KB", "1 MB", "" };
 static const char *const chip_names_a600[] = { "512 KB", "1 MB", "2 MB", "" };
 static const uint16_t chip_sizes[] = { 512, 1024, 2048 };
-static const char *const slow_names[] = { "None", "512 KB", "" };
+/* The A500's trapdoor RAM (the A501 card) at $C00000: on the chip bus but
+ * not for the chips, "slow RAM"; fast RAM (its own bus) comes with
+ * autoconfig
+ */
+static const char *const slow_names[] = { "None", "512 KB trapdoor\n(slow RAM at $C00000)", "" };
 static const char *const slow_names_a600[] = { "None", "" };
 static const char *const video_names[] = { "PAL\n50 Hz", "NTSC\n60 Hz", "" };
 
@@ -139,7 +344,7 @@ static void model_set(int i)
 
 static const uint8_t *kicks(int *n)
 {
-    *n = a600() ? 2 : 3;
+    *n = a600() ? 2 : 4;
     return a600() ? kicks_a600 : kicks_a500;
 }
 
@@ -213,7 +418,7 @@ static const emu_choice_t choices[CHOICES] = {
     { "Model", model_names, model_get, model_set, false },
     { "Kickstart", kick_names_a500, kick_get, kick_set, false },
     { "Chip RAM", chip_names, chip_get, chip_set, false },
-    { "Slow RAM", slow_names, slow_get, slow_set, false },
+    { "More RAM", slow_names, slow_get, slow_set, false },
     { "Video", video_names, video_get, video_set, false },
 };
 
@@ -234,7 +439,7 @@ static const char *const *choice_names(int i)
 
 /* ---- Floppy drives: DF0:, DF1: (ADF), written tracks to the card ---- */
 
-static const char *const extensions[] = { ".adf", NULL };
+static const char *const extensions[] = { ".adf", ".rp9", NULL };
 static const char *const drive_names[AMIGA_FLOPPIES] = { "DF0:", "DF1:" };
 static const disks_size_t sizes[] = { { 901120, "880 KB" } };
 
@@ -247,7 +452,7 @@ static bool disk_create(const char *path, uint32_t bytes)
 static const disks_config_t disks = {
     .folder = "floppies",
     .extensions = extensions,
-    .description = "Disk images (.ADF)",
+    .description = "Disk images (.ADF) and Amiga Forever games (.RP9)",
     .title = "Floppy disks",
     .button = "Floppy",
     .nvs_namespace = "amifloppy",
@@ -257,7 +462,7 @@ static const disks_config_t disks = {
     .new_extension = ".adf",
     .sizes = sizes,
     .size_count = 1,
-    .max_upload = 4 * 1024 * 1024,
+    .max_upload = 16 * 1024 * 1024,
     .insert = amiga_floppy_insert,
     .eject = amiga_floppy_eject,
     .path = amiga_floppy_path,
@@ -293,6 +498,14 @@ static void every_second(void)
 
 /* ---- Status ---- */
 
+/* Joystick keys on the web page's status */
+static const char *input_text(void)
+{
+    return s_joy_keys ? "cursor keys and keypad are the joystick (F12 switches back), Alt fire"
+                      : "keys (F12: cursor keys and keypad as the joystick)";
+}
+
+
 static const char *const models[] = { "Amiga 500", "Amiga 2000", "Amiga 600" };
 
 static void status(emu_json_t *j, int section)
@@ -303,7 +516,12 @@ static void status(emu_json_t *j, int section)
         amiga_floppy_status(&fs);
         for (int d = 0; d < AMIGA_FLOPPIES; d++) {
             const char *name = disks_name(d);
-            snprintf(text, sizeof(text), "cylinder %u", (unsigned)fs.cylinder[d]);
+            if (fs.disks[d]) {
+                snprintf(text, sizeof(text), "disk %u of %u, cylinder %u (the same package again: its next disk)",
+                         (unsigned)fs.disk[d], (unsigned)fs.disks[d], (unsigned)fs.cylinder[d]);
+            } else {
+                snprintf(text, sizeof(text), "cylinder %u", (unsigned)fs.cylinder[d]);
+            }
             emu_json_drive(j, drive_names[d], name, amiga_floppy_write_protected(d), fs.light == d, fs.reads[d],
                            fs.writes[d], name ? text : NULL);
         }
@@ -313,7 +531,7 @@ static void status(emu_json_t *j, int section)
         return;
     }
     if (s_cfg.slow_size) {
-        snprintf(text, sizeof(text), "%s, %u KB chip RAM + %u KB slow RAM", models[s_cfg.model],
+        snprintf(text, sizeof(text), "%s, %u KB chip RAM + %u KB trapdoor (slow) RAM", models[s_cfg.model],
                  (unsigned)(s_cfg.chip_size >> 10), (unsigned)(s_cfg.slow_size >> 10));
     } else {
         snprintf(text, sizeof(text), "%s, %u KB chip RAM", models[s_cfg.model], (unsigned)(s_cfg.chip_size >> 10));
@@ -322,6 +540,7 @@ static void status(emu_json_t *j, int section)
     emu_json_row(j, "Kickstart", s_kick_name ? s_kick_name : "-");
     snprintf(text, sizeof(text), "%s, %s", s_cfg.ecs ? "ECS" : "OCS", s_cfg.ntsc ? "NTSC (60 Hz)" : "PAL (50 Hz)");
     emu_json_row(j, "Chipset", text);
+    emu_json_row(j, "Cursor keys", input_text());
 }
 
 /* ---- Console ---- */
@@ -335,12 +554,47 @@ static void console_info(char *buf, size_t len)
              st.halted ? " halted" : "");
 }
 
-/*   R <model> <kick> [chip KB] [slow KB]   restart as model 0 A500, 1 A2000,
- *                      2 A600 with Kickstart 0 1.3, 1 2.04, 2 2.05, 3 3.1
+/*   k <hex>            tap Amiga key <hex> (e.g. 44 Return, 40 Space)
+ *   K <hex> <0|1>      key down (1) or up (0)
+ *   m <dx> <dy> <btn>  move the mouse; buttons 1 left, 2 right, 4 middle
+ *   j <hex>            the joystick: 1 up, 2 down, 4 left, 8 right, 10 fire
+ *   R <model> <kick> [chip KB] [slow KB]   restart as model 0 A500, 1 A2000,
+ *                      2 A600 with Kickstart 0 1.3, 1 2.04, 2 2.05, 3 3.1, 4 1.2
  */
 static bool console_command(const char *line)
 {
     switch (line[0]) {
+    case 'k': {
+        unsigned code = strtoul(line + 1, NULL, 16);
+        amiga_key((uint8_t)code, true);
+        vTaskDelay(pdMS_TO_TICKS(80));
+        amiga_key((uint8_t)code, false);
+        return true;
+    }
+    case 'K': {
+        unsigned code = 0, down = 0;
+        if (sscanf(line + 1, "%x %u", &code, &down) == 2) {
+            amiga_key((uint8_t)code, down != 0);
+        }
+        return true;
+    }
+    case 'm': {
+        int dx = 0, dy = 0, buttons = 0;
+        sscanf(line + 1, "%d %d %d", &dx, &dy, &buttons);
+        while (dx || dy) {
+            int sx = dx > 100 ? 100 : dx < -100 ? -100 : dx;
+            int sy = dy > 100 ? 100 : dy < -100 ? -100 : dy;
+            amiga_mouse(sx, sy, (uint8_t)buttons);
+            dx -= sx;
+            dy -= sy;
+            vTaskDelay(pdMS_TO_TICKS(25));
+        }
+        amiga_mouse(0, 0, (uint8_t)buttons);
+        return true;
+    }
+    case 'j':
+        amiga_joystick((uint8_t)strtoul(line + 1, NULL, 16));
+        return true;
     case 'R': {
         int model = 0, kick = 0, chip = 0, slow = -1;
         int n = sscanf(line + 1, "%d %d %d %d", &model, &kick, &chip, &slow);
@@ -378,6 +632,13 @@ static const emu_machine_t machine = {
     .screen_mode = screen_mode,
     .screen_signature = amiga_screen_signature,
     .render_line = amiga_render_line_rgb565,
+    .audio_hz = AMIGA_AUDIO_HZ,
+    .audio_enable = amiga_audio_enable,
+    .audio_render = amiga_audio_render,
+    .audio_pending = amiga_audio_pending,
+    .hid_key = hid_key,
+    .hid_mouse = hid_mouse,
+    .touch = touch,
     .choices = choices,
     .choice_count = CHOICES,
     .choice_names = choice_names,

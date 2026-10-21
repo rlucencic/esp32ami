@@ -21,7 +21,7 @@ run: $(BUILD)/ami_host
 	sips -s format png $(BUILD)/screen.ppm --out $(BUILD)/screen.png >/dev/null
 
 $(BUILD)/ami_host: host_main.c $(AMI_OBJS) $(M68K_OBJS)
-	$(CC) $(CFLAGS) $^ -lm -lpthread -o $@
+	$(CC) $(CFLAGS) $^ -lm -lpthread -lz -o $@
 
 $(BUILD)/ami/%.o: $(AMI)/%.c $(wildcard $(AMI)/*.h $(AMI)/include/*.h)
 	@mkdir -p $(dir $@)

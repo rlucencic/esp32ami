@@ -240,7 +240,30 @@ static void start(int at)
     int cck = (blit.con1 & LINE) ? blit_line() : blit_area();
     blit.busy = true;
     blit.end = at + 8 + cck * 2;
+    /* The 68000's slots it takes: those its channels use (a line: C and
+     * D), all of them with BLTPRI ("nasty"), else the 68000 gets one in
+     * four it waits for
+     */
+    int used = (blit.con1 & LINE) ? 2 * (int)blit.height
+                                  : (int)(blit.width * blit.height) * __builtin_popcount((blit.con0 >> 8) & 0xF);
+    int steal = used * SLOT_WAIT;
+    if (!(ami.dmacon & DMA_BLTPRI)) {
+        steal = steal * 3 / 4;
+    }
+    blit.steal = steal;
+    blit.steal_line = cck > 0 ? (int)((int64_t)steal * CYCLES_LINE / (cck * 2)) : steal;
     ami_cpu_wake();
+}
+
+int blitter_steal_line(void)
+{
+    if (blit.steal <= 0) {
+        return 0;
+    }
+    int n = blit.steal < blit.steal_line ? blit.steal : blit.steal_line;
+    n = n > 0 ? n : blit.steal;
+    blit.steal -= n;
+    return n;
 }
 
 static bool dma_on(void)

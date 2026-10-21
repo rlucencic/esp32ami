@@ -6,8 +6,9 @@
  *   $200000-$9FFFFF  fast RAM once autoconfigured (not yet)
  *   $A00000-$BFFFFF  the CIAs: CIA-A while A12 is low (odd bytes), CIA-B
  *                    while A13 is low (even bytes), a register every 256
- *   $C00000-$D7FFFF  slow RAM (the A500's trapdoor); without it, the custom
- *                    chips' mirror Kickstart looks for
+ *   $C00000-$D7FFFF  slow RAM (the A500's trapdoor); above it, the custom
+ *                    chips' mirror Kickstart sizes it by (1.2 takes any
+ *                    space that isn't the mirror for RAM)
  *   $DC0000-$DCFFFF  the battery-backed clock (rtc.c)
  *   $DFF000-$DFFFFF  the custom chips (registers mirrored every $200)
  *   $F80000-$FFFFFF  Kickstart (256 KB ones mirrored)
@@ -88,10 +89,10 @@ static void cia_write8(uint32_t a, uint8_t v)
     }
 }
 
+/* (slow RAM's banks never get here) */
 static inline bool is_custom(uint32_t a)
 {
-    return (a >= 0xDFF000 && a < 0xE00000) ||
-           (a >= 0xC00000 && a < 0xD80000 && ami.slow_size == 0);
+    return (a >= 0xDFF000 && a < 0xE00000) || (a >= 0xC00000 && a < 0xD80000);
 }
 
 static inline bool is_cia(uint32_t a)
@@ -110,7 +111,10 @@ static uint16_t slow_read16(uint32_t a)
         return custom_read(a & 0x1FE);
     }
     if (is_rtc(a)) {
-        return rtc_read((a >> 2) & 15);
+        /* (the clock drives 4 data bits; the others float: xSysInfo takes
+         * zeros there for an A1000's custom chips mirrored at $DCF004)
+         */
+        return 0xFFF0 | rtc_read((a >> 2) & 15);
     }
     if (is_cia(a)) {
         int reg = (a >> 8) & 0xF;
@@ -131,7 +135,7 @@ static uint8_t slow_read8(uint32_t a)
         return cia_read8(a);
     }
     if (is_rtc(a)) {
-        return (a & 1) ? rtc_read((a >> 2) & 15) : 0;
+        return (a & 1) ? 0xF0 | rtc_read((a >> 2) & 15) : 0xFF;
     }
     return 0;
 }

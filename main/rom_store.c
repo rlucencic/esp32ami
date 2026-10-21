@@ -18,6 +18,7 @@ static const struct {
     int major, minor;
     const char *name;
 } s_kick[KICK_COUNT] = {
+    [KICK_12] = { "kick_120", 256 * 1024, 33, 180, "Kickstart 1.2 (33.180)" },
     [KICK_13] = { "kick_130", 256 * 1024, 34, 5, "Kickstart 1.3 (34.5)" },
     [KICK_204] = { "kick_204", 512 * 1024, 37, 175, "Kickstart 2.04 (37.175)" },
     [KICK_205] = { "kick_205_a600", 512 * 1024, 37, 350, "Kickstart 2.05 (37.350)" },

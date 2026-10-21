@@ -1,0 +1,23 @@
+/*
+ * Amiga Forever's RP9 packages (rp9.c)
+ */
+#pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#define RP9_DISKS       8
+#define RP9_NAME        96
+
+typedef struct {
+    char title[64];
+    char system[16];                /* "a-500", "a-1200", ... */
+    int rom;                        /* systemrom: 120 = Kickstart 1.2, 310 = 3.1 */
+    int disks;                      /* floppies, in their order */
+    char disk[RP9_DISKS][RP9_NAME];
+    bool harddrive;                 /* (a hard disk image too) */
+    bool turbo;                     /* fine with fast floppy disks */
+} rp9_t;
+
+bool rp9_read(const char *path, rp9_t *rp9);
+bool rp9_member(const char *path, const char *name, uint8_t *dst, uint32_t max, uint32_t *size);

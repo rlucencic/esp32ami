@@ -6,6 +6,7 @@ names are the ones in those sets:
 
 | File | Kickstart | Size | Flash partition |
 |---|---|---|---|
+| `amiga-os-120.rom` | 1.2 (33.180): A500, A2000 | 256 KB | `kick_120` |
 | `amiga-os-130.rom` | 1.3 (34.5): A500, A2000 | 256 KB | `kick_130` |
 | `amiga-os-204.rom` | 2.04 (37.175): A500+ | 512 KB | `kick_204` |
 | `amiga-os-205-a600.rom` | 2.05 (37.350): A600 | 512 KB | `kick_205_a600` |
