@@ -16,9 +16,10 @@
  * AMI_NEWHD=<path>:<MB> (a blank hard disk made first), AMI_DF0, AMI_DF1
  * (ADF images in the drives: written to!), AMI_INSERT=<frame>:<drive>:<adf>
  * [;...] (later; an empty name ejects), AMI_INPUT=<frame>:m:<dx>:<dy>:<buttons>
- * | <frame>:k:<code hex>:<1|0> | <frame>:j:<bits hex> [;...] (the mouse,
- * a key, the joystick at that frame; a mouse move of more than 100 is
- * spread over the frames after), AMI_WAV=<file> (the sound), AMI_DISKLOG
+ * | <frame>:k:<code hex>:<1|0> | <frame>:j:<bits hex> | <frame>:t:<text>
+ * [;...] (the mouse, a key, the joystick at that frame, text typed from
+ * then on, "\n" for Return; a mouse move of more than 100 is spread over
+ * the frames after), AMI_WAV=<file> (the sound), AMI_DISKLOG
  * (each disk DMA), AMI_DUMP=<addr hex>:<bytes>:<file> (memory at the end).
  */
 #include <stdio.h>
@@ -305,6 +306,20 @@ int main(int argc, char **argv)
                     amiga_key((uint8_t)a, b != 0);
                 } else if (kind == 'j' && n >= 3) {
                     amiga_joystick((uint8_t)a);
+                } else if (kind == 't') {
+                    char text[256];
+                    size_t len = 0;
+                    for (const char *t = strchr(strchr(p, ':') + 1, ':') + 1; *t && *t != ';' && len < sizeof(text) - 1;
+                         t++) {
+                        if (t[0] == '\\' && t[1] == 'n') {
+                            text[len++] = '\n';
+                            t++;
+                        } else {
+                            text[len++] = *t;
+                        }
+                    }
+                    text[len] = '\0';
+                    amiga_type(text);
                 }
             }
             const char *end = strchr(p, ';');

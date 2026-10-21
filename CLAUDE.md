@@ -64,7 +64,9 @@ bash -c '. $IDF_PATH/export.sh >/dev/null 2>&1; \
 Console commands: the shared ones (`emu/console.h`) and the Amiga's
 (`main/main.c`): `k <hex>` tap a key by its raw code ($44 Return, $40
 Space, $45 Esc, $50-$59 F1-F10, $5F Help; letters by position: the
-Workbench 1.3 disk's German keymap puts Y on $31), `K <hex> 0|1`, `m dx
+Workbench 1.3 disk's German keymap puts Y on $31), `K <hex> 0|1`, `T
+<text>` (typed with the US keymap's keys, one every 4 frames, `\n` for
+Return: `T newshell\n` in Workbench 3.1's Execute Command), `m dx
 dy btn` (the mouse; 1 left, 2 right, 4 middle; held until the next `m`;
 moves over 100 spread over 25 ms steps: one `m 0 0 1` then `m 0 0 0` is a
 click, two pairs a double-click), `j <hex>` the joystick (1 up, 2 down, 4
@@ -388,11 +390,23 @@ images.
   `AMI_DEBUG=<port>` (the debugger, real time), `AMI_DF0`/`AMI_DF1` (ADF
   images: they get written, use copies), `AMI_INSERT=<frame>:<drive>:<adf>
   [;...]` (an empty name ejects), `AMI_INPUT=<frame>:m:<dx>:<dy>:<buttons>
-  | <frame>:k:<code hex>:<1|0> | <frame>:j:<bits hex> [;...]` (scripted
-  mouse, keys, joystick; mouse moves over 100 spread over frames),
+  | <frame>:k:<code hex>:<1|0> | <frame>:j:<bits hex> | <frame>:t:<text>
+  [;...]` (scripted mouse, keys, joystick, typed text up to the next `;`;
+  mouse moves over 100 spread over frames),
   `AMI_WAV=<file>` (the sound). macOS's `setjmp` saves the
   signal mask: Musashi's two per `m68k_execute()` show up as
   `sigprocmask` in host profiles (not on the ESP32).
+- **The debugger** (`amiga.c`'s `emudbg_machine_t`): the 68000, `where`,
+  reset, the picture and typing (`amiga_type()`). Its picture comes from
+  its own task (on the board priority 3 on core 0, below the presenter's
+  5): it shares the drawing's state with the presenter, so
+  `display_dbg_line()` draws a line again if the presenter drew meanwhile
+  and `render_line` forgets its cached row while drawing; without a
+  presenter pinning frames (the host) `display_dbg_frame()` pins the
+  latest. Checked on the host (`AMI_DEBUG`) and the Tab5 over WiFi: typing
+  into a Shell and the picture back, whole lines while the text scrolled
+  (between the protocol's 11-line pieces the picture moves on, as with
+  every machine that runs meanwhile).
 - Kickstart 1.3 (34.5) shows its insert-disk hand after ~210 frames (4.2
   s); 2.04, 2.05 and 3.1 their rainbow tick and drive (3.1 animates the
   disk); checked on the host and the Tab5.

@@ -124,6 +124,7 @@ static void dbg_where(char *buf, size_t len)
 
 static void dbg_screen(int *width, int *height)
 {
+    display_dbg_frame();
     *width = AMIGA_SCREEN_WIDTH;
     *height = amiga_screen_height();
 }
@@ -135,7 +136,8 @@ static emudbg_machine_t s_dbg = {
     .where = dbg_where,
     .reset = amiga_reset,
     .screen = dbg_screen,
-    .render_line = amiga_render_line_rgb565,
+    .render_line = display_dbg_line,
+    .type = amiga_type,
 };
 
 /* ---- Kickstart ---- */
@@ -428,6 +430,7 @@ void amiga_run_frame(void)
         blitter_finish();
     }
     ami.frames++;
+    input_frame();
     /* the keyboard's reset: a few frames after its warning, for the OS */
     static int reset_in;
     if (input_reset_wanted()) {

@@ -1027,8 +1027,10 @@ static uint32_t pin(int f)
 }
 
 static bool s_weave;                /* (the presenter's) both fields, line by line */
+static uint32_t s_pinned_frame;     /* when the presenter last pinned */
+static volatile uint32_t s_draws;   /* lines drawn (the debugger's check) */
 
-uint32_t amiga_screen_signature(void)
+static uint32_t pin_latest(void)
 {
     uint32_t b0 = pin(0);
     s_weave = s.lace[0][b0] && s.field1;
@@ -1039,8 +1041,15 @@ uint32_t amiga_screen_signature(void)
     return s.signature[0][b0] ^ (s.signature[1][b1] * 0x9E3779B1u);
 }
 
+uint32_t amiga_screen_signature(void)
+{
+    s_pinned_frame = ami.frames;
+    return pin_latest();
+}
+
 void amiga_render_line_rgb565(int y, uint16_t *dst)
 {
+    s_draws++;
     int row = y >> 1;
     if (s.rows == NULL || row < 0 || row >= PIC_LINES) {
         memset(dst, 0, PIC_W * sizeof(uint16_t));
@@ -1050,9 +1059,36 @@ void amiga_render_line_rgb565(int y, uint16_t *dst)
     uint32_t pinned = PINNED(__atomic_load_n(&s.state[f], __ATOMIC_ACQUIRE));
     const row_t *r = &buffer(f, (int)pinned)[row];
     if (r != d.row || r->key != d.key) {
+        d.row = NULL;               /* (half drawn: see display_dbg_line()) */
         draw(r, d.line);
         d.row = r;
         d.key = r->key;
     }
     memcpy(dst, d.line, sizeof(d.line));
+}
+
+/* The debugger's picture, from its task (on the board below the presenter,
+ * on the same core: the presenter may draw in the middle of the debugger's
+ * line, never the other way round). The presenter's frame, or the latest
+ * when nothing pins (the host build, no presenter).
+ */
+void display_dbg_frame(void)
+{
+    if (ami.frames - s_pinned_frame > 25) {
+        pin_latest();
+    }
+}
+
+/* A line for the debugger: drawn again if the presenter drew meanwhile
+ * (they share the drawing's state)
+ */
+void display_dbg_line(int y, uint16_t *dst)
+{
+    for (int tries = 0; tries < 8; tries++) {
+        uint32_t before = s_draws;
+        amiga_render_line_rgb565(y, dst);
+        if (s_draws == before + 1) {
+            return;
+        }
+    }
 }

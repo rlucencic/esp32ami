@@ -19,9 +19,11 @@
 
 #define QUEUE           32
 #define HANDSHAKE_LINES (313 * 143 / 20)    /* 143 ms */
+#define KEY_SHIFT       0x60
 #define KEY_CTRL        0x63
 #define KEY_LAMIGA      0x66
 #define KEY_RAMIGA      0x67
+#define TYPE_FRAMES     2                   /* a typed key down, then up */
 
 static struct {
     /* the keyboard */
@@ -36,6 +38,14 @@ static struct {
     volatile uint8_t buttons;       /* bit 0 left, 1 right, 2 middle */
     volatile uint8_t joy;
 } s_in;
+
+/* Text being typed (amiga_type(), stepped by input_frame()) */
+static struct {
+    char text[256];
+    volatile int len;
+    int pos, phase, key;            /* key: the one down (-1: none) */
+    bool shift;
+} s_type = { .key = -1 };
 
 static void put(uint8_t code)
 {
@@ -76,6 +86,80 @@ void amiga_key(uint8_t code, bool pressed)
     if (pressed && ctrl && la && ra) {
         put(0x78);                  /* reset warning */
         s_in.reset_wanted = true;
+    }
+}
+
+/* The US keymap: a character's raw code (and Shift), -1 if it has none */
+static int ascii_key(char c, bool *shift)
+{
+    /* (by raw code from $00: the rows $00, $10, $20 and $31 on) */
+    static const char plain[] = "`1234567890-=\\\0\0qwertyuiop[]\0\0\0\0asdfghjkl;'\0\0\0\0\0\0zxcvbnm,./";
+    static const char shifted[] = "~!@#$%^&*()_+|\0\0QWERTYUIOP{}\0\0\0\0ASDFGHJKL:\"\0\0\0\0\0\0ZXCVBNM<>?";
+    *shift = false;
+    switch (c) {
+    case ' ': return 0x40;
+    case '\b': return 0x41;
+    case '\t': return 0x42;
+    case '\n': return 0x44;
+    case '\0': return -1;
+    default: break;
+    }
+    for (int i = 0; i < (int)sizeof(plain) - 1; i++) {
+        if (plain[i] == c) {
+            return i;
+        }
+        if (shifted[i] == c) {
+            *shift = true;
+            return i;
+        }
+    }
+    return -1;
+}
+
+void amiga_type(const char *text)
+{
+    s_type.len = 0;
+    size_t n = strlen(text);
+    n = n < sizeof(s_type.text) - 1 ? n : sizeof(s_type.text) - 1;
+    memcpy(s_type.text, text, n);
+    s_type.pos = 0;
+    s_type.len = (int)n;
+}
+
+bool amiga_typing(void)
+{
+    return s_type.pos < s_type.len || s_type.key >= 0;
+}
+
+/* Once a frame: the typed text's next key down, or the last one up */
+void input_frame(void)
+{
+    if (s_type.phase > 0 && --s_type.phase > 0) {
+        return;
+    }
+    if (s_type.key >= 0) {
+        amiga_key((uint8_t)s_type.key, false);
+        if (s_type.shift) {
+            amiga_key(KEY_SHIFT, false);
+        }
+        s_type.key = -1;
+        s_type.phase = TYPE_FRAMES;
+        return;
+    }
+    while (s_type.pos < s_type.len) {
+        bool shift;
+        int k = ascii_key(s_type.text[s_type.pos++], &shift);
+        if (k < 0) {
+            continue;
+        }
+        if (shift) {
+            amiga_key(KEY_SHIFT, true);
+        }
+        amiga_key((uint8_t)k, true);
+        s_type.key = k;
+        s_type.shift = shift;
+        s_type.phase = TYPE_FRAMES;
+        return;
     }
 }
 

@@ -567,6 +567,10 @@ measurements written down.
   ROM does. Workbench 1.3 and 3.1 in NTSC on the host, interlace too.
   Found on the way: an A600 with 3.1 and no hard disk waits 15-20 s for
   its IDE search (real machines do too).
+- **The debugger's machine view**: typing (`amiga_type()`, US keymap,
+  also the console's `T` and the host's `AMI_INPUT` `t`) and a picture
+  safe beside the presenter (the drawing's state is shared: lines drawn
+  again when the presenter drew meanwhile). Checked on the host and over
+  WiFi on the Tab5.
 - Not yet: Workbench 3.1 in an interlaced screen mode, NTSC's 227/228
-  colour clock lines, the speed measurements and profile, the debugger's
-  machine view.
+  colour clock lines, the speed measurements and profile.

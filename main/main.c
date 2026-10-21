@@ -689,6 +689,7 @@ static void console_info(char *buf, size_t len)
 
 /*   k <hex>            tap Amiga key <hex> (e.g. 44 Return, 40 Space)
  *   K <hex> <0|1>      key down (1) or up (0)
+ *   T <text>           type text (US keymap; "\n" for Return)
  *   m <dx> <dy> <btn>  move the mouse; buttons 1 left, 2 right, 4 middle
  *   j <hex>            the joystick: 1 up, 2 down, 4 left, 8 right, 10 fire
  *   R <model> <kick> [chip KB] [slow KB] [fast KB]   restart as model 0 A500,
@@ -703,6 +704,21 @@ static bool console_command(const char *line)
         amiga_key((uint8_t)code, true);
         vTaskDelay(pdMS_TO_TICKS(80));
         amiga_key((uint8_t)code, false);
+        return true;
+    }
+    case 'T': {
+        char text[256];
+        size_t n = 0;
+        for (const char *p = line[1] == ' ' ? line + 2 : line + 1; *p && n < sizeof(text) - 1; p++) {
+            if (p[0] == '\\' && p[1] == 'n') {
+                text[n++] = '\n';
+                p++;
+            } else {
+                text[n++] = *p;
+            }
+        }
+        text[n] = '\0';
+        amiga_type(text);
         return true;
     }
     case 'K': {

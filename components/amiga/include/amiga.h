@@ -102,6 +102,12 @@ void amiga_poke8(uint32_t address, uint8_t value);
  * Lock: down while it's on). Ctrl and both Amiga keys reset the machine.
  */
 void amiga_key(uint8_t code, bool pressed);
+/* Type text with the US keymap's keys, one a few frames ('\n' Return,
+ * '\t' Tab, '\b' Backspace; others it hasn't are skipped); replaces what's
+ * still being typed
+ */
+void amiga_type(const char *text);
+bool amiga_typing(void);
 /* The mouse in port 1: counts moved (down positive), buttons bit 0 left,
  * 1 right, 2 middle
  */

@@ -256,6 +256,8 @@ void display_fetch(void);
 void display_line_end(void);
 bool display_frame_end(void);       /* true: the frame was interlaced */
 void display_next_field(bool lace);
+void display_dbg_frame(void);       /* the debugger's picture */
+void display_dbg_line(int y, uint16_t *dst);
 void display_dma_changed(int at);
 uint16_t display_clxdat(void);      /* CLXDAT read (and cleared) */
 void display_clxcon(uint16_t value);
@@ -273,6 +275,7 @@ void cia_rebase(cia_t *c, int frame_cycles);
 /* input.c: the keyboard, the mouse, the joystick */
 void input_reset(void);
 void input_line(void);
+void input_frame(void);            /* typed text */
 void input_handshake(void);
 bool input_reset_wanted(void);      /* Ctrl-Amiga-Amiga */
 uint16_t input_joy0dat(void);
