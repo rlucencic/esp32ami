@@ -47,6 +47,8 @@ bash -c '. $IDF_PATH/export.sh >/dev/null 2>&1; \
   are refused by size; its hard disks are `.hdf` too:
   leave them). Drives DF0:, DF1: (ADFs, RP9s with floppies; the API's 1,
   2) and DH0: (HDFs, RP9s with a hard disk; 3). Uploads up to 256 MB.
+  The web page unpacks DMS archives and gzipped images (.adz, .hdz) in
+  the browser (`main/web/amifiles.js`) and uploads the ADF/HDF.
   Upload with
   `curl -T disk.adf http://amiga.local/disks/`, insert with
   `curl -X PUT --data "disk.adf" http://amiga.local/api/drive/1` (2: DF1:).
@@ -99,6 +101,8 @@ images.
 | `tools/rdb.py`, `tools/ffsls.py` | An HDF's RDB, its first partition's files |
 | `tools/clxboot.py` | Boot disks that test sprite collisions |
 | `tools/hdrom.py` | Assembles the hard disk board's boot ROM into `components/amiga/hdrom.h` |
+| `main/web/amifiles.js` | The web page's converters (served as /machine.js): DMS archives, gzipped images |
+| `tools/amifiles_test.js` | Its test: `node tools/amifiles_test.js [folder of DMS+ADF pairs]` |
 | `roms/` | The Kickstarts (copyrighted, not distributed) |
 | `partitions.csv` | nvs, phy, factory 8 MB, the six ROMs (type 0x40), storage |
 
@@ -405,6 +409,17 @@ images.
   overlapping or not by one pixel, MVBP 0/1, sprite pairs, ENSP1.
 - Amiga Test Kit's video tests (F6): all six draw; F1's PAL/NTSC frame
   (markers at lines 44, 243, 299) as its source describes.
+- **The web page's converters**: `node tools/amifiles_test.js` makes
+  DMS archives (stored and RLE tracks) and an .adz itself and unpacks
+  them; with the user's collection's folder it unpacks its 27 DMS archives (all mode 6, heavy 2) and
+  compares them with the ADFs beside them: 25 identical; WB2_0's
+  WB-2_05.ADF is really a Workbench 2.1 disk and WB2_1's WB-2_1.ADF no
+  AmigaDOS disk at all (the DMS archives unpack to Workbench2.0 and
+  Workbench2.1, every track's checksum right). In Chrome on the board's
+  page (the file staged inside a workspace folder: the browser tool takes
+  no others): a .dms and an .adz unpacked, uploaded, downloaded back
+  identical. Modes 2-5 (quick, medium, deep, heavy 1) are written after
+  xDMS but no archive here uses them.
 - `say hello` in Workbench 1.3's Shell (narrator.device) as a sound test;
   `AMI_WAV` records it on the host.
 - **On the board**: status via the web API, pictures via the console's
@@ -422,8 +437,10 @@ images.
   room (core 1 ~25% in SysInfo).
 - AROS needs its extension ROM mapped at $E00000 (it stays black now); not
   on the setup screen yet.
-- `.adz`/`.dms` converters for the web page (the user's collection has
-  DMS files beside the ADFs); extended ADFs can't be written.
+- Extended ADFs can't be written. DMS modes 2-5 untested (no archives).
+- Later (the user's "nice to have"): an RP9 inserted in the boot drive
+  could set the machine its manifest names (model, Kickstart, memory:
+  Ants wants an A500+ with 1 MB chip RAM).
 - The RP9 games with a hard disk: joined with their system disk (above).
   The six for 1.3 run through our board (host, KS 1.3 with 1 MB fast
   RAM: Hannibal's menu, also on the Tab5; Epsilon 9's intro, Flight of the

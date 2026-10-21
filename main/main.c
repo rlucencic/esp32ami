@@ -735,6 +735,12 @@ static bool console_command(const char *line)
 
 /* ---- The machine ---- */
 
+#if CONFIG_EMU_WEB
+/* web/amifiles.js: DMS archives and gzipped images unpacked in the browser */
+extern const char amifiles_js_start[] asm("_binary_amifiles_js_start");
+extern const char amifiles_js_end[] asm("_binary_amifiles_js_end");
+#endif
+
 static const emu_machine_t machine = {
     .name = "Amiga",
     .short_name = "Amiga",
@@ -759,6 +765,10 @@ static const emu_machine_t machine = {
     .choice_count = CHOICES,
     .choice_names = choice_names,
     .disks = &disks,
+#if CONFIG_EMU_WEB
+    .web_script = amifiles_js_start,
+    .web_script_end = amifiles_js_end,
+#endif
     .status = status,
     .console_info = console_info,
     .console_command = console_command,

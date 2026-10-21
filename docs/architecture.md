@@ -531,4 +531,11 @@ measurements written down.
   core 1 30%). All six 1.3 RP9 games with a hard disk start on the host
   (Ants needs its manifest's A500+: ECS, 1 MB chip RAM). An A600 with 3.1
   still boots through Gayle, unchanged.
-- Next: `.adz`/`.dms` on the web page.
+- **The web page's converters** (`main/web/amifiles.js`, the runtime's
+  machine script): DMS archives (every track's checksum checked) and
+  gzipped images unpacked in the browser. The collection's 27 DMS
+  archives unpack to their ADFs (two of its ADFs are other disks); a .dms
+  and an .adz went through the board's page in Chrome and came back
+  identical.
+- Later: an RP9 setting the machine from its manifest (the user: a nice
+  thing for the future).
