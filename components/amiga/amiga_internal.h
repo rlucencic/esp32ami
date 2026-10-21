@@ -1,0 +1,208 @@
+/*
+ * Shared state of the Amiga. Not part of the public API.
+ *
+ * Time is counted in the 68000's clocks since the frame began (two to a
+ * colour clock, 454 to a line); at each frame's end everything that keeps
+ * a time is moved back by the frame's length.
+ */
+#pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+#include "amiga.h"
+
+#ifdef ESP_PLATFORM
+#include "esp_attr.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+#define ami_malloc(n)       heap_caps_malloc((n), MALLOC_CAP_SPIRAM)
+#define AMI_HOT             IRAM_ATTR
+#define AMI_LOGI(...)       ESP_LOGI("amiga", __VA_ARGS__)
+#define AMI_LOGW(...)       ESP_LOGW("amiga", __VA_ARGS__)
+#else
+#include <stdio.h>
+#include <stdlib.h>
+#define ami_malloc(n)       malloc(n)
+#define AMI_HOT
+#define AMI_LOGI(fmt, ...)  printf("I amiga: " fmt "\n", ##__VA_ARGS__)
+#define AMI_LOGW(fmt, ...)  printf("W amiga: " fmt "\n", ##__VA_ARGS__)
+#endif
+
+#define CCK_LINE            227         /* colour clocks a line */
+#define CYCLES_LINE         (CCK_LINE * 2)
+#define NEVER               0x7FFFFFFF
+#define VBLANK_END_PAL      26          /* first line bitplane DMA may use */
+#define VBLANK_END_NTSC     21
+
+/* INTENA / INTREQ bits */
+#define INT_TBE             0x0001
+#define INT_DSKBLK          0x0002
+#define INT_SOFT            0x0004
+#define INT_PORTS           0x0008
+#define INT_COPER           0x0010
+#define INT_VERTB           0x0020
+#define INT_BLIT            0x0040
+#define INT_AUD0            0x0080
+#define INT_RBF             0x0800
+#define INT_DSKSYN          0x1000
+#define INT_EXTER           0x2000
+#define INT_INTEN           0x4000
+
+/* DMACON bits */
+#define DMA_AUD             0x000F
+#define DMA_DSK             0x0010
+#define DMA_SPR             0x0020
+#define DMA_BLT             0x0040
+#define DMA_COP             0x0080
+#define DMA_BPL             0x0100
+#define DMA_EN              0x0200
+#define DMA_BLTPRI          0x0400
+#define DMA_BZERO           0x2000
+#define DMA_BBUSY           0x4000
+
+typedef struct {
+    uint8_t pra, prb, ddra, ddrb;
+    uint8_t cra, crb;
+    uint16_t ta, tb, ta_latch, tb_latch;
+    uint32_t tod, tod_latch, alarm;
+    bool tod_latched;               /* TODHI read: frozen for reading until TODLO */
+    bool tod_halted;                /* TODHI written: stopped until TODLO */
+    uint8_t sdr;
+    uint8_t icr, icr_mask;
+    bool irq;
+    int last;                       /* the time it's up to date with */
+    int next;                       /* its next interrupting underflow, or NEVER */
+    int index;                      /* 0 CIA-A, 1 CIA-B */
+} cia_t;
+
+typedef struct {
+    amiga_model_t model;
+    bool ecs, ntsc;
+
+    /* Memory, each 16-bit word in host order (byte n at index n ^ 1); the
+     * 68000's view through 64 KB banks (NULL: the slow path)
+     */
+    uint8_t *chip;
+    uint32_t chip_size, chip_mask;  /* what Agnus addresses */
+    uint8_t *slow;
+    uint32_t slow_size;
+    uint8_t *fast;
+    uint32_t fast_size;
+    uint8_t *rom;
+    uint32_t rom_size;
+    bool ovl;                       /* the ROM over chip RAM (reads) after reset */
+
+    /* Time */
+    int cycle;                      /* when the running slice began (or now, between) */
+    bool cpu_running;
+    int line, lines;                /* this frame's line, its lines */
+    int line_start;                 /* the time the line began */
+    bool lof;                       /* long frame */
+    int e_phase;                    /* the E clock's phase at the frame's start (0-9) */
+    uint32_t frames;
+    bool halted;
+    uint32_t insns;
+
+    /* Paula's interrupts, Agnus's DMA */
+    uint16_t intena, intreq;
+    int ipl;
+    uint16_t dmacon, adkcon;
+    uint16_t potgo, joytest;
+    uint16_t beamcon0;
+    void (*serial)(int ch);
+} amiga_t;
+
+extern amiga_t ami;
+extern cia_t cia[2];
+
+static inline int ami_now(void);
+
+/* amiga.c */
+void ami_update_irq(void);
+void ami_set_intreq(uint16_t bits);
+void ami_cpu_wake(void);            /* an earlier event was scheduled: end the CPU's slice */
+
+/* mem.c */
+void mem_update_map(void);
+uint16_t chip_read16(uint32_t address);
+void chip_write16(uint32_t address, uint16_t value);
+
+/* custom.c: $DFF000-$DFF1FE (register offsets) */
+uint16_t custom_read(uint32_t reg);
+void custom_write(uint32_t reg, uint16_t value, int at, bool copper);
+void custom_reset(void);
+
+/* copper.c */
+typedef enum { COP_STOPPED, COP_FETCH, COP_WAIT } copper_state_t;
+typedef struct {
+    uint32_t lc[2];
+    uint32_t pc;
+    int at;                         /* its next step, or NEVER */
+    copper_state_t state;
+    uint16_t ir1, ir2;
+    bool danger;
+} copper_t;
+extern copper_t cop;
+void copper_reset(void);
+void copper_vblank(void);
+void copper_write(uint32_t reg, uint16_t value, int at, bool copper);
+void copper_dma_changed(int at);
+bool copper_enabled(void);
+int copper_next(void);
+void copper_run(int now, int limit);
+
+/* blitter.c */
+typedef struct {
+    uint16_t con0, con1, afwm, alwm;
+    uint32_t pt[4];                 /* A, B, C, D */
+    int16_t mod[4];
+    uint16_t dat[3];                /* A, B, C */
+    uint32_t height, width;
+    bool busy, pending, zero;
+    int end;
+} blitter_t;
+extern blitter_t blit;
+void blitter_reset(void);
+void blitter_write(uint32_t reg, uint16_t value, int at);
+void blitter_dma_changed(int at);
+void blitter_finish(void);
+bool blitter_busy(int at);
+
+/* display.c: Agnus's bitplane DMA and Denise */
+void display_init(void *picture);
+void display_reset(void);
+void display_write(uint32_t reg, uint16_t value, int at);
+void display_line_start(void);
+int display_fetch_at(void);
+void display_fetch(void);
+void display_line_end(void);
+void display_frame_end(void);
+void display_dma_changed(int at);
+
+/* cia.c */
+void cia_reset(void);
+uint8_t cia_read(cia_t *c, int reg);
+void cia_write(cia_t *c, int reg, uint8_t value);
+void cia_sync(cia_t *c, int now);
+void cia_tod_tick(cia_t *c);
+void cia_flag(cia_t *c);            /* a falling edge on FLAG (CIA-B: the drives' index) */
+void cia_rebase(cia_t *c, int frame_cycles);
+
+/* rtc.c: the battery-backed clock at $DC0000 (register 0-15) */
+void rtc_init(int64_t offset, void (*changed)(int64_t offset), bool past_99);
+uint8_t rtc_read(int reg);
+void rtc_write(int reg, uint8_t value);
+
+/* floppy.c: the drives, Paula's disk DMA */
+void floppy_reset(void);
+void floppy_control(uint8_t old_prb, uint8_t prb);
+uint8_t floppy_status(void);    /* CIA-A PRA bits 5-2: /RDY /TK0 /WPRO /CHNG */
+void floppy_line(int cycles);   /* the disks turn */
+void floppy_write(uint32_t reg, uint16_t value);
+uint16_t floppy_dskbytr(void);
+
+static inline int ami_now(void)
+{
+    extern int m68k_cycles_run(void);
+    return ami.cycle + (ami.cpu_running ? m68k_cycles_run() : 0);
+}
