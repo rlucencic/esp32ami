@@ -473,5 +473,25 @@ measurements written down.
   another moment); Test Kit's CIA timers pass.
 - **The setup screen's rows scroll** (the shared runtime, the user's
   request): five rows at a three-row card's height instead of squeezed.
-- Not yet: blitter timing per slot, Test Kit's video tests, collisions;
-  games played by hand on the board.
+- **The copper's wake-up cycle** after a WAIT (found with Test Kit's video
+  test F1): the WAIT after `WAIT $FFDF` had passed at once in line 255, so
+  what PAL programs put below line 256 came 43+ lines early or not at
+  all. Fixed, seven of the games show their lower parts (Kick Off's
+  panel, Mega Motion's menu's last row, T-Racer's last high score, Over
+  the Net's picture, Pac-Mania's whole screen ...).
+- **Collisions** (CLXCON/CLXDAT): sprites against sprites and the
+  playfields, odd planes against even, worked out per line only while a
+  program reads CLXDAT; checked with boot disks made by
+  `tools/clxboot.py` (each case's value from the HRM's rules).
+- **Test Kit's video tests**: all six draw (gradients and the PAL/NTSC
+  frame, the checkerboards, uniform colours and bars, dots, crosshatch).
+- **Past the titles** (host, the same 65 with a click, fire, Space and
+  Return at 80-116 s, pictures at 140 s): most reach their game or menus
+  (Arkanoid, Blasteroids, Face Off, Hammer Boy, Hyperion's 3D, Krypton
+  Egg, Mad Professor Mariarti, Pengo, Rage, Statix, T-Racer, Tip Off,
+  Toobin, Warm Up, X-Balls, Zarcan ...); the rest ask for their next disk
+  or wait for a particular key. Looked into: Lethal Xcess's rainbow is
+  its own "insert disk 2 and click" screen (with disk 2: its menu);
+  Exile waits for a click with the display off, then plays; Powerball and
+  Tie Break were between screens (Tie Break loads at real speed).
+- Not yet: blitter timing per slot; games played by hand on the board.

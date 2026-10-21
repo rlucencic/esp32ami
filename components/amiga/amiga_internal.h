@@ -190,6 +190,8 @@ void display_fetch(void);
 void display_line_end(void);
 void display_frame_end(void);
 void display_dma_changed(int at);
+uint16_t display_clxdat(void);      /* CLXDAT read (and cleared) */
+void display_clxcon(uint16_t value);
 
 /* cia.c */
 void cia_reset(void);

@@ -180,7 +180,8 @@ published images.
   (see the lessons). The host build's clock counts frames.
 - **Copper** (`copper.c`): restarted from COP1LC at line 0; MOVE 4 colour
   clocks (8 cycles), WAIT's end found ahead (`wait_until()`: the masks, the
-  8-bit vertical compare that wraps after line 255, BFD), SKIP; the danger
+  8-bit vertical compare that wraps after line 255, BFD), a cycle to wake
+  up after it (2 colour clocks: see the lessons), SKIP; the danger
   rule (OCS $80+, $40+ with CDANG; ECS $40+, all with CDANG). Writes the
   68000 can't notice (colours, bitplane pointers and modulos, BPLCON1-3,
   sprites) run ahead of the CPU up to the line's end or its fetch; others
@@ -207,7 +208,12 @@ published images.
   EHB, HAM, colours changed at their pixels, then the sprites (the
   record holds those armed on the line: number, position, DATA/DATB;
   attached pairs, lower numbers in front, BPLCON2's PF1P/PF2P against
-  the playfield under each pixel, clipped to the window). Sprite DMA:
+  the playfield under each pixel, clipped to the window). **Collisions**
+  (CLXCON, CLXDAT): worked out at each line's end, but only while a
+  program reads CLXDAT (for 4 frames after each read): the armed sprites'
+  pixels against each other and against the playfields (a playfield
+  matches where CLXCON's enabled planes have its values; a plane not
+  fetched is 0), odd planes against even, inside the window. Sprite DMA:
   control words on the line before the first bitplane line (25 PAL) and
   at each VSTOP, data words from VSTART. Interlace shows the field being
   drawn (both fields: later).
@@ -250,6 +256,13 @@ published images.
   screen. 1.3 doesn't mind either way.
 - **VERTB at line 0's very first clock hung F1 GP Circuits**: it waits at
   line 0; raised 8 clocks in (the interrupt reaching the 68000), it runs.
+- **The copper wakes up a cycle after a WAIT**: without that cycle the
+  instruction after `WAIT $FFDF` (line 255's last position) was compared
+  still in line 255, where any later WAIT ($2C07, for line 300) passed at
+  once (255 > $2C): everything PAL programs put below line 256 (Kick
+  Off's panel, high score tables' last rows, Test Kit's PAL frame) showed
+  43 or more lines early, or not at all. With it the next compare falls
+  in line 256 (vertical 0).
 - **Inflating on the httpd's stack rebooted the board**: miniz's
   `tinfl_decompressor` is ~10.5 KB; inserting an RP9 from the web page
   (the web server's 6 KB stack) crashed the board. On the heap now.
@@ -295,6 +308,14 @@ published images.
   both channels), the clock ("6242/7242 at $DC0000", 2026), floppy (IDs,
   all 160 tracks read, the write test on a blank disk, READY 400 ms after
   the motor). Not run yet: its video tests.
+- **Collisions**: `tools/clxboot.py out.adf <clxcon hex> <plane: 40 bytes
+  hex, 80 for hires> [n:hstart:data ...]` makes a boot disk that takes the
+  machine over: one plane's line repeated, manual sprites, every CLXDAT
+  read ORed into $7F000 (`AMI_DUMP=7F000:2:out.bin`, 700 frames). Cases
+  checked (expected values from the HRM's rules, lores and hires):
+  overlapping or not by one pixel, MVBP 0/1, sprite pairs, ENSP1.
+- Amiga Test Kit's video tests (F6): all six draw; F1's PAL/NTSC frame
+  (markers at lines 44, 243, 299) as its source describes.
 - `say hello` in Workbench 1.3's Shell (narrator.device) as a sound test;
   `AMI_WAV` records it on the host.
 - **On the board**: status via the web API, pictures via the console's
@@ -303,7 +324,7 @@ published images.
 ## Open items
 
 - Phases 4-7 (`docs/architecture.md`): games (the rest of phase 4:
-  blitter timing, Test Kit's video tests, collisions), A2000/A600
+  blitter timing per slot), A2000/A600
   specifics (autoconfig fast RAM, Gayle IDE, the hard disk board, the RP9s
   with hard disk images), NTSC details, interlace's two fields, the A1200
   (the 25 A1200 RP9s). The chip bus model is an average (`SLOT_WAIT`), not
@@ -314,9 +335,12 @@ published images.
   on the setup screen yet.
 - `.adz`/`.dms` converters for the web page (the user's collection has
   DMS files beside the ADFs); extended ADFs can't be written.
-- A local git repository (`main`), not on GitHub yet. Sprite collisions
-  (CLXDAT reads 0), the attach modes of Paula's channels, absolute touch
-  positioning (the pointer under the finger) are not done.
+- A local git repository (`main`), not on GitHub yet. The attach modes
+  of Paula's channels, absolute touch positioning (the pointer under the
+  finger) are not done. Collisions are checked by the test disks only:
+  the one game that reads CLXDAT (X-Balls) behaves the same without
+  them. Sprites show (and collide) outside the vertical window too:
+  whether OCS Denise hides them there isn't settled.
 
 ## Working with the user
 

@@ -90,6 +90,10 @@ static struct {
     uint16_t late_value[32];
     uint16_t color[32] __attribute__((aligned(4)));     /* 12-bit, as the line began */
 
+    /* collisions */
+    uint16_t clxcon, clxdat;
+    int clx_frames;                 /* worked out while > 0 (a CLXDAT read sets it) */
+
     /* the frames */
     row_t *rows;
     uint32_t signature[3];
@@ -452,6 +456,166 @@ void display_write(uint32_t reg, uint16_t v, int at)
     }
 }
 
+/* ---- Collisions (CLXDAT) ----
+ *
+ * Worked out at each line's end while a program reads CLXDAT (for a few
+ * frames after each read: it costs time, and most never look): the armed
+ * sprites against each other and against the playfields, the odd planes
+ * against the even ones, inside the display window. A playfield matches
+ * where its planes that CLXCON enables (ENBP) have the values it asks for
+ * (MVBP: a plane not fetched is 0); a sprite pair is its even sprite, the
+ * odd one too with ENSP. Hires pixels count for the sprites' lores pixel
+ * they're in.
+ */
+#define CLX_FRAMES      4
+
+uint16_t display_clxdat(void)
+{
+    uint16_t v = s.clxdat | 0x8000;
+    s.clxdat = 0;
+    s.clx_frames = CLX_FRAMES;
+    return v;
+}
+
+void display_clxcon(uint16_t v)
+{
+    s.clxcon = v;
+}
+
+/* 16 pixels of plane p's line from pixel idx on (outside it, or a plane
+ * not fetched: 0)
+ */
+static uint16_t plane16(int p, int planes, int idx)
+{
+    int n = s.words * 16;
+    if (p >= planes || idx <= -16 || idx >= n) {
+        return 0;
+    }
+    const uint16_t *d = s.data + p * s.words;
+    int w = idx >= 0 ? idx >> 4 : -1, sh = idx - w * 16;
+    uint32_t a = w >= 0 ? d[w] : 0, b = (w + 1) * 16 < n ? d[w + 1] : 0;
+    return (uint16_t)(((a << 16) | b) >> (16 - sh));
+}
+
+/* Where 16 pixels match the odd (*odd) and even (*even) playfield; idx_o
+ * and idx_e: their first pixel in the odd and the even planes
+ */
+static void matches16(int planes, int idx_o, int idx_e, uint16_t *odd, uint16_t *even)
+{
+    int enbp = (s.clxcon >> 6) & 63, mvbp = s.clxcon & 63;
+    uint16_t mo = 0xFFFF, me = 0xFFFF;
+    for (int p = 0; p < 6; p++) {
+        if (!(enbp & (1 << p))) {
+            continue;
+        }
+        uint16_t w = plane16(p, planes, (p & 1) ? idx_e : idx_o);
+        w = (mvbp & (1 << p)) ? w : (uint16_t)~w;
+        if (p & 1) {
+            me &= w;
+        } else {
+            mo &= w;
+        }
+    }
+    *odd = mo;
+    *even = me;
+}
+
+/* 32 hires pixels to their 16 lores ones (either of the two) */
+static uint16_t lores16(uint32_t v)
+{
+    v = (v | (v >> 1)) & 0x55555555u;
+    v = (v | (v >> 1)) & 0x33333333u;
+    v = (v | (v >> 2)) & 0x0F0F0F0Fu;
+    v = (v | (v >> 4)) & 0x00FF00FFu;
+    return (uint16_t)(v | (v >> 8));
+}
+
+/* Lores pixels L..L+15 inside the window (bit 15: L) */
+static uint16_t win16(int L, int hstart, int hstop)
+{
+    uint16_t m = 0;
+    for (int i = 0; i < 16; i++) {
+        if (L + i >= hstart && L + i < hstop) {
+            m |= (uint16_t)(0x8000 >> i);
+        }
+    }
+    return m;
+}
+
+/* The playfields' matches at lores pixels L..L+15 */
+static void pf_matches(int L, uint16_t *odd, uint16_t *even)
+{
+    int planes = s.fetched ? s.planes : 0;
+    int d1 = s.con1 & 15, d2 = (s.con1 >> 4) & 15;
+    if (planes && (s.con0 & BPLCON0_HIRES)) {
+        uint16_t o1, e1, o2, e2;
+        int at = 2 * (L - s.first);
+        matches16(planes, at - 2 * d1, at - 2 * d2, &o1, &e1);
+        matches16(planes, at - 2 * d1 + 16, at - 2 * d2 + 16, &o2, &e2);
+        *odd = lores16((uint32_t)o1 << 16 | o2);
+        *even = lores16((uint32_t)e1 << 16 | e2);
+    } else {
+        matches16(planes, L - s.first - d1, L - s.first - d2, odd, even);
+    }
+}
+
+static void collide(void)
+{
+    int vstart, vstop, hstart, hstop;
+    diw(&vstart, &vstop, &hstart, &hstop);
+    if (hstart >= hstop) {
+        return;
+    }
+    uint16_t clx = s.clxdat;
+    /* odd planes against even ones */
+    for (int L = hstart; L < hstop && !(clx & 1); L += 16) {
+        uint16_t o, e;
+        pf_matches(L, &o, &e);
+        if (o & e & win16(L, hstart, hstop)) {
+            clx |= 1;
+        }
+    }
+    /* the sprite pairs (up to two 16-pixel spans each) against the
+     * playfields: bits 1-4 the odd one, 5-8 the even one
+     */
+    int sx[4][2], spans[4] = { 0 };
+    uint16_t sm[4][2];
+    for (int i = 0; i < 8; i++) {
+        const sprite_t *sp = &s.spr[i];
+        if (!sp->armed || ((i & 1) && !(s.clxcon & (0x1000 << (i >> 1))))) {
+            continue;
+        }
+        int g = i >> 1, L = ((sp->pos & 0xFF) << 1) | (sp->ctl & 1);
+        uint16_t m = (sp->data | sp->datb) & win16(L, hstart, hstop);
+        if (m == 0) {
+            continue;
+        }
+        sx[g][spans[g]] = L;
+        sm[g][spans[g]] = m;
+        spans[g]++;
+        uint16_t o, e;
+        pf_matches(L, &o, &e);
+        clx |= (uint16_t)((m & o) ? 2 << g : 0);
+        clx |= (uint16_t)((m & e) ? 0x20 << g : 0);
+    }
+    /* pairs against pairs: bits 9-14 (0-1, 0-2, 0-3, 1-2, 1-3, 2-3) */
+    int bit = 9;
+    for (int a = 0; a < 4; a++) {
+        for (int b = a + 1; b < 4; b++, bit++) {
+            for (int i = 0; i < spans[a]; i++) {
+                for (int j = 0; j < spans[b]; j++) {
+                    int dx = sx[b][j] - sx[a][i];
+                    if (dx > -16 && dx < 16) {
+                        uint32_t mb = dx >= 0 ? (uint32_t)sm[b][j] >> dx : (uint32_t)sm[b][j] << -dx;
+                        clx |= (uint16_t)((sm[a][i] & mb & 0xFFFF) ? 1u << bit : 0);
+                    }
+                }
+            }
+        }
+    }
+    s.clxdat = clx;
+}
+
 /* ---- The line's record ---- */
 
 static inline uint32_t mix(uint32_t h, uint32_t v)
@@ -492,6 +656,9 @@ AMI_HOT void display_line_end(void)
     }
     int x0, x1;
     window(&x0, &x1);
+    if (s.clx_frames) {
+        collide();
+    }
     bool bpl = s.fetched && x0 < x1;
     /* the sprites showing their data on this line */
     int nspr = 0;
@@ -563,6 +730,9 @@ AMI_HOT void display_line_end(void)
 
 void display_frame_end(void)
 {
+    if (s.clx_frames) {
+        s.clx_frames--;
+    }
     s.signature[s.writing] = s.hash;
     s.hash = 0x811C9DC5u;
     uint32_t st = __atomic_load_n(&s.state, __ATOMIC_ACQUIRE), want;

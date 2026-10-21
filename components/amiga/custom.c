@@ -50,8 +50,8 @@ static uint16_t read_reg(uint32_t reg)
         return input_joy0dat();
     case 0x00C:                     /* JOY1DAT: the joystick */
         return input_joy1dat();
-    case 0x00E:                     /* CLXDAT */
-        return 0x8000;
+    case 0x00E:                     /* CLXDAT: cleared by reading */
+        return display_clxdat();
     case 0x010:                     /* ADKCONR */
         return ami.adkcon;
     case 0x012:                     /* POT0DAT, POT1DAT */
@@ -141,6 +141,9 @@ void custom_write(uint32_t reg, uint16_t v, int at, bool copper)
         }
         break;
     }
+    case 0x098:                     /* CLXCON */
+        display_clxcon(v);
+        break;
     case 0x09A:                     /* INTENA */
         ami.intena = set_clr(ami.intena, v, 0x7FFF);
         ami_update_irq();

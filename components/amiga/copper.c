@@ -166,6 +166,9 @@ void copper_run(int now, int limit)
                 cop.at = blit.end;
                 continue;
             }
+            /* a cycle to wake up before the next fetch: the instruction
+             * after WAIT $FFDF compares in line 256, not still in 255 */
+            cop.at += 4;
             cop.state = COP_FETCH;
             continue;
         }
