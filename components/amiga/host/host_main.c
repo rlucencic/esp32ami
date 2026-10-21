@@ -6,7 +6,8 @@
  *
  * Environment: AMI_CHIP_KB (512), AMI_SLOW_KB (512; 0 for none), AMI_FAST_KB
  * (0; 1024-8192: an autoconfig board), AMI_ECS,
- * AMI_NTSC, AMI_SERIAL (print what's sent on the serial port),
+ * AMI_NTSC, AMI_SERIAL (print what's sent on the serial port), AMI_EXT=<rom>
+ * (AROS's extension ROM at $E00000),
  * AMI_SHOTS=<n> (a picture every n frames, <out>-<frame>.ppm), AMI_LOG=<n>
  * (the machine's state every n frames), AMI_RING=<n> (the last n
  * instructions at the end), AMI_STOP=<pc>[:<frame>], AMI_TRACE=<pc>:<n>,
@@ -241,6 +242,15 @@ int main(int argc, char **argv)
     cfg.fast = cfg.fast_size ? malloc(cfg.fast_size) : NULL;
     cfg.kickstart = load(argv[1], &cfg.kickstart_size);
     cfg.rom = malloc(cfg.kickstart_size);
+    if (getenv("AMI_EXT")) {
+        uint32_t ext_size = 0;
+        cfg.extension = load(getenv("AMI_EXT"), &ext_size);
+        cfg.ext_rom = malloc(512 * 1024);
+        if (ext_size != 512 * 1024) {
+            fprintf(stderr, "AMI_EXT: not 512 KB\n");
+            return 1;
+        }
+    }
     cfg.serial = serial;
     amiga_exception_hook = exception;
     if (getenv("AMI_DISKLOG")) {

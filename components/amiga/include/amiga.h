@@ -40,6 +40,11 @@ typedef struct {
     const uint8_t *kickstart;   /* as dumped (big-endian): 256 or 512 KB */
     uint32_t kickstart_size;
     uint8_t *rom;               /* kickstart_size bytes: the working copy */
+    /* AROS's extension ROM for $E00000-$E7FFFF (as dumped, 512 KB; NULL:
+     * none) and 512 KB for its working copy
+     */
+    const uint8_t *extension;
+    uint8_t *ext_rom;
     /* AMIGA_OPCODE_TABLES_SIZE bytes for copies of the CPU core's opcode
      * tables (the cycle counts are adjusted to the Amiga's bus), or NULL to
      * allocate them

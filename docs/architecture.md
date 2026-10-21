@@ -585,6 +585,10 @@ measurements written down.
   and fast RAM from exec's MemList; each disk's free space from its
   AmigaDOS bitmap (`space.c`, the RDB's partitions added up), the same
   as Workbench's own figures.
+- **AROS**: its extension ROM mapped at $E00000 (the 68000 doesn't wait
+  for the chips there, as in the Kickstart); the setup screen's Kickstart
+  "AROS". Its boot screen, then the Workbench 3.1 floppy into its
+  Workbook 1.0 with both hard disks, on the host and the Tab5.
 - Not yet: Workbench 3.1 in an interlaced screen mode, NTSC's 227/228
   colour clock lines; the line records' copying and the presenter's
   scaling are the places to make faster (PPA, PIE: `../esp32emu/CLAUDE.md`).

@@ -25,7 +25,7 @@
 static const char *TAG = "main";
 
 static amiga_config_t s_cfg;
-static uint8_t *s_kick_image;
+static uint8_t *s_kick_image, *s_ext_image;
 static const char *s_kick_name;
 
 /* ---- The battery-backed clock: its offset kept in NVS, from core 0 ---- */
@@ -54,6 +54,8 @@ static void reserve_memory(void)
     s_cfg.fast = heap_caps_aligned_alloc(16, FAST_MAX, MALLOC_CAP_SPIRAM);
     s_cfg.rom = heap_caps_aligned_alloc(16, ROM_MAX_SIZE, MALLOC_CAP_SPIRAM);
     s_kick_image = heap_caps_malloc(ROM_MAX_SIZE, MALLOC_CAP_SPIRAM);
+    s_cfg.ext_rom = heap_caps_aligned_alloc(16, ROM_MAX_SIZE, MALLOC_CAP_SPIRAM);
+    s_ext_image = heap_caps_malloc(ROM_MAX_SIZE, MALLOC_CAP_SPIRAM);
     s_cfg.opcode_tables = heap_caps_malloc(AMIGA_OPCODE_TABLES_SIZE, MALLOC_CAP_SPIRAM);
     s_cfg.picture = heap_caps_calloc(1, amiga_picture_size(), MALLOC_CAP_SPIRAM);
     ESP_LOGI(TAG, "memory %s", s_cfg.chip && s_cfg.slow && s_cfg.fast && s_cfg.rom && s_kick_image &&
@@ -69,11 +71,13 @@ static bool start(void)
         return false;
     }
     uint32_t size;
-    if (!rom_store_load(settings.kick, s_kick_image, &size, &s_kick_name)) {
+    bool ext = rom_store_has_extension(settings.kick);
+    if (!rom_store_load(settings.kick, s_kick_image, &size, &s_kick_name) ||
+        (ext && (!s_ext_image || !s_cfg.ext_rom || !rom_store_load_extension(settings.kick, s_ext_image)))) {
         static char text[200];
         static const char *const names[KICK_COUNT] = {
             "Kickstart 1.3 (34.5)", "Kickstart 2.04 (37.175)", "Kickstart 2.05 (37.350)", "Kickstart 3.1 (40.63)",
-            "Kickstart 1.2 (33.180)",
+            "Kickstart 1.2 (33.180)", "AROS ROM and its extension ROM",
         };
         snprintf(text, sizeof(text),
                  "No %s: put it in roms/ and flash with idf.py flash, or copy it into the \"roms\" folder "
@@ -81,6 +85,7 @@ static bool start(void)
         emu_set_message(text);
         return false;
     }
+    s_cfg.extension = ext ? s_ext_image : NULL;
     s_cfg.model = settings.model;
     s_cfg.chip_size = settings.chip_kb * 1024u;
     s_cfg.slow_size = settings.slow_kb * 1024u;
@@ -314,10 +319,10 @@ static void touch(int x, int y, bool pressed)
 enum { CHOICE_MODEL, CHOICE_KICK, CHOICE_CHIP, CHOICE_SLOW, CHOICE_FAST, CHOICE_VIDEO, CHOICES };
 
 static const char *const model_names[] = { "A500", "A2000", "A600", "" };
-static const char *const kick_names_a500[] = { "1.2", "1.3", "2.04", "3.1", "" };
-static const uint8_t kicks_a500[] = { KICK_12, KICK_13, KICK_204, KICK_31 };
-static const char *const kick_names_a600[] = { "2.05", "3.1", "" };
-static const uint8_t kicks_a600[] = { KICK_205, KICK_31 };
+static const char *const kick_names_a500[] = { "1.2", "1.3", "2.04", "3.1", "AROS", "" };
+static const uint8_t kicks_a500[] = { KICK_12, KICK_13, KICK_204, KICK_31, KICK_AROS };
+static const char *const kick_names_a600[] = { "2.05", "3.1", "AROS", "" };
+static const uint8_t kicks_a600[] = { KICK_205, KICK_31, KICK_AROS };
 static const char *const chip_names[] = { "512 KB", "1 MB", "" };
 static const char *const chip_names_a600[] = { "512 KB", "1 MB", "2 MB", "" };
 static const uint16_t chip_sizes[] = { 512, 1024, 2048 };
@@ -649,7 +654,7 @@ static void status(emu_json_t *j, int section)
         }
         amiga_hd_status_t hs;
         amiga_hd_get_status(&hs);
-        bool ide = settings.kick == KICK_205 || settings.kick == KICK_31;
+        bool ide = settings.kick == KICK_205 || settings.kick == KICK_31 || settings.kick == KICK_AROS;
         for (int h = 0; h < AMIGA_HARD_DISKS; h++) {
             const char *name = disks_name(AMIGA_FLOPPIES + h), *how = amiga_hd_detail(h);
             const char *by = settings.kick == KICK_12 ? "Kickstart 1.2 can't boot from a hard disk (1.3 can)"

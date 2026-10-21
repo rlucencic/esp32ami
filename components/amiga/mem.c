@@ -60,6 +60,9 @@ void mem_update_map(void)
     for (uint32_t b = 0; ami.fast_base && b < (ami.fast_size >> 16); b++) {
         s_rmap[(ami.fast_base >> 16) + b] = s_wmap[(ami.fast_base >> 16) + b] = ami.fast + (b << 16);
     }
+    for (uint32_t b = 0; ami.ext && b < (EXT_ROM_SIZE >> 16); b++) {
+        s_rmap[0xE0 + b] = ami.ext + (b << 16);
+    }
     for (uint32_t b = 0xF8; b < 0x100; b++) {
         s_rmap[b] = ami.rom + ((b << 16) & (ami.rom_size - 1));
     }

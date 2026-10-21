@@ -12,9 +12,9 @@ settings_t settings;
 bool settings_kick_ok(int model, int kick)
 {
     if (model == AMIGA_A600) {
-        return kick == KICK_205 || kick == KICK_31;
+        return kick == KICK_205 || kick == KICK_31 || kick == KICK_AROS;
     }
-    return kick == KICK_12 || kick == KICK_13 || kick == KICK_204 || kick == KICK_31;
+    return kick == KICK_12 || kick == KICK_13 || kick == KICK_204 || kick == KICK_31 || kick == KICK_AROS;
 }
 
 bool settings_chip_ok(int model, int kb)

@@ -504,8 +504,13 @@ images.
   per access: a slot-exact one (the 68000's accesses against the line's
   DMA slots) would bring SysInfo and xSysInfo to 1.0; the Tab5 has the
   room (core 1 ~25% in SysInfo).
-- AROS needs its extension ROM mapped at $E00000 (it stays black now); not
-  on the setup screen yet.
+- AROS (the setup screen's Kickstart "AROS", every model): its ROM at
+  $F80000 and its extension ROM at $E00000 (`amiga_config_t.extension`,
+  partitions `kick_aros`/`kick_aros_ext` or files in the card's roms/
+  that say "AROS ROM"/"AROS EXT" at $18). Boots to its "Waiting for
+  bootable media" screen, the Workbench 3.1 floppy to its own Workbook
+  1.0 (host and Tab5: 100%, core 1 25%), DH0: through Gayle (its ata
+  driver), DH1: through our board.
 - Assembler (RISC-V with the P4's PIE SIMD; this project is Tab5 only)
   for hot paths is wanted: `../esp32emu/CLAUDE.md`, "To do". Profiles on
   the Tab5 (`docs/architecture.md`, phase 6): Kick Off 2 scrolling at

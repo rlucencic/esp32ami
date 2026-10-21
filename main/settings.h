@@ -11,6 +11,7 @@ typedef enum {
     KICK_205,               /* 2.05 (37.350): A600 */
     KICK_31,                /* 3.1 (40.63): A500, A600, A2000 */
     KICK_12,                /* 1.2 (33.180): A500, A2000 */
+    KICK_AROS,              /* AROS (free, with its extension ROM): every model */
     KICK_COUNT,
 } kick_t;
 

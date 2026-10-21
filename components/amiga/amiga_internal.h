@@ -99,6 +99,7 @@ typedef struct {
     int kick_major, kick_minor;     /* the Kickstart's version */
     uint8_t *rom;
     uint32_t rom_size;
+    uint8_t *ext;                   /* the extension ROM at $E00000 (512 KB), or NULL */
     bool ovl;                       /* the ROM over chip RAM (reads) after reset */
 
     /* Time */
@@ -122,6 +123,8 @@ typedef struct {
     uint16_t beamcon0;
     void (*serial)(int ch);
 } amiga_t;
+
+#define EXT_ROM_SIZE    (512 * 1024)    /* the extension ROM's, at $E00000 */
 
 extern amiga_t ami;
 extern cia_t cia[2];

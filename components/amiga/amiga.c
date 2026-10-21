@@ -188,9 +188,13 @@ bool amiga_init(const amiga_config_t *config)
     ami.kick_minor = minor;
     rtc_init(config->rtc_offset, config->rtc_changed, major < 36);
 
-    /* the working copy, each word in host order */
+    /* the working copies, each word in host order */
     for (uint32_t i = 0; i < ami.rom_size; i += 2) {
         *(uint16_t *)(ami.rom + i) = (uint16_t)((config->kickstart[i] << 8) | config->kickstart[i + 1]);
+    }
+    ami.ext = config->extension && config->ext_rom ? config->ext_rom : NULL;
+    for (uint32_t i = 0; ami.ext && i < EXT_ROM_SIZE; i += 2) {
+        *(uint16_t *)(ami.ext + i) = (uint16_t)((config->extension[i] << 8) | config->extension[i + 1]);
     }
 
     display_init(config->picture);
@@ -289,7 +293,8 @@ static void warm_reset(void)
 static inline bool on_cpu_bus(uint32_t pc)
 {
     pc &= 0xFFFFFF;
-    return pc >= 0xF80000 || (ami.fast_base && pc - ami.fast_base < ami.fast_size);
+    return pc >= 0xF80000 || (ami.fast_base && pc - ami.fast_base < ami.fast_size) ||
+           (ami.ext && pc >= 0xE00000 && pc < 0xE00000 + EXT_ROM_SIZE);
 }
 
 static void run_cpu(int until)

@@ -11,7 +11,7 @@ names are the ones in those sets:
 | `amiga-os-204.rom` | 2.04 (37.175): A500+ | 512 KB | `kick_204` |
 | `amiga-os-205-a600.rom` | 2.05 (37.350): A600 | 512 KB | `kick_205_a600` |
 | `amiga-os-310-a600.rom` | 3.1 (40.63): A500, A600, A2000 | 512 KB | `kick_310_a600` |
-| `aros-20250422.rom`, `aros-20250422-ext.rom` | AROS (free; not used yet) | 512 KB each | `kick_aros`, `kick_aros_ext` |
+| `aros-20250422.rom`, `aros-20250422-ext.rom` | AROS (free; the setup screen's Kickstart "AROS", with its extension ROM at $E00000) | 512 KB each | `kick_aros`, `kick_aros_ext` |
 
 `idf.py flash` writes them to their partitions. Without flashing, the
 emulator also finds them in a `roms` folder on the SD card, under any file
