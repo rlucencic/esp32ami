@@ -16,6 +16,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "emu/board.h"
 #include "emu/console.h"
 #include "emu/emu.h"
 #include "amiga.h"
@@ -103,11 +104,24 @@ static bool start(void)
     return true;
 }
 
+/* Super-hires (ECS) frames: their pixels one to one on the panel, the
+ * standard display window's 1280 (from lores pixel $81 on: the overscan at
+ * the sides cut), all the lines, centred (the overscan above and below in
+ * view)
+ */
+#define SHRES_FIRST     (4 * (0x81 - 108))
+
 static void screen_mode(emu_screen_t *mode)
 {
-    mode->width = AMIGA_SCREEN_WIDTH;
+    mode->width = amiga_screen_width();
     mode->height = amiga_screen_height();
     mode->hz = amiga_screen_hz();
+    if (mode->width > AMIGA_SCREEN_WIDTH) {
+        mode->src_w = mode->width - SHRES_FIRST < BOARD_LCD_H_RES ? mode->width - SHRES_FIRST : BOARD_LCD_H_RES;
+        mode->src_x = SHRES_FIRST;
+        mode->view_w = mode->src_w;
+        mode->view_h = mode->height;
+    }
 }
 
 static bool halted(void)
@@ -276,6 +290,7 @@ static void touch(int x, int y, bool pressed)
     static int lx, ly, x0, y0;
     static int64_t t0, t_tap;
     int64_t now = esp_timer_get_time();
+    x = x * AMIGA_SCREEN_WIDTH / amiga_screen_width();     /* (super-hires: hires pixels too) */
     if (!pressed) {
         if (state == PENDING) {
             amiga_mouse(0, 0, 1);

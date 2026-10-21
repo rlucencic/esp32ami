@@ -135,8 +135,8 @@ does.
 - Sprites from sprite DMA or written directly, their control words, the
   collision register CLXDAT worked out when it's read (from the line's
   sprite and playfield masks), CLXCON.
-- ECS Denise: super hires (1280 pixels, drawn at hires width), the
-  border blank bits, DENISEID.
+- ECS Denise: super hires (1280 pixels: such frames drawn 1440 wide, one
+  to one on the Tab5, see CLAUDE.md), the border blank bits, DENISEID.
 
 ### Paula
 

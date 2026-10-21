@@ -73,7 +73,9 @@ all are built on the shared runtime
   bits and BEAMCON0's PAL/NTSC switch
 - **Denise**: lores and hires, one to six bitplanes, dual playfield, extra
   half-brite, HAM, the eight sprites (attached pairs too), collisions;
-  **interlace** with both fields woven into one picture
+  **interlace** with both fields woven into one picture; ECS
+  **super-hires** (Workbench's 1280 x 256 and 1280 x 512), one to one on
+  the Tab5's 1280 columns
 - **Paula**: four sound channels with the A500's filters (and the power
   LED's), disk DMA with the sync word at any bit, the interrupts
 - **Two 8520 CIAs**: timers, the time-of-day counters, the keyboard's

@@ -278,9 +278,9 @@ images.
   x colour clocks per word by channels; lines 4 a pixel).
 - **Display** (`display.c`): Agnus's vertical window flip-flop (opens at
   VSTART, closes at VSTOP, reset at line 0; no DMA in vertical blank), the
-  fetch at DDFSTRT's position (words: ((stop-start)/8+1), x2 in hires;
-  first pixel lores DDFSTRT*2+17, hires +9; whole units: `(stop - start
-  + 7) / 8 + 1`), modulos after it. ECS
+  fetch at DDFSTRT's position (words: ((stop-start)/8+1), x2 in hires,
+  x4 in super-hires; first pixel lores DDFSTRT*2+17, hires +9, super-hires
+  +5; whole units: `(stop - start + 7) / 8 + 1`), modulos after it. ECS
   DIWHIGH (written after DIWSTRT/DIWSTOP) gives the window's high bits.
   Each line becomes a **record** (`row_t`): the fetched words, BPLCON0-2,
   the window, the colours as the line began, each colour write with the
@@ -305,12 +305,30 @@ images.
   picture lines, short: odd) has its own three frames of line records, and
   the presenter weaves them once both have been drawn (frames without
   LACE go to the long field's buffers, their lines doubled). Sprites show in both
-  fields (their lines doubled, as on the real one).
+  fields (their lines doubled, as on the real one). **Super-hires** (ECS,
+  BPLCON0 bit 6, masked off with OCS; at most 2 planes, fetching like 4
+  hires ones, plane 2 in the 68000's slots): a frame with such a line is
+  drawn 1440 wide (`amiga_screen_width()`, the frame's flag like its LACE
+  one), its other lines' pixels doubled. Colours as the ECS HRM's
+  appendix and graphics.library have them: pixel v shows register 5v (0,
+  5, 10, 15), each gun the mean of its nibble's halves (register 4a+b
+  holds colour a's upper 2 bits in the low half, b's in the high half: 64
+  colours, Workbench's blue turns teal), the sprites registers 16+5v at
+  4 pixels a lores one. graphics.library fetches from DDFSTRT $38 with
+  the pointers 3 words early for DIWSTRT $81: the +5 delay puts the
+  bitmap's first pixel on the window's (any other would shift it 16).
 - **The picture**: 720 x 568 (lores pixels 108-467 doubled, lines 29-312
   doubled), 4:3 at 960 x 720 on the Tab5 (`view_width` 800). NTSC:
   720 x 484 (lines 21-262, `amiga_screen_height()`), scaled to the same
   960 x 720 (taller pixels, as on an NTSC screen); the presenter follows a
-  switch between frames.
+  switch between frames. Super-hires frames (1440 x 568): one to one on
+  the panel, not stretched (the user's call): the standard window's 1280
+  columns (from lores pixel $81: the side overscan cut), all 568 rows
+  centred (the overscan above and below in view, black bars), through
+  `emu_screen_t`'s `view_w`/`view_h`/`src_x`/`src_w` (`screen_mode()` in
+  `main.c`). 1280 x 256's lines are doubled like the others, so both
+  modes fill 1280 x 512 (flatter than on a monitor). Touch: picture x
+  scaled back to hires pixels.
 
 ## Lessons (each one cost a debugging session)
 
@@ -453,6 +471,15 @@ images.
   alternate white and black (host and Tab5). Workbench 1.3 interlaced:
   `devs/system-configuration` byte 185 bit 0 (LaceWB) set with
   `tools/adf.py`; 640 x 512 on the host and the Tab5 (100%, core 1 22%).
+- **Super-hires**: Workbench 3.1 from HD on the A600 host (`AMI_MODEL=2
+  AMI_ECS=1 ... AMI_HD0=<copy> AMI_DF1=<Extras 3.1>`), Right-Amiga+E
+  (`k:67` with `k:12`), `t:extras3.1:prefs/screenmode\n`, at frame 4400
+  `m:105:92:0` and a click picks PAL:1280 x 256 (`m:105:110:0` the
+  interlaced one), then `m:-60:290:0` and a click is Save: the picture
+  1440 x 568, Workbench's 1280 pixels exactly at columns 84-1363, the
+  text sharp, the pointer in its three colours (2026-10-21). On the Tab5
+  the user went through every mode ScreenMode offers (lores, hires,
+  super-hires, interlaced or not) and found them all right on the panel.
 - **NTSC**: `AMI_NTSC`: Workbench 1.3 (640 x 200) and 3.1 from HD at
   720 x 484, interlace too. Kickstart 3.1's **Early Startup Control**:
   both mouse buttons held from power-on (`AMI_INPUT=0:m:0:0:3`, the
@@ -543,10 +570,14 @@ images.
   chip RAM; the machine isn't set from the manifest yet); the ten for
   3.1 are A1200 games (Football Glory loads and runs, picture black: AGA,
   phase 7); three name no system disk.
-- ECS's super-hires (BPLCON0 SHRES, 1280 pixels across) isn't drawn:
-  ScreenMode offers PAL:1280 x 256/512 on ECS, and they'd show wrong.
-- The attach modes of Paula's channels, absolute touch positioning (the pointer under the
-  finger) are not done. Collisions are checked by the test disks only:
+- Super-hires: dual playfield in it isn't drawn as such (2 planes as
+  one), BPLCON1's scroll is taken as lores pixels (4 super-hires ones),
+  the sprites' 70 ns positions aren't there; a lores or hires screen
+  dragged over a super-hires one wasn't tried.
+- The attach modes of Paula's channels are not done. Absolute touch
+  positioning (the pointer under the finger) is not wanted: the user
+  finds the touchpad better (the pointer's tip in sight, a tap anywhere
+  clicks). Collisions are checked by the test disks only:
   the one game that reads CLXDAT (X-Balls) behaves the same without
   them. Sprites show (and collide) outside the vertical window too:
   whether OCS Denise hides them there isn't settled.

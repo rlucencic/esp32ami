@@ -143,12 +143,12 @@ static void write_ppm(const char *path)
         return;
     }
     amiga_screen_signature();       /* (shows the latest frame) */
-    int height = amiga_screen_height();
-    fprintf(f, "P6\n%d %d\n255\n", AMIGA_SCREEN_WIDTH, height);
-    static uint16_t line[AMIGA_SCREEN_WIDTH];
+    int width = amiga_screen_width(), height = amiga_screen_height();
+    fprintf(f, "P6\n%d %d\n255\n", width, height);
+    static uint16_t line[2 * AMIGA_SCREEN_WIDTH];
     for (int y = 0; y < height; y++) {
         amiga_render_line_rgb565(y, line);
-        for (int x = 0; x < AMIGA_SCREEN_WIDTH; x++) {
+        for (int x = 0; x < width; x++) {
             uint16_t c = line[x];
             uint8_t rgb[3] = { (uint8_t)(((c >> 11) & 31) * 255 / 31), (uint8_t)(((c >> 5) & 63) * 255 / 63),
                                (uint8_t)((c & 31) * 255 / 31) };

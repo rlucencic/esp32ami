@@ -20,7 +20,8 @@ typedef enum {
 
 /* The picture: the overscan window in hires pixels (lores ones doubled),
  * its lines doubled (an interlaced frame's two fields line by line): PAL
- * lines 29-312, NTSC 21-262 (amiga_screen_height())
+ * lines 29-312, NTSC 21-262 (amiga_screen_height()). A frame with ECS
+ * super-hires lines is twice as wide (amiga_screen_width()).
  */
 #define AMIGA_SCREEN_WIDTH          720
 #define AMIGA_SCREEN_LINES          284         /* beam lines shown (PAL, the most) */
@@ -87,10 +88,12 @@ void amiga_run_frame(void);
 int amiga_screen_hz(void);
 int amiga_screen_height(void);      /* AMIGA_SCREEN_HEIGHT, NTSC's less */
 
-/* The picture (the presenter's task): a signature that changes with it, its
- * lines (AMIGA_SCREEN_WIDTH pixels)
+/* The picture (the presenter's task): a signature that changes with it
+ * (and picks the frame), its width (AMIGA_SCREEN_WIDTH or, super-hires,
+ * twice that), its lines
  */
 uint32_t amiga_screen_signature(void);
+int amiga_screen_width(void);
 void amiga_render_line_rgb565(int y, uint16_t *dst);
 
 void amiga_get_status(amiga_status_t *status);

@@ -26,6 +26,14 @@
  * in BPLCON0 during the frame, LOF then toggles): each field has its own
  * frames, and the presenter weaves them, the long field's lines even, the
  * short one's odd, once both have been drawn.
+ *
+ * ECS super-hires (SHRES in BPLCON0, up to 2 planes, 4 pixels a lores
+ * one): a frame with such lines is drawn in super-hires pixels (1440
+ * wide), the other lines' pixels doubled. Its 4 colours are registers 0,
+ * 5, 10 and 15, each gun the mean of its nibble's two halves (the way
+ * graphics.library sets them up: register 4a + b holds colour a's upper 2
+ * bits in the lower half and b's in the upper one); the sprites' are
+ * 16, 21, 26 and 31, at their lores positions.
  */
 #include <stdlib.h>
 #include <string.h>
@@ -37,9 +45,15 @@
 #define FIRST_LINE_PAL  29
 #define FIRST_LINE_NTSC 21
 #define MAX_CHANGES     160
-#define MAX_WORDS       200             /* planes x words: 6 x 25 lores, 4 x 50 hires */
+#define MAX_WORDS       200             /* planes x words: 6 x 25 lores, 4 x 50 hires, 2 x 100 super-hires */
+#define WIDE_W          (2 * PIC_W)     /* a frame with super-hires lines */
+/* The first fetched pixel after DDFSTRT, in lores pixels */
+#define DELAY_LORES     17
+#define DELAY_HIRES     9
+#define DELAY_SHRES     5
 
 #define BPLCON0_HIRES   0x8000
+#define BPLCON0_SHRES   0x0040          /* ECS (masked off with OCS) */
 #define BPLCON0_HAM     0x0800
 #define BPLCON0_DPF     0x0400
 #define BPLCON2_PF2PRI  0x0040
@@ -102,11 +116,13 @@ static struct {
     row_t *rows;
     uint32_t signature[2][3];
     bool lace[2][3];                /* drawn with BPLCON0's LACE on */
+    bool shres[2][3];               /* with super-hires lines */
     uint32_t hash;
     uint32_t state[2];              /* latest | pinned << 2 */
     int writing[2];
     int field;                      /* the one this frame draws */
     bool lace_seen;                 /* LACE on at some point in this frame */
+    bool shres_seen;                /* a super-hires line in this frame */
     bool field1;                    /* field 1 drawn since interlace began */
     int first_line;
 } s;
@@ -114,6 +130,7 @@ static struct {
 static uint16_t s_rgb565[4096];
 static uint64_t s_p2c[256];
 static uint8_t s_pf1[64], s_pf2[64];
+static uint8_t s_shres_gun[16];     /* super-hires: a nibble's two halves' mean, 4 bits */
 
 #define LATEST(st)      ((st) & 3u)
 #define PINNED(st)      (((st) >> 2) & 3u)
@@ -142,6 +159,9 @@ void display_init(void *picture)
             v |= (uint64_t)((b >> (7 - k)) & 1) << (8 * k);
         }
         s_p2c[b] = v;
+    }
+    for (int n = 0; n < 16; n++) {
+        s_shres_gun[n] = (uint8_t)(((n >> 2) + (n & 3)) * 5 / 2);
     }
     for (int v = 0; v < 64; v++) {
         s_pf1[v] = (uint8_t)((v & 1) | ((v >> 1) & 2) | ((v >> 2) & 4));
@@ -178,7 +198,9 @@ static int planes_of(uint16_t con0)
     if (n > 6) {
         n = 4;
     }
-    if ((con0 & BPLCON0_HIRES) && n > 4) {
+    if ((con0 & BPLCON0_SHRES) && n > 2) {
+        n = 2;
+    } else if ((con0 & BPLCON0_HIRES) && n > 4) {
         n = 4;
     }
     return n;
@@ -323,15 +345,16 @@ AMI_HOT void display_fetch(void)
     s.con0 = s.bplcon0;
     s.con1 = s.bplcon1;
     s.con2 = s.bplcon2;
-    bool hires = s.con0 & BPLCON0_HIRES;
+    bool shres = s.con0 & BPLCON0_SHRES;
+    bool hires = !shres && (s.con0 & BPLCON0_HIRES);
     int planes = planes_of(s.con0);
     int start, stop;
     ddf(&start, &stop);
     /* whole fetch units of 8 colour clocks, the one DDFSTOP falls in too
      * (Kickstart 1.3's hires screens: $3C-$D0 is 40 words; 3.1's $40-$D0 38)
      */
-    int words = ((stop - start + 7) / 8 + 1) * (hires ? 2 : 1);
-    s.first = start * 2 + (hires ? 9 : 17);
+    int words = ((stop - start + 7) / 8 + 1) * (shres ? 4 : hires ? 2 : 1);
+    s.first = start * 2 + (shres ? DELAY_SHRES : hires ? DELAY_HIRES : DELAY_LORES);
     s.planes = planes;
     s.words = words;
 
@@ -348,10 +371,10 @@ AMI_HOT void display_fetch(void)
         s.pt[p] = ptr + s.mod[p & 1];
     }
     s.data_key = key;
-    /* lores planes 5-6 and hires planes 3-4 fetch in the 68000's (even)
-     * slots: a slot a word
+    /* lores planes 5-6, hires planes 3-4 and super-hires plane 2 fetch in
+     * the 68000's (even) slots: a slot a word
      */
-    int even = planes - (hires ? 2 : 4);
+    int even = planes - (shres ? 1 : hires ? 2 : 4);
     if (even > 0) {
         ami.stall += even * words * SLOT_WAIT;
     }
@@ -448,7 +471,7 @@ void display_write(uint32_t reg, uint16_t v, int at)
         s.ddfstop = v & 0xFC;
         break;
     case 0x100:
-        s.bplcon0 = v;
+        s.bplcon0 = ami.ecs ? v : v & ~BPLCON0_SHRES;
         s.lace_seen |= (v & BPLCON0_LACE) != 0;
         display_dma_changed(at);
         break;
@@ -563,7 +586,15 @@ static void pf_matches(int L, uint16_t *odd, uint16_t *even)
 {
     int planes = s.fetched ? s.planes : 0;
     int d1 = s.con1 & 15, d2 = (s.con1 >> 4) & 15;
-    if (planes && (s.con0 & BPLCON0_HIRES)) {
+    if (planes && (s.con0 & BPLCON0_SHRES)) {
+        uint16_t o[4], e[4];
+        int at = 4 * (L - s.first);
+        for (int k = 0; k < 4; k++) {
+            matches16(planes, at - 4 * d1 + 16 * k, at - 4 * d2 + 16 * k, &o[k], &e[k]);
+        }
+        *odd = lores16((uint32_t)lores16((uint32_t)o[0] << 16 | o[1]) << 16 | lores16((uint32_t)o[2] << 16 | o[3]));
+        *even = lores16((uint32_t)lores16((uint32_t)e[0] << 16 | e[1]) << 16 | lores16((uint32_t)e[2] << 16 | e[3]));
+    } else if (planes && (s.con0 & BPLCON0_HIRES)) {
         uint16_t o1, e1, o2, e2;
         int at = 2 * (L - s.first);
         matches16(planes, at - 2 * d1, at - 2 * d2, &o1, &e1);
@@ -711,6 +742,7 @@ AMI_HOT void display_line_end(void)
     }
     uint32_t key = h | 1;
     s.hash = mix(s.hash, key);
+    s.shres_seen |= bpl && (s.con0 & BPLCON0_SHRES);
 
     row_t *r = &buffer(s.field, s.writing[s.field])[row];
     if (r->key != key) {
@@ -756,6 +788,8 @@ bool display_frame_end(void)
     bool lace = s.lace_seen;
     s.signature[f][w] = s.hash;
     s.lace[f][w] = lace;
+    s.shres[f][w] = s.shres_seen;
+    s.shres_seen = false;
     s.hash = 0x811C9DC5u;
     if (f == 1) {
         s.field1 = true;
@@ -788,8 +822,11 @@ void display_next_field(bool lace)
 
 /* ---- The presenter's side: drawing the records ---- */
 
-#define MARGIN          768
-#define BUF             (MARGIN + 1024 + 64)
+/* The pixels of a line's planes from MARGIN on; before it room for the
+ * scroll (a super-hires fetch from DDFSTRT $D8: 4 x (108 - 437 - 15))
+ */
+#define MARGIN          1408
+#define BUF             (MARGIN + 1664 + 64)
 
 static struct {
     uint8_t odd[BUF] __attribute__((aligned(8)));
@@ -797,10 +834,13 @@ static struct {
     int filled;
     uint16_t color[32];
     uint16_t rgb[64];               /* 32-63: half bright */
+    uint16_t srgb[8];               /* super-hires: the 4 colours, the sprites' 4 */
     uint16_t ham;
     const row_t *row;               /* the row in line[] */
     uint32_t key;
-    uint16_t line[PIC_W] __attribute__((aligned(4)));
+    bool wide;                      /* line[] drawn WIDE_W wide */
+    uint16_t line[WIDE_W] __attribute__((aligned(4)));
+    uint16_t tmp[WIDE_W] __attribute__((aligned(4)));
 } d;
 
 static inline void set_color(int reg, uint16_t v)
@@ -875,6 +915,15 @@ static void compose(const row_t *r, uint16_t *out, int xa, int xb)
     }
 }
 
+/* Super-hires colours from the registers (see the top) */
+static void shres_colors(void)
+{
+    for (int v = 0; v < 8; v++) {
+        uint16_t c = d.color[(v & 4) * 4 + 5 * (v & 3)];
+        d.srgb[v] = s_rgb565[s_shres_gun[c >> 8] << 8 | s_shres_gun[(c >> 4) & 15] << 4 | s_shres_gun[c & 15]];
+    }
+}
+
 static void span(const row_t *r, uint16_t *out, int a, int b)
 {
     int ws = a > r->x0 ? a : r->x0, we = b < r->x1 ? b : r->x1;
@@ -917,10 +966,21 @@ static int pf_code(const row_t *r, int x)
     return v ? pf2p : 8;
 }
 
+/* A super-hires line's playfield priority code at a pixel (as pf_code()) */
+static int pf_code_shres(const row_t *r, int x)
+{
+    if (r->planes == 0 || x < 2 * r->x0 || x >= 2 * r->x1) {
+        return 8;
+    }
+    int d1 = r->con1 & 15, d2 = (r->con1 >> 4) & 15;
+    int v = d.odd[MARGIN + 4 * (FIRST_LORES - r->first - d1) + x] | d.even[MARGIN + 4 * (FIRST_LORES - r->first - d2) + x];
+    return v ? (r->con2 >> 3) & 7 : 8;
+}
+
 /* The sprites over the line: lower numbers in front, then the playfields'
- * priorities
+ * priorities; shres: a super-hires line (4 pixels a lores one)
  */
-static void draw_sprites(const row_t *r, uint16_t *out)
+static void draw_sprites(const row_t *r, uint16_t *out, bool shres)
 {
     static uint8_t col[360];            /* colour (16-31) or 0, per lores pixel */
     static uint8_t pair[360];
@@ -965,19 +1025,65 @@ static void draw_sprites(const row_t *r, uint16_t *out)
         if (!col[p]) {
             continue;
         }
-        for (int x = 2 * p; x < 2 * p + 2; x++) {
-            if (x >= r->x0 && x < r->x1 && pair[p] < pf_code(r, x)) {
-                out[x] = d.rgb[col[p]];
+        if (shres) {
+            for (int x = 4 * p; x < 4 * p + 4; x++) {
+                if (x >= 2 * r->x0 && x < 2 * r->x1 && pair[p] < pf_code_shres(r, x)) {
+                    out[x] = d.srgb[4 + ((col[p] - 16) & 3)];
+                }
+            }
+        } else {
+            for (int x = 2 * p; x < 2 * p + 2; x++) {
+                if (x >= r->x0 && x < r->x1 && pair[p] < pf_code(r, x)) {
+                    out[x] = d.rgb[col[p]];
+                }
             }
         }
         col[p] = 0;
     }
 }
 
-static void draw(const row_t *r, uint16_t *out)
+/* A super-hires line, WIDE_W pixels (the planes already in odd[], even[]) */
+static void draw_shres(const row_t *r, uint16_t *out)
+{
+    int d1 = r->con1 & 15, d2 = (r->con1 >> 4) & 15;
+    const uint8_t *po = d.odd + MARGIN + 4 * (FIRST_LORES - r->first - d1);
+    const uint8_t *pe = d.even + MARGIN + 4 * (FIRST_LORES - r->first - d2);
+    int x0 = 2 * r->x0, x1 = 2 * r->x1;
+    shres_colors();
+    int ci = 0, x = 0, n = r->changes;
+    while (x < WIDE_W) {
+        bool changed = false;
+        while (ci < n && 2 * (int)(r->change[ci] >> 20) <= x) {
+            set_color((r->change[ci] >> 12) & 31, r->change[ci] & 0xFFF);
+            ci++;
+            changed = true;
+        }
+        if (changed) {
+            shres_colors();
+        }
+        int end = ci < n ? 2 * (int)(r->change[ci] >> 20) : WIDE_W;
+        int ws = x > x0 ? x : x0, we = end < x1 ? end : x1;
+        if (ws >= we) {
+            fill(out, x, end, d.srgb[0]);
+        } else {
+            fill(out, x, ws, d.srgb[0]);
+            for (int i = ws; i < we; i++) {
+                out[i] = d.srgb[po[i] | pe[i]];
+            }
+            fill(out, we, end, d.srgb[0]);
+        }
+        x = end;
+    }
+    if (r->sprites) {
+        draw_sprites(r, out, true);
+    }
+}
+
+/* A line, PIC_W pixels or (wide) WIDE_W */
+static void draw(const row_t *r, uint16_t *out, bool wide)
 {
     if (r->key == 0) {
-        memset(out, 0, PIC_W * sizeof(uint16_t));
+        memset(out, 0, (wide ? WIDE_W : PIC_W) * sizeof(uint16_t));
         return;
     }
     for (int i = 0; i < 32; i++) {
@@ -998,6 +1104,18 @@ static void draw(const row_t *r, uint16_t *out)
             }
         }
     }
+    if (r->planes && (r->con0 & BPLCON0_SHRES)) {
+        if (wide) {
+            draw_shres(r, out);
+            return;
+        }
+        /* (not the presenter's frame's width: every other pixel) */
+        draw_shres(r, d.tmp);
+        for (int i = 0; i < PIC_W; i++) {
+            out[i] = d.tmp[2 * i];
+        }
+        return;
+    }
     d.ham = d.color[0];
     int ci = 0, x = 0, n = r->changes;
     while (x < PIC_W) {
@@ -1010,7 +1128,12 @@ static void draw(const row_t *r, uint16_t *out)
         x = end;
     }
     if (r->sprites) {
-        draw_sprites(r, out);
+        draw_sprites(r, out, false);
+    }
+    if (wide) {
+        for (int i = PIC_W - 1; i >= 0; i--) {
+            out[2 * i] = out[2 * i + 1] = out[i];
+        }
     }
 }
 
@@ -1027,56 +1150,77 @@ static uint32_t pin(int f)
 }
 
 static bool s_weave;                /* (the presenter's) both fields, line by line */
+static bool s_wide;                 /* the presenter's frame: WIDE_W wide */
+static bool s_dbg_wide;             /* the debugger's (told when it asked the size) */
 static uint32_t s_pinned_frame;     /* when the presenter last pinned */
 static volatile uint32_t s_draws;   /* lines drawn (the debugger's check) */
 
-static uint32_t pin_latest(void)
+static uint32_t pin_latest(bool *wide)
 {
     uint32_t b0 = pin(0);
     s_weave = s.lace[0][b0] && s.field1;
+    *wide = s.shres[0][b0];
     if (!s_weave) {
         return s.signature[0][b0];
     }
     uint32_t b1 = pin(1);
+    *wide |= s.shres[1][b1];
     return s.signature[0][b0] ^ (s.signature[1][b1] * 0x9E3779B1u);
 }
 
 uint32_t amiga_screen_signature(void)
 {
     s_pinned_frame = ami.frames;
-    return pin_latest();
+    bool wide;
+    uint32_t sig = pin_latest(&wide);
+    s_wide = wide;
+    return sig ^ (wide ? 0x5A5A5A5Au : 0);
 }
 
-void amiga_render_line_rgb565(int y, uint16_t *dst)
+int amiga_screen_width(void)
+{
+    return s_wide ? WIDE_W : PIC_W;
+}
+
+static void render(int y, uint16_t *dst, bool wide)
 {
     s_draws++;
     int row = y >> 1;
     if (s.rows == NULL || row < 0 || row >= PIC_LINES) {
-        memset(dst, 0, PIC_W * sizeof(uint16_t));
+        memset(dst, 0, (wide ? WIDE_W : PIC_W) * sizeof(uint16_t));
         return;
     }
     int f = s_weave ? y & 1 : 0;
     uint32_t pinned = PINNED(__atomic_load_n(&s.state[f], __ATOMIC_ACQUIRE));
     const row_t *r = &buffer(f, (int)pinned)[row];
-    if (r != d.row || r->key != d.key) {
+    if (r != d.row || r->key != d.key || wide != d.wide) {
         d.row = NULL;               /* (half drawn: see display_dbg_line()) */
-        draw(r, d.line);
+        draw(r, d.line, wide);
         d.row = r;
         d.key = r->key;
+        d.wide = wide;
     }
-    memcpy(dst, d.line, sizeof(d.line));
+    memcpy(dst, d.line, (wide ? WIDE_W : PIC_W) * sizeof(uint16_t));
+}
+
+void amiga_render_line_rgb565(int y, uint16_t *dst)
+{
+    render(y, dst, s_wide);
 }
 
 /* The debugger's picture, from its task (on the board below the presenter,
  * on the same core: the presenter may draw in the middle of the debugger's
  * line, never the other way round). The presenter's frame, or the latest
- * when nothing pins (the host build, no presenter).
+ * when nothing pins (the host build, no presenter). Its width.
  */
-void display_dbg_frame(void)
+int display_dbg_frame(void)
 {
+    bool wide = s_wide;
     if (ami.frames - s_pinned_frame > 25) {
-        pin_latest();
+        pin_latest(&wide);
     }
+    s_dbg_wide = wide;
+    return wide ? WIDE_W : PIC_W;
 }
 
 /* A line for the debugger: drawn again if the presenter drew meanwhile
@@ -1086,7 +1230,7 @@ void display_dbg_line(int y, uint16_t *dst)
 {
     for (int tries = 0; tries < 8; tries++) {
         uint32_t before = s_draws;
-        amiga_render_line_rgb565(y, dst);
+        render(y, dst, s_dbg_wide);
         if (s_draws == before + 1) {
             return;
         }

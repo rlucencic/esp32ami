@@ -124,8 +124,7 @@ static void dbg_where(char *buf, size_t len)
 
 static void dbg_screen(int *width, int *height)
 {
-    display_dbg_frame();
-    *width = AMIGA_SCREEN_WIDTH;
+    *width = display_dbg_frame();
     *height = amiga_screen_height();
 }
 
