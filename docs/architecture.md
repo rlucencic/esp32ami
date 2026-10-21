@@ -572,5 +572,19 @@ measurements written down.
   safe beside the presenter (the drawing's state is shared: lines drawn
   again when the presenter drew meanwhile). Checked on the host and over
   WiFi on the Tab5.
+- **Speed on the Tab5** (the console's `p` now samples either core; the
+  profile tool names a static function's file): 100% everywhere tried.
+  Workbench 3.1, a Shell listing scrolling: core 1 61% busy, core 0
+  52-60%. Kick Off 2 (A500, Kickstart 1.3) with the pitch scrolling:
+  99-100%, core 1 56%, core 0 ~65%. Core 1 there: Denise's fetch 7%, the
+  68000's memory reads 13%, memcpy 6% (the line records), the 68000's
+  dispatch 6%, Paula 5%, the line's end 5%, the blitter 2.4%. Core 0: the
+  presenter's scaling 35%, Denise's drawing 14%, memcpy 10%. Paula's
+  64-bit divisions (2% of core 1, the ROM's `__divdi3`) are gone.
+- **Free memory and disk space** on the web page (bar rows): chip, slow
+  and fast RAM from exec's MemList; each disk's free space from its
+  AmigaDOS bitmap (`space.c`, the RDB's partitions added up), the same
+  as Workbench's own figures.
 - Not yet: Workbench 3.1 in an interlaced screen mode, NTSC's 227/228
-  colour clock lines, the speed measurements and profile.
+  colour clock lines; the line records' copying and the presenter's
+  scaling are the places to make faster (PPA, PIE: `../esp32emu/CLAUDE.md`).

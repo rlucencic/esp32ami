@@ -507,11 +507,11 @@ images.
 - AROS needs its extension ROM mapped at $E00000 (it stays black now); not
   on the setup screen yet.
 - Assembler (RISC-V with the P4's PIE SIMD; this project is Tab5 only)
-  for hot paths is wanted: `../esp32emu/CLAUDE.md`, "To do". A profile on the Tab5 (Workbench 3.1,
-  a Shell listing scrolling; core 1 61% busy, core 0 52%, 100%): the
-  68000 and its memory accessors ~30% of core 1's samples, Paula's
-  `audio_line` 6%, Denise's fetch and line records ~9%, the blitter not
-  in the top 25.
+  for hot paths is wanted: `../esp32emu/CLAUDE.md`, "To do". Profiles on
+  the Tab5 (`docs/architecture.md`, phase 6): Kick Off 2 scrolling at
+  100% with core 1 56% busy (68000 memory reads 13%, Denise's fetch 7%,
+  memcpy of line records 6%, blitter 2.4%) and core 0 ~65% (the
+  presenter's scaling 35%, Denise's drawing 14%).
 - Extended ADFs can't be written. DMS modes 2-5 untested (no archives).
 - Later (the user's "nice to have"): an RP9 inserted in the boot drive
   could set the machine its manifest names (model, Kickstart, memory:
