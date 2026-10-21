@@ -493,6 +493,9 @@ images.
   `AMI_WAV` records it on the host.
 - **On the board**: status via the web API, pictures via the console's
   `lcd`, the setup screen via `t x y`, the Amiga via `k`/`m`/`j`.
+- **By hand** (the user, 2026-10-21): a Bluetooth keyboard and mouse and
+  the Tab5 Keyboard work. Not yet: sound on the speaker, USB keyboards and
+  mice, games played by hand.
 
 ## Open items
 

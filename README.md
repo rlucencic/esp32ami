@@ -316,9 +316,10 @@ lessons learned along the way.
 
 - New. On the Tab5, Kickstarts 1.3 to 3.1 and AROS boot, Workbench 1.3,
   2.05 and 3.1 run from floppies and hard disks, games run at full speed;
-  touch, floppies, hard disks (Gayle and the board), the setup screen and
-  the web page are checked. Not tried by hand yet: sound on the speaker, a
-  Bluetooth or USB keyboard and mouse, the Tab5 Keyboard.
+  touch, a Bluetooth keyboard and mouse, the Tab5 Keyboard, floppies,
+  hard disks (Gayle and the board), the setup screen and the web page are
+  checked. Not tried by hand yet: sound on the speaker, USB keyboards and
+  mice.
 - No A1200: AGA and the 68020 are the next step. No 68010/68020 for the
   A500/A2000, no Zorro III, no CD32/CDTV.
 - The chip bus is modelled on average (3 clocks for each slot the DMA
