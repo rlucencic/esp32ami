@@ -496,6 +496,15 @@ images.
 
 ## Open items
 
+- Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
+  since 2026-10-21). Licence: MIT (`LICENSE`). README images
+  (`docs/images`, 2026-10-21): `workbench31.png` (A600, 3.1 from an HDF,
+  the HD window), `workbench13.png` (A500, Workbench 1.3.5 from Amiga
+  Forever's HDF through our board), `kickoff2.png` (its RP9, practice
+  match), `sysinfo.png` (A500, 1.00 x A600), `aros.png` (Workbook with
+  the 3.1 floppy), all from the host build; `tab5-workbench.png` (the
+  panel's picture), `tab5-setup.png` (status lines cut), `web.png` (a
+  local mock with example data, halved).
 - Phases 4-7 (`docs/architecture.md`): games (the rest of phase 4:
   blitter timing per slot), A2000/A600
   specifics (autoconfig fast RAM, Gayle IDE, the hard disk board, the RP9s
