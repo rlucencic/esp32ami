@@ -559,5 +559,14 @@ measurements written down.
   black one in short ones: the picture alternates, host and Tab5) and
   Workbench 1.3 with LaceWB, 640 x 512 (host and Tab5: 100%, core 1 22%,
   core 0 3%). Pictures without LACE unchanged.
-- Not yet: Workbench 3.1 in an interlaced screen mode, NTSC details, the
-  speed measurements and profile, the debugger's machine view.
+- **NTSC**: the picture 720 x 484 (lines 21-262, the 4:3 window filled
+  as on an NTSC screen), and on ECS the beam follows BEAMCON0's PAL bit
+  (`ami_ntsc_beam()`): Kickstart 3.1's Early Startup Control toggles it
+  with a key, the picture switching 568/484 lines (host and Tab5: 60.0
+  fps, 100%); graphics.library returns to its DisplayFlags at boot, as the
+  ROM does. Workbench 1.3 and 3.1 in NTSC on the host, interlace too.
+  Found on the way: an A600 with 3.1 and no hard disk waits 15-20 s for
+  its IDE search (real machines do too).
+- Not yet: Workbench 3.1 in an interlaced screen mode, NTSC's 227/228
+  colour clock lines, the speed measurements and profile, the debugger's
+  machine view.

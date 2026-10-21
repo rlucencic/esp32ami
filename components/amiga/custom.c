@@ -176,6 +176,6 @@ void custom_reset(void)
     ami.intena = ami.intreq = 0;
     ami.dmacon = ami.adkcon = 0;
     ami.potgo = 0;
-    ami.beamcon0 = ami.ntsc ? 0 : 0x0020;
+    ami.beamcon0 = ami.ntsc ? 0 : BEAMCON0_PAL;
     ami_update_irq();
 }

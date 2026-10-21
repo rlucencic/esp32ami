@@ -128,6 +128,16 @@ extern cia_t cia[2];
 
 static inline int ami_now(void);
 
+#define BEAMCON0_PAL    0x0020
+
+/* The beam's standard now: ECS's Agnus follows BEAMCON0's PAL bit (the
+ * chip's own, ami.ntsc, stays in VPOSR's ID and the clocks)
+ */
+static inline bool ami_ntsc_beam(void)
+{
+    return ami.ecs ? !(ami.beamcon0 & BEAMCON0_PAL) : ami.ntsc;
+}
+
 /* amiga.c */
 void ami_update_irq(void);
 void ami_set_intreq(uint16_t bits);

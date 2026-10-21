@@ -18,11 +18,13 @@ typedef enum {
 /* The CPU core's handler and cycle tables, copied (see amiga_config_t) */
 #define AMIGA_OPCODE_TABLES_SIZE    (0x10000 * sizeof(void *) + 0x10000)
 
-/* The picture: PAL's overscan window in hires pixels (lores ones doubled),
- * its lines doubled (an interlaced frame's two fields line by line)
+/* The picture: the overscan window in hires pixels (lores ones doubled),
+ * its lines doubled (an interlaced frame's two fields line by line): PAL
+ * lines 29-312, NTSC 21-262 (amiga_screen_height())
  */
 #define AMIGA_SCREEN_WIDTH          720
-#define AMIGA_SCREEN_LINES          284         /* beam lines shown (PAL) */
+#define AMIGA_SCREEN_LINES          284         /* beam lines shown (PAL, the most) */
+#define AMIGA_SCREEN_LINES_NTSC     242
 #define AMIGA_SCREEN_HEIGHT         (AMIGA_SCREEN_LINES * 2)
 
 typedef struct {
@@ -78,6 +80,7 @@ void amiga_reset(void);
 void amiga_run_frame(void);
 
 int amiga_screen_hz(void);
+int amiga_screen_height(void);      /* AMIGA_SCREEN_HEIGHT, NTSC's less */
 
 /* The picture (the presenter's task): a signature that changes with it, its
  * lines (AMIGA_SCREEN_WIDTH pixels)

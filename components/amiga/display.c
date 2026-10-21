@@ -194,7 +194,7 @@ static void ddf(int *start, int *stop)
 static void plan(int at)
 {
     s.fetch_at = NEVER;
-    int vblank_end = ami.ntsc ? VBLANK_END_NTSC : VBLANK_END_PAL;
+    int vblank_end = ami_ntsc_beam() ? VBLANK_END_NTSC : VBLANK_END_PAL;
     if (s.fetched || !dma_on() || !s.vwin || ami.line < vblank_end || planes_of(s.bplcon0) == 0) {
         return;
     }
@@ -261,7 +261,7 @@ static void spr_fetch_control(sprite_t *sp)
 /* The sprites' DMA for this line */
 static void sprite_dma(void)
 {
-    int first = (ami.ntsc ? VBLANK_END_NTSC : VBLANK_END_PAL) - 1;
+    int first = (ami_ntsc_beam() ? VBLANK_END_NTSC : VBLANK_END_PAL) - 1;
     bool dma = (ami.dmacon & (DMA_EN | DMA_SPR)) == (DMA_EN | DMA_SPR);
     for (int i = 0; i < 8; i++) {
         sprite_t *sp = &s.spr[i];
@@ -783,6 +783,7 @@ bool display_frame_end(void)
 void display_next_field(bool lace)
 {
     s.field = lace && !ami.lof ? 1 : 0;
+    s.first_line = ami_ntsc_beam() ? FIRST_LINE_NTSC : FIRST_LINE_PAL;
 }
 
 /* ---- The presenter's side: drawing the records ---- */

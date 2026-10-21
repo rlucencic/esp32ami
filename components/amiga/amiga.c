@@ -125,7 +125,7 @@ static void dbg_where(char *buf, size_t len)
 static void dbg_screen(int *width, int *height)
 {
     *width = AMIGA_SCREEN_WIDTH;
-    *height = AMIGA_SCREEN_HEIGHT;
+    *height = amiga_screen_height();
 }
 
 static emudbg_machine_t s_dbg = {
@@ -377,7 +377,7 @@ static void run_line(void)
 
 void amiga_run_frame(void)
 {
-    ami.lines = ami.ntsc ? (ami.lof ? 263 : 262) : (ami.lof ? 313 : 312);
+    ami.lines = ami_ntsc_beam() ? (ami.lof ? 263 : 262) : (ami.lof ? 313 : 312);
     int frame_cycles = ami.lines * CYCLES_LINE;
 #ifndef ESP_PLATFORM
     uint32_t insns_before = ami.insns;
@@ -443,7 +443,12 @@ void amiga_run_frame(void)
 
 int amiga_screen_hz(void)
 {
-    return ami.ntsc ? 60 : 50;
+    return ami_ntsc_beam() ? 60 : 50;
+}
+
+int amiga_screen_height(void)
+{
+    return ami_ntsc_beam() ? AMIGA_SCREEN_LINES_NTSC * 2 : AMIGA_SCREEN_HEIGHT;
 }
 
 void amiga_get_status(amiga_status_t *st)

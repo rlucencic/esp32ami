@@ -101,7 +101,7 @@ static bool start(void)
 static void screen_mode(emu_screen_t *mode)
 {
     mode->width = AMIGA_SCREEN_WIDTH;
-    mode->height = AMIGA_SCREEN_HEIGHT;
+    mode->height = amiga_screen_height();
     mode->hz = amiga_screen_hz();
 }
 

@@ -116,6 +116,12 @@ images.
 
 - **Time**: the 68000's clocks since the frame began (2 a colour clock, 454
   a line; PAL 313 lines, 312 in interlace's short frames; NTSC 263/262).
+  The beam's standard (`ami_ntsc_beam()`): the setup's Video choice
+  (`ami.ntsc`: VPOSR's Agnus ID, Paula's clock), on ECS BEAMCON0's PAL bit
+  instead, written by programs at any time (graphics.library sets it from
+  GfxBase's DisplayFlags; Kickstart 3.1's Early Startup Control toggles it
+  with a key, for its own screen only). NTSC's lines are all 227 colour
+  clocks (a real one alternates 227 and 228).
   At a frame's end every kept time moves back by the frame's length
   (`amiga_run_frame()`); the E clock (CIA timers, CPU / 10) keeps its phase
   in `ami.e_phase`.
@@ -299,7 +305,10 @@ images.
   LACE go to the long field's buffers, their lines doubled). Sprites show in both
   fields (their lines doubled, as on the real one).
 - **The picture**: 720 x 568 (lores pixels 108-467 doubled, lines 29-312
-  doubled), 4:3 at 960 x 720 on the Tab5 (`view_width` 800).
+  doubled), 4:3 at 960 x 720 on the Tab5 (`view_width` 800). NTSC:
+  720 x 484 (lines 21-262, `amiga_screen_height()`), scaled to the same
+  960 x 720 (taller pixels, as on an NTSC screen); the presenter follows a
+  switch between frames.
 
 ## Lessons (each one cost a debugging session)
 
@@ -361,6 +370,10 @@ images.
 - **Inflating on the httpd's stack rebooted the board**: miniz's
   `tinfl_decompressor` is ~10.5 KB; inserting an RP9 from the web page
   (the web server's 6 KB stack) crashed the board. On the heap now.
+- **An A600 with Kickstart 3.1 and no hard disk is black for 15-20 s**:
+  the ROM's scsi.device searches the IDE port (status 0, never ready; 3.x
+  ROMs on real machines wait like this, an A4000 ~30 s), then the
+  insert-disk screen, or Early Startup Control. It looked like a hang.
 
 ## Testing
 
@@ -426,6 +439,12 @@ images.
   alternate white and black (host and Tab5). Workbench 1.3 interlaced:
   `devs/system-configuration` byte 185 bit 0 (LaceWB) set with
   `tools/adf.py`; 640 x 512 on the host and the Tab5 (100%, core 1 22%).
+- **NTSC**: `AMI_NTSC`: Workbench 1.3 (640 x 200) and 3.1 from HD at
+  720 x 484, interlace too. Kickstart 3.1's **Early Startup Control**:
+  both mouse buttons held from power-on (`AMI_INPUT=0:m:0:0:3`, the
+  console's `m 0 0 3`) until it shows: a key toggles NTSC and PAL (the
+  picture 568 to 484 lines; on the Tab5 60.0 fps, 100%); its Boot button
+  returns to PAL (graphics.library, as the ROM does).
 - Amiga Test Kit's video tests (F6): all six draw; F1's PAL/NTSC frame
   (markers at lines 44, 243, 299) as its source describes.
 - **Installing on a blank hard disk** (phase 5's check): `AMI_NEWHD=<path>:50`
@@ -438,7 +457,10 @@ images.
   formats and verifies every cylinder, ~16000 frames for 20 MB), both to
   their Workbench from HD; on the Tab5 the 3.1 one (a blank 50 MB disk
   made through the web API, Return by the console's `k 44`, 100%, core 1
-  ~45% while writing). Two hard disks: Workbench 3.1's HD in DH0: and
+  ~45% while writing). The copy brings the Workbench floppy's Disk.info
+  (a floppy icon): Commodore's installer puts Install 3.1's
+  `Update/Disk.info` (the hard drive icon) there, done afterwards on the
+  Tab5 through Execute Command (`copy df0:update/disk.info dh0:`). Two hard disks: Workbench 3.1's HD in DH0: and
   workbench-135.hdf in DH1: (its RDB calls it DH0 too: renamed DH1)
   show both volumes under 3.1 (Gayle and our board; host and Tab5) and
   under 1.3 (our board for both; host).
@@ -463,7 +485,7 @@ images.
 - Phases 4-7 (`docs/architecture.md`): games (the rest of phase 4:
   blitter timing per slot), A2000/A600
   specifics (autoconfig fast RAM, Gayle IDE, the hard disk board, the RP9s
-  with hard disk images), NTSC details, the A1200
+  with hard disk images), NTSC's 227/228 colour clock lines, the A1200
   (the 25 A1200 RP9s). The chip bus model is an average (`SLOT_WAIT`), not
   per access: a slot-exact one (the 68000's accesses against the line's
   DMA slots) would bring SysInfo and xSysInfo to 1.0; the Tab5 has the
