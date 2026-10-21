@@ -111,9 +111,10 @@ all are built on the shared runtime
   Amiga counts them, on the web page
 
 **Around it**
-- **Touch screen as touchpad**: move to move the pointer, tap to click,
-  tap and touch again to drag, hold still half a second for the right
-  button (the menus)
+- **The touch screen as a touchpad**, for when there's no mouse at hand
+  (a Bluetooth or USB mouse is the better way): drag a finger anywhere to
+  move the pointer, tap to click, tap and touch again to drag, hold still
+  half a second for the right button (the menus)
 - **Setup screen** before the machine starts, and any time while it runs
   (hold the top-right corner for 2 seconds): WiFi, Bluetooth pairing, the
   model, Kickstart, chip, slow and fast RAM, PAL or NTSC, disks, reset
@@ -259,7 +260,7 @@ flowchart LR
   keys, mouse, joystick and typing, screenshots, sound recording and
   traces.
 - **`main`**: the Amiga on the board: memory, Kickstarts, settings, keyboard
-  map, mouse, touch and joystick, drives and status;
+  map, mouse, touchpad and joystick, drives and status;
   `main/web/amifiles.js` unpacks DMS archives and gzipped images in the
   browser.
 - **[esp32emu](https://github.com/rlucencic/esp32emu)**: the board runtime and

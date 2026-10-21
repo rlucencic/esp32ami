@@ -15,7 +15,6 @@
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
-#include "esp_timer.h"
 #include "emu/board.h"
 #include "emu/console.h"
 #include "emu/emu.h"
@@ -274,59 +273,21 @@ static void hid_mouse(int dx, int dy, uint8_t buttons)
     amiga_mouse(dx, dy, s_mouse_buttons);
 }
 
-/* The touch screen as a touchpad: a finger moving moves the pointer (in the
- * picture's pixels: Workbench's hires pixels, half lines), a tap clicks the
- * left button, a tap and then touching again within 300 ms drags with it,
- * holding still for half a second holds the right one (the menus: move to
- * an item, let go to choose it)
+/* The touch screen as a touchpad (the runtime's): its moves in the
+ * picture's pixels, Workbench's hires pixels and half lines (a super-hires
+ * frame's: two a hires one), a count each. A tap clicks the left button,
+ * the long press holds the right one (the menus: move to an item, let go
+ * to choose it).
  */
-#define TOUCH_SLOP      6
-#define TOUCH_RIGHT_US  500000
-#define TOUCH_AGAIN_US  300000
-
-static void touch(int x, int y, bool pressed)
+static void touchpad(int dx, int dy, uint8_t buttons)
 {
-    static enum { IDLE, PENDING, MOVE, DRAG, RIGHT } state;
-    static int lx, ly, x0, y0;
-    static int64_t t0, t_tap;
-    int64_t now = esp_timer_get_time();
-    x = x * AMIGA_SCREEN_WIDTH / amiga_screen_width();     /* (super-hires: hires pixels too) */
-    if (!pressed) {
-        if (state == PENDING) {
-            amiga_mouse(0, 0, 1);
-            vTaskDelay(pdMS_TO_TICKS(60));
-            amiga_mouse(0, 0, 0);
-            t_tap = now;
-        } else if (state == DRAG || state == RIGHT) {
-            amiga_mouse(0, 0, 0);
-        }
-        state = IDLE;
-        return;
+    static int odd;                 /* a super-hires pixel left over */
+    if (amiga_screen_width() > AMIGA_SCREEN_WIDTH) {
+        odd += dx;
+        dx = odd / 2;
+        odd -= dx * 2;
     }
-    switch (state) {
-    case IDLE:
-        x0 = lx = x;
-        y0 = ly = y;
-        t0 = now;
-        state = PENDING;
-        break;
-    case PENDING:
-        if (abs(x - x0) > TOUCH_SLOP || abs(y - y0) > TOUCH_SLOP) {
-            state = now - t_tap < TOUCH_AGAIN_US ? DRAG : MOVE;
-            amiga_mouse(x - lx, y - ly, state == DRAG ? 1 : 0);
-            lx = x;
-            ly = y;
-        } else if (now - t0 >= TOUCH_RIGHT_US) {
-            state = RIGHT;
-            amiga_mouse(0, 0, 2);
-        }
-        break;
-    default:
-        amiga_mouse(x - lx, y - ly, state == DRAG ? 1 : state == RIGHT ? 2 : 0);
-        lx = x;
-        ly = y;
-        break;
-    }
+    amiga_mouse(dx, dy, buttons);
 }
 
 /* ---- Setup screen choices ---- */
@@ -840,7 +801,7 @@ static const emu_machine_t machine = {
     .audio_pending = amiga_audio_pending,
     .hid_key = hid_key,
     .hid_mouse = hid_mouse,
-    .touch = touch,
+    .touchpad = touchpad,
     .choices = choices,
     .choice_count = CHOICES,
     .choice_names = choice_names,

@@ -82,7 +82,7 @@ is `m -523 136 0` from there.
 Input on the board: Bluetooth/USB keyboards by position (F11 Help,
 Windows/Command the Amiga keys, Caps Lock toggles; F12 makes the cursor
 keys and keypad the joystick in port 2, Alt fire), mice in port 1, touch as
-a touchpad (move, tap left click, tap then touch again to drag, hold still
+esp32emu's touchpad (move, tap left click, tap then touch again to drag, hold still
 0.5 s for the right button: the menus).
 
 Setup screen on the Tab5: Start `t 1065 637`; the six rows scroll (the
@@ -98,7 +98,7 @@ images.
 
 | Path | What |
 |---|---|
-| `main/main.c` | The Amiga as an `emu_machine_t`: memory, start, setup rows, drives (DF0:, DF1:, written tracks to the card), the clock's offset, key map, mouse, joystick keys, touch, sound, status, console |
+| `main/main.c` | The Amiga as an `emu_machine_t`: memory, start, setup rows, drives (DF0:, DF1:, written tracks to the card), the clock's offset, key map, mouse, joystick keys, the touchpad (super-hires pixels halved), sound, status, console |
 | `main/rom_store.c` | Kickstarts from their flash partitions, else files in the SD card's `roms/` with that version |
 | `main/settings.c` | NVS `ami`, which Kickstart and RAM each model takes, its defaults (A2000: 1 MB chip, 2 MB fast) |
 | `components/amiga/` | The machine, platform independent (`include/amiga.h`) |
@@ -527,6 +527,13 @@ images.
 - **By hand** (the user, 2026-10-21): a Bluetooth keyboard and mouse and
   the Tab5 Keyboard work. Not yet: sound on the speaker, USB keyboards and
   mice, games played by hand.
+- **Touchpad, now esp32emu's** (Tab5, 2026-10-21, Workbench 3.1 on the A600,
+  `t x y ms x2 y2` drags measured on screenshots): slow drags move the
+  pointer as far as the finger (148 for 150, 156 for 158 picture pixels),
+  fast ones further (Intuition's acceleration); a double tap away from the
+  pointer opened Workbench3.1, a tap and a drag moved its window by the
+  finger's move, the long press showed the menu bar while held; the setup
+  corner still opens the setup screen.
 
 ## Open items
 
@@ -581,6 +588,11 @@ images.
   the one game that reads CLXDAT (X-Balls) behaves the same without
   them. Sprites show (and collide) outside the vertical window too:
   whether OCS Denise hides them there isn't settled.
+- **Clock** (the clock audit, 2026-10-21: `../esp32emu/CLAUDE.md`, To do):
+  releasing HOLD always applies the held digits (`rtc.c`), even after a
+  plain read: a read across a second boundary sets the clock back a second
+  and writes NVS (`rtc_ofs`). The saved offset would also keep a clock set
+  while the board's time was wrong (unlikely with the Tab5's RTC).
 
 ## Working with the user
 
