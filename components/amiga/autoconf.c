@@ -9,21 +9,25 @@
  * then the high one ($E80048), which configures it; $E8004C shuts it up.
  *
  * The boards: fast RAM (1-8 MB, Kickstart adds it to the free memory),
- * later the hard disk board. Commodore's ID for prototypes ($07DB) as the
+ * our hard disk board (256 KB with a boot ROM, hdboard.c: there only while
+ * a hard disk is in and the Kickstart has no IDE driver, decided as the
+ * chain gets to it). Commodore's ID for prototypes ($07DB) as the
  * manufacturer.
  */
 #include <string.h>
 #include "amiga_internal.h"
+#include "hdrom.h"
 
 #define MANUFACTURER    0x07DB
 #define PRODUCT_FAST    1
+#define PRODUCT_HD      2
 
 typedef struct {
     uint8_t rom[16];                /* the configuration, as the OS reads it (before inverting) */
     uint8_t base_lo;                /* the address's low nibble, written first */
 } board_t;
 
-static board_t s_boards[2];
+static board_t s_boards[3];
 static int s_count, s_current;
 
 /* er_Type's size bits for a power of two from 64 KB to 8 MB */
@@ -55,11 +59,27 @@ void autoconf_reset(void)
         b->rom[4] = MANUFACTURER >> 8;
         b->rom[5] = MANUFACTURER & 0xFF;
     }
+    board_t *b = &s_boards[s_count++];
+    b->rom[0] = 0xC0 | 0x10 | size_code(0x40000);              /* Zorro II, a boot ROM */
+    b->rom[1] = PRODUCT_HD;
+    b->rom[4] = MANUFACTURER >> 8;
+    b->rom[5] = MANUFACTURER & 0xFF;
+    b->rom[10] = HDROM_DIAG >> 8;                               /* er_InitDiagVec */
+    b->rom[11] = HDROM_DIAG & 0xFF;
+}
+
+/* The next board there is (the hard disk board only when wanted) */
+static void skip_absent(void)
+{
+    while (s_current < s_count && s_boards[s_current].rom[1] == PRODUCT_HD && !hdboard_wanted()) {
+        s_current++;
+    }
 }
 
 /* The byte at a config space address (even: its nibble in bits 7-4) */
 uint8_t autoconf_read8(uint32_t a)
 {
+    skip_absent();
     if (s_current >= s_count || (a & 1) || (a & 0xFFFF) >= 0x80) {
         return s_current >= s_count ? 0x00 : 0xFF;
     }
@@ -81,11 +101,14 @@ static void configured(const board_t *b, uint32_t base)
     if (b->rom[1] == PRODUCT_FAST) {
         ami.fast_base = base;
         mem_update_map();
+    } else if (b->rom[1] == PRODUCT_HD) {
+        hdboard_configured(base);
     }
 }
 
 void autoconf_write8(uint32_t a, uint8_t v)
 {
+    skip_absent();
     if (s_current >= s_count || (a & 1)) {
         return;
     }

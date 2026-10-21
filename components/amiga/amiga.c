@@ -53,10 +53,10 @@ void ami_cpu_wake(void)
 
 /* ---- Musashi's hooks ---- */
 
+/* ILLEGAL + a function word in the hard disk board's ROM: its native code */
 int m68k_host_illegal(int opcode)
 {
-    (void)opcode;
-    return 0;
+    return opcode == 0x4AFC && hdboard_native();
 }
 
 void (*amiga_exception_hook)(unsigned int vector);
@@ -90,6 +90,7 @@ static void reset_instruction(void)
 {
     cia_reset();
     ami.ovl = true;
+    hdboard_reset();
     autoconf_reset();               /* (the boards too: Kickstart configures them again) */
     gayle_reset();
     mem_update_map();
@@ -181,6 +182,8 @@ bool amiga_init(const amiga_config_t *config)
     ami.rom = config->rom;
     ami.rom_size = config->kickstart_size;
     ami.serial = config->serial;
+    ami.kick_major = major;
+    ami.kick_minor = minor;
     rtc_init(config->rtc_offset, config->rtc_changed, major < 36);
 
     /* the working copy, each word in host order */
@@ -240,6 +243,7 @@ void amiga_reset(void)
     ami.ipl = 0;
     ami.stall = 0;
     ami.ovl = true;
+    hdboard_reset();
     autoconf_reset();
     gayle_reset();
     mem_update_map();
@@ -263,6 +267,7 @@ static void warm_reset(void)
     ami.halted = false;
     ami.ipl = 0;
     ami.ovl = true;
+    hdboard_reset();
     autoconf_reset();
     gayle_reset();
     mem_update_map();

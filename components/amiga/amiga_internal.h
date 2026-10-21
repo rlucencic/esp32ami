@@ -96,6 +96,7 @@ typedef struct {
     uint8_t *fast;
     uint32_t fast_size;
     uint32_t fast_base;             /* where autoconfig put it (0: not yet) */
+    int kick_major, kick_minor;     /* the Kickstart's version */
     uint8_t *rom;
     uint32_t rom_size;
     bool ovl;                       /* the ROM over chip RAM (reads) after reset */
@@ -134,6 +135,17 @@ void ami_cpu_wake(void);            /* an earlier event was scheduled: end the C
 
 /* mem.c */
 void mem_update_map(void);
+/* Bytes between the host and the 68000's memory (words there in host order) */
+void mem_copy_to(uint32_t a, const uint8_t *src, uint32_t len);
+void mem_copy_from(uint8_t *dst, uint32_t a, uint32_t len);
+
+/* hdboard.c: our own hard disk board (Kickstarts without an IDE driver) */
+bool ami_kick_has_ide(void);        /* 2.05 and 3.1: their scsi.device drives Gayle */
+bool hdboard_wanted(void);
+void hdboard_reset(void);
+bool hdboard_configured(uint32_t base);
+uint8_t *hdboard_memory(uint32_t *base, uint32_t *size);
+bool hdboard_native(void);
 
 /* hdf.c: hard disk images (a file, or an RP9 game's disk with its system disk) */
 #define HDF_PIECES      4
@@ -160,6 +172,7 @@ void hdf_close(hdf_t *h);
 bool hdf_io(hdf_t *h, uint32_t lba, int count, uint8_t *buf, bool write);
 
 /* gayle.c: the A600's IDE port and the hard disks */
+hdf_t *hd_image(int n);             /* a drive's image (NULL: empty) */
 bool gayle_present(void);
 bool gayle_irq(void);               /* its level 2 interrupt */
 void gayle_reset(void);

@@ -83,9 +83,17 @@ static drive_t *selected(void)
     return d->present ? d : NULL;
 }
 
+hdf_t *hd_image(int n)
+{
+    return n >= 0 && n < AMIGA_HARD_DISKS && s_drive[n].present ? &s_drive[n].hdf : NULL;
+}
+
+/* (the A600's; the others' while a hard disk is in and the Kickstart has
+ * the driver: else our own board serves the disks, hdboard.c)
+ */
 bool gayle_present(void)
 {
-    return ami.model == AMIGA_A600 || s_drive[0].present || s_drive[1].present;
+    return ami.model == AMIGA_A600 || ((s_drive[0].present || s_drive[1].present) && ami_kick_has_ide());
 }
 
 /* Gayle's level 2 interrupt */

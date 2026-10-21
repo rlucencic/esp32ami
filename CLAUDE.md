@@ -98,6 +98,7 @@ images.
 | `tools/adf.py` | Reads ADFs and patches files in them (test disks, see Testing) |
 | `tools/rdb.py`, `tools/ffsls.py` | An HDF's RDB, its first partition's files |
 | `tools/clxboot.py` | Boot disks that test sprite collisions |
+| `tools/hdrom.py` | Assembles the hard disk board's boot ROM into `components/amiga/hdrom.h` |
 | `roms/` | The Kickstarts (copyrighted, not distributed) |
 | `partitions.csv` | nvs, phy, factory 8 MB, the six ROMs (type 0x40), storage |
 
@@ -151,7 +152,26 @@ images.
   MULTIPLE, the rest accepted; two lines a sector, then the interrupt.
   Kickstart 2.05 and 3.1 (the A600's ROMs) mount an RDB disk on the
   master (their FFS); they never look for a slave.
-- **Hard disk images** (`hdf.c`, under Gayle and later our own board): a
+- **Our hard disk board** (`hdboard.c`, for Kickstart 1.2-2.04: no IDE
+  driver there; 2.05 and 3.1 get Gayle instead, never both): autoconfig,
+  Zorro II, 256 KB in the I/O space ($E90000), present while a hard disk
+  is in (decided as the chain gets to it). Its boot ROM (`hdrom.h`, made by
+  `tools/hdrom.py`, a two-pass assembler for the few instructions it
+  needs; run it after changing the ROM, check with Musashi's disassembler)
+  calls native routines through ILLEGAL ($4AFC) + a function word,
+  honoured only while the PC is in the ROM. The DiagArea's DiagPoint has
+  the Resident tag in expansion's copy filled in (FN_DIAG); the Resident's
+  init (after expansion) builds the device in the board's RAM (its jump
+  table to the ROM's stubs), AddDevice, then per partition MakeDosNode and
+  a BootNode into eb_MountList (bootable ones at their priority, others
+  -128); BootPoint starts dos.library. The device's commands are native
+  (CMD_READ/WRITE, TD_*64, TD_GETGEOMETRY, ...: done at once, ReplyMsg
+  unless IOF_QUICK). Kickstart 1.x has only the old filesystem in ROM: the
+  partition's from the RDB (FSHD/LSEG) is loaded into the board's RAM (a
+  hunk loader: CODE, DATA, BSS, RELOC32, RELOC32SHORT), its seglist and
+  GlobalVec (-1) and at least a 4 KB stack patched into the DeviceNode.
+  1.2 can't autoboot from any board (1.3 brought that).
+- **Hard disk images** (`hdf.c`, under Gayle and our own board): a
   drive's blocks are pieces (files, made-up blocks, zeros). A plain HDF
   with an RDB is one piece. A bare partition (a filesystem from block 0,
   e.g. DOS\5) gets an RDB of ours in front (Amiga Forever's defaults: 2
@@ -314,7 +334,7 @@ images.
   doesn't**: Hannibal's executable (an RP9 for 1.3) is "RW-D". The joined
   disk boots Workbench 1.3.5 and runs the game's user-startup, but under
   3.1 it ends in "file is not executable": the 1.3 games need Kickstart
-  1.3, so our own hard disk board.
+  1.3, so our own hard disk board (with it: Hannibal's title and menu).
 - **SD writes from an unaligned buffer go sector by sector**: unpacking
   an RP9's hard disk wrote at 0.35 MB/s (20 s for 7 MB; the inflating took
   0.25 s) until the output was gathered into 64 KB aligned to the cache
@@ -357,7 +377,10 @@ images.
 - **Hard disks**: `AMI_MODEL=2 AMI_ECS=1 AMI_CHIP_KB=1024 AMI_SLOW_KB=0
   AMI_FAST_KB=1024 AMI_HD0=<copy of an HDF>` with the A600's 2.05 or 3.1.
   Amiga Forever's workbench-135.hdf (an RDB disk, FFS in the RDB) boots to
-  Workbench 1.3.5's desktop, on the host and the Tab5. The RP9 games' own
+  Workbench 1.3.5's desktop, on the host and the Tab5 (an A600 with 3.1
+  through Gayle; an A500 with 1.3 or 2.04 through our board: `AMI_FAST_KB=1024
+  AMI_HD0=...` with amiga-os-130.rom). Hannibal's RP9 (with workbench-135.hdf
+  beside it) runs on an A500 with 1.3, the host and the Tab5. The RP9 games' own
   disks (af-application.hdf, volume AF-Application) aren't bootable alone:
   no C: or S:Startup-Sequence; Amiga Forever boots its system disk
   (`<boot type="hdf">135</boot>`: workbench-135.hdf), whose startup runs
@@ -402,10 +425,10 @@ images.
 - `.adz`/`.dms` converters for the web page (the user's collection has
   DMS files beside the ADFs); extended ADFs can't be written.
 - The RP9 games with a hard disk: joined with their system disk (above).
-  The six for 1.3 need our own hard disk board (Kickstart 1.3 has no IDE
-  driver; under 3.1 the shell refuses their executables); the ten for 3.1
-  are A1200 games (Football Glory loads and runs, picture black: AGA,
-  phase 7); three name no system disk.
+  The six for 1.3 run through our board (checked: Hannibal); the ten for
+  3.1 are A1200 games (Football Glory loads and runs, picture black: AGA,
+  phase 7); three name no system disk. Only DH0: on the board (Gayle's
+  scsi.device uses the master alone; our board could take DH1:).
 - A local git repository (`main`), not on GitHub yet. The attach modes
   of Paula's channels, absolute touch positioning (the pointer under the
   finger) are not done. Collisions are checked by the test disks only:

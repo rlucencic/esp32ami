@@ -522,5 +522,11 @@ measurements written down.
   which 3.1's shell stops ("not executable": the E bit 1.3 ignored);
   Football Glory (3.1, an A1200 game) loads and runs with a black picture.
   Bare partitions (no RDB) get our RDB too and mount alone.
-- Next: our own hard disk board for Kickstart 1.2-2.04 (the 1.3 games),
-  then `.adz`/`.dms` on the web page.
+- **Our own hard disk board** (`hdboard.c`, Kickstart 1.3 and 2.04: no
+  IDE driver in them): an autoconfig board with a boot ROM (a little 68000
+  code, `tools/hdrom.py`) calling a native device driver; it loads the
+  RDB's filesystem for 1.3 (FFS isn't in its ROM). Checked: an A500 with
+  1.3 boots Workbench 1.3.5 from workbench-135.hdf (host and Tab5), 2.04
+  too, and Hannibal's RP9 runs to its title and menu on the Tab5 (100%,
+  core 1 30%). An A600 with 3.1 still boots through Gayle, unchanged.
+- Next: `.adz`/`.dms` on the web page.

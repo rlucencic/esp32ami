@@ -52,6 +52,11 @@ void mem_update_map(void)
     for (uint32_t b = 0; b < (ami.slow_size >> 16); b++) {
         s_rmap[0xC0 + b] = s_wmap[0xC0 + b] = ami.slow + (b << 16);
     }
+    uint32_t board, board_size;
+    uint8_t *mem = hdboard_memory(&board, &board_size);
+    for (uint32_t b = 0; mem && board && b < (board_size >> 16); b++) {
+        s_rmap[(board >> 16) + b] = s_wmap[(board >> 16) + b] = mem + (b << 16);
+    }
     for (uint32_t b = 0; ami.fast_base && b < (ami.fast_size >> 16); b++) {
         s_rmap[(ami.fast_base >> 16) + b] = s_wmap[(ami.fast_base >> 16) + b] = ami.fast + (b << 16);
     }
@@ -265,6 +270,30 @@ void AMI_HOT m68k_write_memory_32(unsigned int a, unsigned int v)
     }
     m68k_write_memory_16(a, v >> 16);
     m68k_write_memory_16((a + 2) & 0xFFFFFF, v & 0xFFFF);
+}
+
+/* ---- Bytes to and from the 68000's memory (byte n of a word at n ^ 1) ---- */
+
+void mem_copy_to(uint32_t a, const uint8_t *src, uint32_t len)
+{
+    for (uint32_t i = 0; i < len; i++, a++) {
+        a &= 0xFFFFFF;
+        uint8_t *p = s_wmap[a >> 16];
+        if (p) {
+            p[(a & 0xFFFF) ^ 1] = src[i];
+        } else {
+            m68k_write_memory_8(a, src[i]);
+        }
+    }
+}
+
+void mem_copy_from(uint8_t *dst, uint32_t a, uint32_t len)
+{
+    for (uint32_t i = 0; i < len; i++, a++) {
+        a &= 0xFFFFFF;
+        const uint8_t *p = s_rmap[a >> 16];
+        dst[i] = p ? p[(a & 0xFFFF) ^ 1] : (uint8_t)m68k_read_memory_8(a);
+    }
 }
 
 /* ---- Without side effects: the debugger, the disassembler ---- */
