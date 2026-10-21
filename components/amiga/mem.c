@@ -311,6 +311,64 @@ uint8_t amiga_peek8(uint32_t a)
     return (a & 1) ? (w & 0xFF) : (w >> 8);
 }
 
+/* n bytes of RAM at a (chip, slow or fast; not ROM or I/O) */
+static bool ram_range(uint32_t a, uint32_t n)
+{
+    if ((a & 1) || n > 0x1000000 - a) {
+        return false;
+    }
+    return a + n <= ami.chip_size || (ami.slow_size && a >= 0xC00000 && a + n <= 0xC00000 + ami.slow_size) ||
+           (ami.fast_base && a >= ami.fast_base && a + n <= ami.fast_base + ami.fast_size);
+}
+
+static uint32_t peek32(uint32_t a)
+{
+    return (uint32_t)amiga_peek16(a) << 16 | amiga_peek16(a + 2);
+}
+
+/* exec's MemList (ExecBase + $142): MemHeaders (a Node, then mh_First,
+ * mh_Lower, mh_Upper, mh_Free at 16, 20, 24, 28), each with its MemChunks
+ * (mc_Next, mc_Bytes); the kind by where the memory is
+ */
+bool amiga_mem_free(amiga_mem_free_t *chip, amiga_mem_free_t *slow, amiga_mem_free_t *fast)
+{
+    amiga_mem_free_t *kinds[3] = { chip, slow, fast };
+    bool known[3] = { true, true, true };
+    for (int k = 0; k < 3; k++) {
+        memset(kinds[k], 0, sizeof(*kinds[k]));
+    }
+    uint32_t exec = peek32(4);
+    if (!ram_range(exec, 0x150) || peek32(exec + 38) != ~exec) {
+        return false;
+    }
+    bool any = false;
+    uint32_t mh = peek32(exec + 0x142);
+    for (int n = 0; n < 16 && ram_range(mh, 32) && peek32(mh) != 0; n++, mh = peek32(mh)) {
+        uint32_t lower = peek32(mh + 20), upper = peek32(mh + 24);
+        int k = lower < 0x200000 ? 0 : lower >= 0xC00000 && lower < 0xD80000 ? 1 : 2;
+        amiga_mem_free_t *m = kinds[k];
+        m->found = any = true;
+        m->free += peek32(mh + 28);
+        uint32_t mc = peek32(mh + 16);
+        for (int c = 0; mc != 0 && c < 4096; c++, mc = peek32(mc)) {
+            if (!ram_range(mc, 8) || mc < lower || mc >= upper) {
+                break;
+            }
+            uint32_t bytes = peek32(mc + 4);
+            m->largest = bytes > m->largest ? bytes : m->largest;
+        }
+        if (mc != 0) {
+            known[k] = false;               /* (a list being changed) */
+        }
+    }
+    for (int k = 0; k < 3; k++) {
+        if (!known[k]) {
+            kinds[k]->largest = 0;
+        }
+    }
+    return any;
+}
+
 void amiga_poke8(uint32_t a, uint8_t v)
 {
     a &= 0xFFFFFF;

@@ -34,7 +34,7 @@ static struct {
     chan_t ch[4];
     int32_t period;                     /* 1/256 colour clocks a sample */
     int32_t sample_left;
-    int64_t acc_l, acc_r;
+    int32_t acc_l, acc_r;               /* (2 x 8192 x a period: fits, and no 64-bit division) */
     int32_t lp1_l, lp1_r, lp2_l, lp2_r, lp3_l, lp3_r;   /* the filters (x 256) */
     bool enabled;
 } au;
@@ -177,8 +177,8 @@ static inline int32_t pole(int32_t *y, int32_t x, int32_t a)
 
 static void emit(void)
 {
-    int32_t l = (int32_t)(au.acc_l / au.period);
-    int32_t r = (int32_t)(au.acc_r / au.period);
+    int32_t l = au.acc_l / au.period;
+    int32_t r = au.acc_r / au.period;
     au.acc_l = au.acc_r = 0;
     /* the A500's fixed filter (~4.4 kHz), then the LED's (~3.3 kHz, two poles) */
     l = pole(&au.lp1_l, l, 119);
@@ -211,8 +211,8 @@ AMI_HOT void audio_line(void)
                 step = au.ch[c].cnt;
             }
         }
-        au.acc_l += (int64_t)(au.ch[0].out + au.ch[3].out) * step;
-        au.acc_r += (int64_t)(au.ch[1].out + au.ch[2].out) * step;
+        au.acc_l += (au.ch[0].out + au.ch[3].out) * step;
+        au.acc_r += (au.ch[1].out + au.ch[2].out) * step;
         remaining -= step;
         au.sample_left -= step;
         for (int c = 0; c < 4; c++) {

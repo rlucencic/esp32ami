@@ -92,6 +92,14 @@ void amiga_get_status(amiga_status_t *status);
 
 /* Memory as the CPU sees it, without side effects (RAM and ROM; else 0) */
 uint16_t amiga_peek16(uint32_t address);
+/* Free memory by Kickstart's lists, by kind (false until it has made
+ * them; read while the 68000 runs, so now and then a moment's figures)
+ */
+typedef struct {
+    bool found;                     /* the kind is in the lists */
+    uint32_t free, largest;         /* bytes; largest 0: not known */
+} amiga_mem_free_t;
+bool amiga_mem_free(amiga_mem_free_t *chip, amiga_mem_free_t *slow, amiga_mem_free_t *fast);
 uint8_t amiga_peek8(uint32_t address);
 void amiga_poke8(uint32_t address, uint8_t value);
 

@@ -670,6 +670,25 @@ static void status(emu_json_t *j, int section)
         snprintf(text + n, sizeof(text) - n, " + %u MB fast RAM", (unsigned)(s_cfg.fast_size >> 20));
     }
     emu_json_row(j, "System", text);
+    amiga_mem_free_t mem[3];
+    if (amiga_mem_free(&mem[0], &mem[1], &mem[2])) {
+        static const char *const labels[] = { "Free chip RAM", "Free slow RAM", "Free fast RAM" };
+        const uint32_t sizes[] = { s_cfg.chip_size, s_cfg.slow_size, s_cfg.fast_size };
+        for (int k = 0; k < 3; k++) {
+            if (!mem[k].found || sizes[k] == 0) {
+                continue;
+            }
+            bool mb = sizes[k] >= 1024 * 1024;
+            int len = snprintf(text, sizeof(text), "%lu KB of %lu %s", (unsigned long)(mem[k].free / 1024),
+                               (unsigned long)(mb ? sizes[k] >> 20 : sizes[k] >> 10), mb ? "MB" : "KB");
+            if (mem[k].largest && mem[k].largest / 1024 < mem[k].free / 1024) {
+                snprintf(text + len, sizeof(text) - len, " <span class=\"dim\">(largest block %lu KB)</span>",
+                         (unsigned long)(mem[k].largest / 1024));
+            }
+            int used = 100 - (int)((uint64_t)mem[k].free * 100 / sizes[k]);
+            emu_json_row_bar(j, labels[k], text, used < 0 ? 0 : used);
+        }
+    }
     emu_json_row(j, "Kickstart", s_kick_name ? s_kick_name : "-");
     snprintf(text, sizeof(text), "%s, %s", s_cfg.ecs ? "ECS" : "OCS", s_cfg.ntsc ? "NTSC (60 Hz)" : "PAL (50 Hz)");
     emu_json_row(j, "Chipset", text);

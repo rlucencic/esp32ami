@@ -506,8 +506,8 @@ images.
   room (core 1 ~25% in SysInfo).
 - AROS needs its extension ROM mapped at $E00000 (it stays black now); not
   on the setup screen yet.
-- RISC-V assembler (and the P4's PIE SIMD) for hot paths is allowed:
-  `../esp32emu/CLAUDE.md`, "To do". A profile on the Tab5 (Workbench 3.1,
+- Assembler (RISC-V with the P4's PIE SIMD; this project is Tab5 only)
+  for hot paths is wanted: `../esp32emu/CLAUDE.md`, "To do". A profile on the Tab5 (Workbench 3.1,
   a Shell listing scrolling; core 1 61% busy, core 0 52%, 100%): the
   68000 and its memory accessors ~30% of core 1's samples, Paula's
   `audio_line` 6%, Denise's fetch and line records ~9%, the blitter not

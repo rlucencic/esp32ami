@@ -377,6 +377,16 @@ int main(int argc, char **argv)
             printf("DH%d: %lu sectors read, %lu written\n", d, (unsigned long)hs.reads[d], (unsigned long)hs.writes[d]);
         }
     }
+    amiga_mem_free_t mem[3];
+    if (amiga_mem_free(&mem[0], &mem[1], &mem[2])) {
+        static const char *const kinds[] = { "chip", "slow", "fast" };
+        for (int k = 0; k < 3; k++) {
+            if (mem[k].found) {
+                printf("%s RAM: %lu bytes free, largest block %lu\n", kinds[k], (unsigned long)mem[k].free,
+                       (unsigned long)mem[k].largest);
+            }
+        }
+    }
     if (getenv("AMI_RING")) {
         show_ring(atoi(getenv("AMI_RING")));
     }
