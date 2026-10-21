@@ -77,10 +77,11 @@ static struct {
     int light;                      /* the drive in use (-1: none) */
 } g;
 
+/* (the master only: the slave is our hard disk board's, hdboard.c) */
 static drive_t *selected(void)
 {
-    drive_t *d = &s_drive[(g.sdh >> 4) & 1];
-    return d->present ? d : NULL;
+    drive_t *d = &s_drive[0];
+    return !(g.sdh & 0x10) && d->present ? d : NULL;
 }
 
 hdf_t *hd_image(int n)
@@ -93,7 +94,7 @@ hdf_t *hd_image(int n)
  */
 bool gayle_present(void)
 {
-    return ami.model == AMIGA_A600 || ((s_drive[0].present || s_drive[1].present) && ami_kick_has_ide());
+    return ami.model == AMIGA_A600 || (s_drive[0].present && ami_kick_has_ide());
 }
 
 /* Gayle's level 2 interrupt */

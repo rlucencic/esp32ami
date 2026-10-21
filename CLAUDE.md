@@ -46,7 +46,8 @@ bash -c '. $IDF_PATH/export.sh >/dev/null 2>&1; \
   card's `floppies/` folder (shared with esp32arc: its 800 KB ADFS images
   are refused by size; its hard disks are `.hdf` too:
   leave them). Drives DF0:, DF1: (ADFs, RP9s with floppies; the API's 1,
-  2) and DH0: (HDFs, RP9s with a hard disk; 3). Uploads up to 256 MB.
+  2) and DH0:, DH1: (HDFs, RP9s with a hard disk; 3, 4). Uploads up to
+  256 MB.
   Blank disks: 880 KB floppies, 20, 50 or 100 MB hard disks (an RDB with
   one partition, the old filesystem's type, to be formatted on the Amiga;
   `curl -X POST "http://amiga.local/api/new?size=52125696"`).
@@ -159,9 +160,11 @@ images.
   LBA, READ/WRITE (MULTIPLE), IDENTIFY, INITIALIZE DEVICE PARAMETERS, SET
   MULTIPLE, the rest accepted; two lines a sector, then the interrupt.
   Kickstart 2.05 and 3.1 (the A600's ROMs) mount an RDB disk on the
-  master (their FFS); they never look for a slave.
-- **Our hard disk board** (`hdboard.c`, for Kickstart 1.2-2.04: no IDE
-  driver there; 2.05 and 3.1 get Gayle instead, never both): autoconfig,
+  master (their FFS); they never look for a slave, and Gayle answers for
+  the master (DH0:) alone: DH1: is our board's.
+- **Our hard disk board** (`hdboard.c`: both drives with Kickstart
+  1.2-2.04, no IDE driver there; with 2.05 and 3.1 DH1: alone, Gayle
+  having DH0:; a disk is never mounted by both): autoconfig,
   Zorro II, 256 KB in the I/O space ($E90000), present while a hard disk
   is in (decided as the chain gets to it). Its boot ROM (`hdrom.h`, made by
   `tools/hdrom.py`, a two-pass assembler for the few instructions it
@@ -172,7 +175,10 @@ images.
   init (after expansion) builds the device in the board's RAM (its jump
   table to the ROM's stubs), AddDevice, then per partition MakeDosNode and
   a BootNode into eb_MountList (bootable ones at their priority, others
-  -128); BootPoint starts dos.library. The device's commands are native
+  -128; DH1:'s one lower than its RDB says while DH0: has a disk, so DH0:
+  boots; names the RDB's unless taken, DH0:'s ones through Gayle included
+  (read from its RDB), else the first free DHn); BootPoint starts
+  dos.library. The device's commands are native
   (CMD_READ/WRITE, TD_*64, TD_GETGEOMETRY, ...: done at once, ReplyMsg
   unless IOF_QUICK). Kickstart 1.x has only the old filesystem in ROM: the
   partition's from the RDB (FSHD/LSEG) is loaded into the board's RAM (a
@@ -423,7 +429,10 @@ images.
   formats and verifies every cylinder, ~16000 frames for 20 MB), both to
   their Workbench from HD; on the Tab5 the 3.1 one (a blank 50 MB disk
   made through the web API, Return by the console's `k 44`, 100%, core 1
-  ~45% while writing).
+  ~45% while writing). Two hard disks: Workbench 3.1's HD in DH0: and
+  workbench-135.hdf in DH1: (its RDB calls it DH0 too: renamed DH1)
+  show both volumes under 3.1 (Gayle and our board; host and Tab5) and
+  under 1.3 (our board for both; host).
 - **The web page's converters**: `node tools/amifiles_test.js` makes
   DMS archives (stored and RLE tracks) and an .adz itself and unpacks
   them; with the user's collection's folder it unpacks its 27 DMS archives (all mode 6, heavy 2) and
@@ -463,8 +472,7 @@ images.
   screens; Ants its menu once set up as its manifest's A500+: ECS, 1 MB
   chip RAM; the machine isn't set from the manifest yet); the ten for
   3.1 are A1200 games (Football Glory loads and runs, picture black: AGA,
-  phase 7); three name no system disk. Only DH0: on the board (Gayle's
-  scsi.device uses the master alone; our board could take DH1:).
+  phase 7); three name no system disk.
 - A local git repository (`main`), not on GitHub yet. The attach modes
   of Paula's channels, absolute touch positioning (the pointer under the
   finger) are not done. Collisions are checked by the test disks only:

@@ -542,8 +542,10 @@ measurements written down.
   Workbench put on a blank hard disk by the Amiga itself (formatted, the
   floppy copied, booted from DH0:), an A600 with 3.1 through Gayle (host
   and Tab5) and an A500 with 1.3 through our board (host).
-- Not done: DH1: (one hard disk drive on the board), the A2000's own
-  differences beyond its RAM (none noticed), installing with Commodore's
-  Installer (format and copy instead).
+- **A second hard disk, DH1:**: our board's on every Kickstart (with 2.05
+  and 3.1 beside Gayle's DH0:, whose names it avoids). Both volumes on
+  Workbench 3.1 on the Tab5 and under 1.3 on the host.
+- Not done: the A2000's own differences beyond its RAM (none noticed),
+  installing with Commodore's Installer (format and copy instead).
 - Later: an RP9 setting the machine from its manifest (the user: a nice
   thing for the future).

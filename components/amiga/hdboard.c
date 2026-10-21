@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include "m68k.h"
 #include "amiga_internal.h"
 #include "hdrom.h"
@@ -74,6 +75,8 @@ typedef struct {
 } part_t;
 
 static part_t s_part[MAX_PARTS];
+static char s_taken[MAX_PARTS][16];  /* names scsi.device gives DH0:'s partitions */
+static int s_taken_count;
 
 typedef struct {
     int drive;
@@ -130,9 +133,17 @@ bool ami_kick_has_ide(void)
     return ami.kick_major > 37 || (ami.kick_major == 37 && ami.kick_minor >= 300);
 }
 
+/* The drives the board serves: both, or with Gayle's driver in the
+ * Kickstart DH1: alone (its scsi.device only ever uses the master)
+ */
+static bool serves(int d)
+{
+    return hd_image(d) && (d > 0 || !ami_kick_has_ide());
+}
+
 bool hdboard_wanted(void)
 {
-    return hd_image(0) && !ami_kick_has_ide();
+    return serves(0) || serves(1);
 }
 
 uint8_t *hdboard_memory(uint32_t *base, uint32_t *size)
@@ -381,12 +392,31 @@ static void diag(void)
     wr32(rt + 22, s_base + HDROM_INIT);
 }
 
+/* The names of DH0:'s partitions when Gayle's driver mounts them */
+static void taken_names(void)
+{
+    s_taken_count = 0;
+    uint8_t rdsk[SECTOR], part[SECTOR];
+    if (serves(0) || !hd_image(0) || !find_rdb(0, rdsk)) {
+        return;
+    }
+    for (uint32_t b = be32(rdsk + 28); b != 0xFFFFFFFFu && s_taken_count < MAX_PARTS; b = be32(part + 16)) {
+        if (!block(0, b, part) || memcmp(part, "PART", 4)) {
+            break;
+        }
+        int len = part[36] < 15 ? part[36] : 15;
+        memcpy(s_taken[s_taken_count], part + 37, (size_t)len);
+        s_taken[s_taken_count++][len] = 0;
+    }
+}
+
 static uint32_t init(void)
 {
     s_parts = s_next = s_fs_count = 0;
     s_top = FS_START;
+    taken_names();
     for (int d = 0; d < AMIGA_HARD_DISKS; d++) {
-        if (hd_image(d)) {
+        if (serves(d)) {
             read_partitions(d);
         }
     }
@@ -416,6 +446,28 @@ static uint32_t init(void)
     return 1;
 }
 
+/* A name a partition before `before` (or DH0:'s, through Gayle) has */
+static bool name_used(const char *name, int before)
+{
+    for (int k = 0; k < s_taken_count; k++) {
+        if (!strcasecmp(s_taken[k], name)) {
+            return true;
+        }
+    }
+    for (int k = 0; k < before; k++) {
+        char prev[16];
+        uint32_t nm = NAMES + (uint32_t)k * 16;
+        for (int i = 0; i < 16; i++) {
+            prev[i] = (char)s_board[(nm + (uint32_t)i) ^ 1];
+        }
+        prev[15] = 0;
+        if (!strcasecmp(prev, name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static uint32_t next(void)
 {
     if (s_next >= s_parts) {
@@ -423,17 +475,13 @@ static uint32_t next(void)
     }
     const part_t *p = &s_part[s_next];
     uint32_t pk = PACKETS + (uint32_t)s_next * PACKET_SIZE, nm = NAMES + (uint32_t)s_next * 16;
-    /* its name: the RDB's, made unique */
+    /* its name: the RDB's, else the first DHn nobody has */
     char name[16];
     int len = p->part[36] < 15 ? p->part[36] : 15;
     memcpy(name, p->part + 37, (size_t)len);
     name[len] = 0;
-    for (int k = 0; k < s_next; k++) {
-        const uint8_t *o = s_part[k].part;
-        if (o[36] == len && !memcmp(o + 37, name, (size_t)len)) {
-            snprintf(name, sizeof(name), "DH%d", s_next);
-            break;
-        }
+    for (int n = 0; n < 100 && name_used(name, s_next); n++) {
+        snprintf(name, sizeof(name), "DH%d", n);
     }
     for (int k = 0; k < 16; k++) {
         bw8(nm + (uint32_t)k, (uint8_t)name[k]);
@@ -482,6 +530,9 @@ static uint32_t bootnode(void)
     }
     bool bootable = be32(p->part + 20) & 1;
     int pri = (int32_t)be32(p->part + 128 + 60);
+    if (p->drive > 0 && hd_image(0)) {
+        pri--;                                  /* DH0: boots first */
+    }
     pri = pri > 127 ? 127 : pri < -127 ? -127 : pri;
     for (uint32_t o = bn; o < bn + BOOTNODE_SIZE; o += 2) {
         bw16(o, 0);

@@ -463,14 +463,14 @@ static const char *const *choice_names(int i)
     }
 }
 
-/* ---- Drives: DF0:, DF1: (ADF, written tracks to the card), DH0: (HDF:
- * Gayle's IDE with Kickstart 2.05 and 3.1, our hard disk board with 1.3
- * and 2.04) ---- */
+/* ---- Drives: DF0:, DF1: (ADF, written tracks to the card), DH0:, DH1:
+ * (HDF: our hard disk board with 1.3 and 2.04; with 2.05 and 3.1 Gayle's
+ * IDE takes DH0:, the board DH1:) ---- */
 
-#define DRIVES          (AMIGA_FLOPPIES + 1)
+#define DRIVES          (AMIGA_FLOPPIES + AMIGA_HARD_DISKS)
 
 static const char *const extensions[] = { ".adf", ".rp9", ".hdf", NULL };
-static const char *const drive_names[DRIVES] = { "DF0:", "DF1:", "DH0:" };
+static const char *const drive_names[DRIVES] = { "DF0:", "DF1:", "DH0:", "DH1:" };
 /* (hard disks in whole cylinders of 16 x 63 blocks) */
 #define HD_MB(n)        ((uint32_t)(n) * 1048576u / 516096u * 516096u)
 static const disks_size_t sizes[] = {
@@ -647,13 +647,15 @@ static void status(emu_json_t *j, int section)
         }
         amiga_hd_status_t hs;
         amiga_hd_get_status(&hs);
-        const char *name = disks_name(AMIGA_FLOPPIES), *how = amiga_hd_detail(0);
-        const char *by = settings.kick == KICK_205 || settings.kick == KICK_31 ? "IDE on Gayle"
-                         : settings.kick == KICK_12 ? "Kickstart 1.2 can't boot from a hard disk (1.3 can)"
-                         : "the esp32ami hard disk board";
-        snprintf(text, sizeof(text), "%s%s%s", by, how ? ": " : "", how ? how : "");
-        emu_json_drive(j, drive_names[AMIGA_FLOPPIES], name, amiga_hd_write_protected(0), hs.light == 0, hs.reads[0],
-                       hs.writes[0], name ? text : NULL);
+        bool ide = settings.kick == KICK_205 || settings.kick == KICK_31;
+        for (int h = 0; h < AMIGA_HARD_DISKS; h++) {
+            const char *name = disks_name(AMIGA_FLOPPIES + h), *how = amiga_hd_detail(h);
+            const char *by = settings.kick == KICK_12 ? "Kickstart 1.2 can't boot from a hard disk (1.3 can)"
+                             : ide && h == 0 ? "IDE on Gayle" : "the esp32ami hard disk board";
+            snprintf(text, sizeof(text), "%s%s%s", by, how ? ": " : "", how ? how : "");
+            emu_json_drive(j, drive_names[AMIGA_FLOPPIES + h], name, amiga_hd_write_protected(h), hs.light == h,
+                           hs.reads[h], hs.writes[h], name ? text : NULL);
+        }
         return;
     }
     if (section != EMU_STATUS_ROWS) {
