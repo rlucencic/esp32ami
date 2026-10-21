@@ -506,6 +506,12 @@ images.
   room (core 1 ~25% in SysInfo).
 - AROS needs its extension ROM mapped at $E00000 (it stays black now); not
   on the setup screen yet.
+- RISC-V assembler (and the P4's PIE SIMD) for hot paths is allowed:
+  `../esp32emu/CLAUDE.md`, "To do". A profile on the Tab5 (Workbench 3.1,
+  a Shell listing scrolling; core 1 61% busy, core 0 52%, 100%): the
+  68000 and its memory accessors ~30% of core 1's samples, Paula's
+  `audio_line` 6%, Denise's fetch and line records ~9%, the blitter not
+  in the top 25.
 - Extended ADFs can't be written. DMS modes 2-5 untested (no archives).
 - Later (the user's "nice to have"): an RP9 inserted in the boot drive
   could set the machine its manifest names (model, Kickstart, memory:
