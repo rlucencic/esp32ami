@@ -496,7 +496,7 @@ measurements written down.
   Tie Break were between screens (Tie Break loads at real speed).
 - Not yet: blitter timing per slot; games played by hand on the board.
 
-### Phase 5 (2026-10-21): under way
+### Phase 5 (2026-10-21): done
 
 - **Autoconfig and fast RAM**: the expansion boards at $E80000
   (`autoconf.c`), the first one fast RAM (1, 2, 4 or 8 MB, the setup
@@ -537,5 +537,13 @@ measurements written down.
   archives unpack to their ADFs (two of its ADFs are other disks); a .dms
   and an .adz went through the board's page in Chrome and came back
   identical.
+- **Blank hard disks** (20, 50, 100 MB: an RDB with one partition of the
+  old filesystem's type, formatted on the Amiga) and the phase's check:
+  Workbench put on a blank hard disk by the Amiga itself (formatted, the
+  floppy copied, booted from DH0:), an A600 with 3.1 through Gayle (host
+  and Tab5) and an A500 with 1.3 through our board (host).
+- Not done: DH1: (one hard disk drive on the board), the A2000's own
+  differences beyond its RAM (none noticed), installing with Commodore's
+  Installer (format and copy instead).
 - Later: an RP9 setting the machine from its manifest (the user: a nice
   thing for the future).

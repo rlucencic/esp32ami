@@ -173,6 +173,7 @@ bool hdf_io(hdf_t *h, uint32_t lba, int count, uint8_t *buf, bool write);
 
 /* gayle.c: the A600's IDE port and the hard disks */
 hdf_t *hd_image(int n);             /* a drive's image (NULL: empty) */
+void hd_activity(int n, uint32_t sectors, bool write);  /* its light and counters */
 bool gayle_present(void);
 bool gayle_irq(void);               /* its level 2 interrupt */
 void gayle_reset(void);

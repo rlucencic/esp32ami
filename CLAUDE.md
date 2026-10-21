@@ -4,8 +4,8 @@ An Amiga 500, 2000 or 600 (OCS/ECS, a 68000 at 7.09 MHz PAL) on the M5Stack
 Tab5 (ESP32-P4) only: the user's call, the MaTouch's S3 hasn't the speed for
 the 68000 and the custom chips together. The A1200 (AGA, a 68020) is a later
 phase if the P4 has the speed. Plan and decisions: `docs/architecture.md`
-(its phases table; phases 1 to 3 are done, 4 under way: see Progress
-there). ESP-IDF
+(its phases table; phases 1 to 5 are done: see Progress there).
+ESP-IDF
 v5.5.4, C.
 
 The board side (tasks, LCD, touch, SD, WiFi, BLE, setup screen, web page,
@@ -47,6 +47,9 @@ bash -c '. $IDF_PATH/export.sh >/dev/null 2>&1; \
   are refused by size; its hard disks are `.hdf` too:
   leave them). Drives DF0:, DF1: (ADFs, RP9s with floppies; the API's 1,
   2) and DH0: (HDFs, RP9s with a hard disk; 3). Uploads up to 256 MB.
+  Blank disks: 880 KB floppies, 20, 50 or 100 MB hard disks (an RDB with
+  one partition, the old filesystem's type, to be formatted on the Amiga;
+  `curl -X POST "http://amiga.local/api/new?size=52125696"`).
   The web page unpacks DMS archives and gzipped images (.adz, .hdz) in
   the browser (`main/web/amifiles.js`) and uploads the ADF/HDF.
   Upload with
@@ -100,6 +103,7 @@ images.
 | `tools/adf.py` | Reads ADFs and patches files in them (test disks, see Testing) |
 | `tools/rdb.py`, `tools/ffsls.py` | An HDF's RDB, its first partition's files |
 | `tools/clxboot.py` | Boot disks that test sprite collisions |
+| `tools/mkinstall.py` | A Workbench floppy that formats DH0: and copies itself onto it (the hard disk test) |
 | `tools/hdrom.py` | Assembles the hard disk board's boot ROM into `components/amiga/hdrom.h` |
 | `main/web/amifiles.js` | The web page's converters (served as /machine.js): DMS archives, gzipped images |
 | `tools/amifiles_test.js` | Its test: `node tools/amifiles_test.js [folder of DMS+ADF pairs]` |
@@ -409,6 +413,17 @@ images.
   overlapping or not by one pixel, MVBP 0/1, sprite pairs, ENSP1.
 - Amiga Test Kit's video tests (F6): all six draw; F1's PAL/NTSC frame
   (markers at lines 44, 243, 299) as its source describes.
+- **Installing on a blank hard disk** (phase 5's check): `AMI_NEWHD=<path>:50`
+  makes one, `tools/mkinstall.py` a Workbench floppy whose startup formats
+  DH0: and copies itself onto it (Return at Format's prompt: frame ~700
+  with 3.1, ~900 with 1.3); then the floppy out (`AMI_INSERT=<f>:0:`) and
+  Ctrl-Amiga-Amiga: it boots from DH0:. Checked: an A600 with 3.1 (Gayle,
+  FFS QUICK: ~2200 sectors written one a command, ~4 ms each, as a real
+  A600 does) and an A500 with 1.3 (our board, the old filesystem: Format
+  formats and verifies every cylinder, ~16000 frames for 20 MB), both to
+  their Workbench from HD; on the Tab5 the 3.1 one (a blank 50 MB disk
+  made through the web API, Return by the console's `k 44`, 100%, core 1
+  ~45% while writing).
 - **The web page's converters**: `node tools/amifiles_test.js` makes
   DMS archives (stored and RLE tracks) and an .adz itself and unpacks
   them; with the user's collection's folder it unpacks its 27 DMS archives (all mode 6, heavy 2) and

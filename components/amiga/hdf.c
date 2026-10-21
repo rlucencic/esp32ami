@@ -30,6 +30,7 @@
 #define MAX_FS          2
 #define MAX_LSEG        256             /* blocks of a filesystem (128 KB) */
 #define NONE            0xFFFFFFFFu
+#define DOS0_TYPE       0x444F5300u     /* "DOS\0" */
 
 static uint32_t be32(const uint8_t *p)
 {
@@ -442,6 +443,76 @@ bool hdf_open(hdf_t *h, const char *path)
     free(rs);
     free(ra);
     return true;
+}
+
+/* ---- Blank disks ---- */
+
+bool amiga_hd_create(const char *path, uint32_t bytes)
+{
+    uint32_t blocks = bytes / SECTOR, cyls = blocks / 1008;
+    if (cyls < 4) {
+        return false;
+    }
+    uint8_t b[2][SECTOR];
+    memset(b, 0, sizeof(b));
+    uint8_t *r = b[0], *p = b[1];
+    memcpy(r, "RDSK", 4);
+    put32(r + 4, 64);
+    put32(r + 12, 7);                       /* host ID */
+    put32(r + 16, SECTOR);
+    put32(r + 24, NONE);                    /* bad blocks */
+    put32(r + 28, 1);                       /* the partition */
+    put32(r + 32, NONE);                    /* no filesystems */
+    put32(r + 36, NONE);                    /* no drive init code */
+    for (int i = 40; i < 64; i += 4) {
+        put32(r + i, NONE);
+    }
+    put32(r + 64, cyls);
+    put32(r + 68, 63);
+    put32(r + 72, 16);
+    put32(r + 76, 1);
+    put32(r + 80, cyls);
+    put32(r + 96, cyls);
+    put32(r + 100, cyls);
+    put32(r + 104, 3);
+    put32(r + 128, 0);
+    put32(r + 132, 1007);                   /* the first cylinder: the RDB's */
+    put32(r + 136, 1);
+    put32(r + 140, cyls - 1);
+    put32(r + 144, 1008);
+    put32(r + 152, 1);
+    memcpy(r + 160, "ESP32AMI", 8);
+    memcpy(r + 168, "HARD DISK IMAGE ", 16);
+    memcpy(r + 184, "1.0 ", 4);
+    checksum(r);
+    memcpy(p, "PART", 4);
+    put32(p + 4, 64);
+    put32(p + 12, 7);
+    put32(p + 16, NONE);
+    put32(p + 20, 1);                       /* bootable */
+    p[36] = 3;
+    memcpy(p + 37, "DH0", 3);
+    static const uint32_t env[17] = {
+        16, 128, 0, 16, 1, 63, 2, 0, 0, 1, 0, 30, 0, 0x1FE00, 0x7FFFFFFE, 0, DOS0_TYPE,
+    };
+    for (int i = 0; i < 17; i++) {
+        put32(p + 128 + 4 * i, env[i]);
+    }
+    put32(p + 128 + 40, cyls - 1);          /* HighCyl */
+    checksum(p);
+    FILE *f = fopen(path, "wb");
+    if (f == NULL) {
+        return false;
+    }
+    /* the rest unwritten (the file system extends the file: its contents
+     * don't matter until formatted) */
+    bool ok = fwrite(b, SECTOR, 2, f) == 2 && fseek(f, (long)cyls * 1008 * SECTOR - 1, SEEK_SET) == 0 &&
+              fputc(0, f) == 0;
+    ok = fclose(f) == 0 && ok;
+    if (!ok) {
+        remove(path);
+    }
+    return ok;
 }
 
 bool amiga_rp9_hard_disk(const char *path)

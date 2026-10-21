@@ -206,14 +206,23 @@ void amiga_hd_get_status(amiga_hd_status_t *st)
     }
 }
 
+/* A drive's light and counters (our hard disk board's transfers too) */
+void hd_activity(int n, uint32_t sectors, bool write_it)
+{
+    if (n < 0 || n >= AMIGA_HARD_DISKS) {
+        return;
+    }
+    g.light = n;
+    if (write_it) {
+        s_drive[n].writes += sectors;
+    } else {
+        s_drive[n].reads += sectors;
+    }
+}
+
 static bool io(drive_t *d, uint32_t lba, int count, bool write_it)
 {
-    g.light = (int)(d - s_drive);
-    if (write_it) {
-        d->writes += (uint32_t)count;
-    } else {
-        d->reads += (uint32_t)count;
-    }
+    hd_activity((int)(d - s_drive), (uint32_t)count, write_it);
     return hdf_io(&d->hdf, lba, count, g.buf, write_it);
 }
 

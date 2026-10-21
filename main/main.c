@@ -471,7 +471,14 @@ static const char *const *choice_names(int i)
 
 static const char *const extensions[] = { ".adf", ".rp9", ".hdf", NULL };
 static const char *const drive_names[DRIVES] = { "DF0:", "DF1:", "DH0:" };
-static const disks_size_t sizes[] = { { 901120, "880 KB" } };
+/* (hard disks in whole cylinders of 16 x 63 blocks) */
+#define HD_MB(n)        ((uint32_t)(n) * 1048576u / 516096u * 516096u)
+static const disks_size_t sizes[] = {
+    { 901120, "880 KB" },
+    { HD_MB(20), "20 MB hard disk (formatted on the Amiga)" },
+    { HD_MB(50), "50 MB hard disk (formatted on the Amiga)" },
+    { HD_MB(100), "100 MB hard disk (formatted on the Amiga)" },
+};
 
 static bool has_ext(const char *name, const char *ext)
 {
@@ -493,7 +500,18 @@ static bool disk_accepts(int drive, const char *name)
 
 static bool disk_takes_blank(int drive)
 {
-    return drive < AMIGA_FLOPPIES;
+    (void)drive;
+    return true;
+}
+
+static uint32_t disk_default_size(int drive)
+{
+    return drive >= AMIGA_FLOPPIES ? HD_MB(50) : 901120;
+}
+
+static const char *disk_extension_for(uint32_t bytes)
+{
+    return bytes > 901120 ? ".hdf" : ".adf";
 }
 
 static bool disk_insert(int drive, const char *path)
@@ -523,8 +541,7 @@ static bool disk_write_protected(int drive)
 
 static bool disk_create(const char *path, uint32_t bytes)
 {
-    (void)bytes;
-    return amiga_floppy_create(path);
+    return bytes > 901120 ? amiga_hd_create(path, bytes) : amiga_floppy_create(path);
 }
 
 /* A package deleted or replaced: its unpacked disks go too
@@ -559,7 +576,7 @@ static const disks_config_t disks = {
     .new_prefix = "BLANK",
     .new_extension = ".adf",
     .sizes = sizes,
-    .size_count = 1,
+    .size_count = sizeof(sizes) / sizeof(sizes[0]),
     .max_upload = 256ull * 1024 * 1024,
     .insert = disk_insert,
     .eject = disk_eject,
@@ -569,6 +586,8 @@ static const disks_config_t disks = {
     .removed = disk_removed,
     .accepts = disk_accepts,
     .takes_blank = disk_takes_blank,
+    .default_size = disk_default_size,
+    .extension_for = disk_extension_for,
 };
 
 static void flush(void *arg)

@@ -570,10 +570,12 @@ static uint32_t begin_io(void)
         case 2:                                 /* CMD_READ */
         case 24:                                /* TD_READ64 */
             error = transfer(h, (cmd == 24 ? (uint64_t)rd32(io + 32) << 32 : 0) | offset, len, data, false, &actual);
+            hd_activity((int)unit, actual / SECTOR, false);
             break;
         case 3: case 11:                        /* CMD_WRITE, TD_FORMAT */
         case 25: case 27:                       /* TD_WRITE64, TD_FORMAT64 */
             error = transfer(h, (cmd >= 25 ? (uint64_t)rd32(io + 32) << 32 : 0) | offset, len, data, true, &actual);
+            hd_activity((int)unit, actual / SECTOR, true);
             break;
         case 4: case 5: case 9: case 10:        /* CMD_UPDATE, CMD_CLEAR, TD_MOTOR, TD_SEEK */
         case 12: case 13: case 14: case 21:     /* TD_REMOVE, TD_CHANGENUM, TD_CHANGESTATE, TD_REMCHANGEINT */

@@ -12,7 +12,8 @@
  * instructions at the end), AMI_STOP=<pc>[:<frame>], AMI_TRACE=<pc>:<n>,
  * AMI_EXC (exceptions other than interrupts; "all" with them),
  * AMI_DEBUG=<port> (serve the debugger, in real time), AMI_MODEL (0 A500, 1
- * A2000, 2 A600), AMI_HD0, AMI_HD1 (HDF images, written: use copies), AMI_DF0, AMI_DF1
+ * A2000, 2 A600), AMI_HD0, AMI_HD1 (HDF images, written: use copies),
+ * AMI_NEWHD=<path>:<MB> (a blank hard disk made first), AMI_DF0, AMI_DF1
  * (ADF images in the drives: written to!), AMI_INSERT=<frame>:<drive>:<adf>
  * [;...] (later; an empty name ejects), AMI_INPUT=<frame>:m:<dx>:<dy>:<buttons>
  * | <frame>:k:<code hex>:<1|0> | <frame>:j:<bits hex> [;...] (the mouse,
@@ -255,6 +256,15 @@ int main(int argc, char **argv)
             return 1;
         }
     }
+    if (getenv("AMI_NEWHD")) {
+        char path[400];
+        unsigned mb = 0;
+        if (sscanf(getenv("AMI_NEWHD"), "%399[^:]:%u", path, &mb) != 2 ||
+            !amiga_hd_create(path, mb * 1048576u / 516096u * 516096u)) {
+            fprintf(stderr, "AMI_NEWHD: can't make %s\n", getenv("AMI_NEWHD"));
+            return 1;
+        }
+    }
     for (int d = 0; d < AMIGA_HARD_DISKS; d++) {
         char name[8];
         snprintf(name, sizeof(name), "AMI_HD%d", d);
@@ -344,6 +354,13 @@ int main(int argc, char **argv)
     double secs = (double)(clock() - t0) / CLOCKS_PER_SEC;
     printf("%d frames in %.2f s (%.0f%% of real time), %.1f M instructions\n", frames, secs,
            secs > 0 ? frames / (double)amiga_screen_hz() / secs * 100 : 0, s_insns / 1e6);
+    amiga_hd_status_t hs;
+    amiga_hd_get_status(&hs);
+    for (int d = 0; d < AMIGA_HARD_DISKS; d++) {
+        if (amiga_hd_path(d)) {
+            printf("DH%d: %lu sectors read, %lu written\n", d, (unsigned long)hs.reads[d], (unsigned long)hs.writes[d]);
+        }
+    }
     if (getenv("AMI_RING")) {
         show_ring(atoi(getenv("AMI_RING")));
     }

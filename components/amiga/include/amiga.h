@@ -168,6 +168,11 @@ typedef struct {
 
 void amiga_hd_get_status(amiga_hd_status_t *status);
 
+/* A blank hard disk image of `bytes`: an RDB with one partition (DH0,
+ * bootable, the old filesystem's type: every Kickstart has it; 2.0 and
+ * later format it FFS too), to be formatted */
+bool amiga_hd_create(const char *path, uint32_t bytes);
+
 /* An RP9 package with a hard disk image (else floppies) */
 bool amiga_rp9_hard_disk(const char *path);
 
