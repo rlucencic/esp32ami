@@ -425,7 +425,11 @@ images.
 - `.adz`/`.dms` converters for the web page (the user's collection has
   DMS files beside the ADFs); extended ADFs can't be written.
 - The RP9 games with a hard disk: joined with their system disk (above).
-  The six for 1.3 run through our board (checked: Hannibal); the ten for
+  The six for 1.3 run through our board (host, KS 1.3 with 1 MB fast
+  RAM: Hannibal's menu, also on the Tab5; Epsilon 9's intro, Flight of the
+  Amazon Queen in a scene, Starbase 13 and Tactical Manager their title
+  screens; Ants its menu once set up as its manifest's A500+: ECS, 1 MB
+  chip RAM; the machine isn't set from the manifest yet); the ten for
   3.1 are A1200 games (Football Glory loads and runs, picture black: AGA,
   phase 7); three name no system disk. Only DH0: on the board (Gayle's
   scsi.device uses the master alone; our board could take DH1:).

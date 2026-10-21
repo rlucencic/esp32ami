@@ -528,5 +528,7 @@ measurements written down.
   RDB's filesystem for 1.3 (FFS isn't in its ROM). Checked: an A500 with
   1.3 boots Workbench 1.3.5 from workbench-135.hdf (host and Tab5), 2.04
   too, and Hannibal's RP9 runs to its title and menu on the Tab5 (100%,
-  core 1 30%). An A600 with 3.1 still boots through Gayle, unchanged.
+  core 1 30%). All six 1.3 RP9 games with a hard disk start on the host
+  (Ants needs its manifest's A500+: ECS, 1 MB chip RAM). An A600 with 3.1
+  still boots through Gayle, unchanged.
 - Next: `.adz`/`.dms` on the web page.
