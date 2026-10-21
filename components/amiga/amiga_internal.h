@@ -135,6 +135,30 @@ void ami_cpu_wake(void);            /* an earlier event was scheduled: end the C
 /* mem.c */
 void mem_update_map(void);
 
+/* hdf.c: hard disk images (a file, or an RP9 game's disk with its system disk) */
+#define HDF_PIECES      4
+
+typedef struct {
+    uint32_t first, count;          /* the drive's blocks */
+    int file;                       /* f[file], or -1: the made-up blocks */
+    uint32_t at;                    /* the first one's block there */
+} hdf_piece_t;
+
+typedef struct {
+    FILE *f[2];
+    bool read_only;
+    uint32_t blocks;
+    hdf_piece_t piece[HDF_PIECES];  /* blocks in none: zeros */
+    int pieces;
+    uint8_t *head;                  /* the made-up blocks (an RDB) */
+    uint32_t head_blocks;
+    char detail[96];                /* how it was put together ("": a file) */
+} hdf_t;
+
+bool hdf_open(hdf_t *h, const char *path);
+void hdf_close(hdf_t *h);
+bool hdf_io(hdf_t *h, uint32_t lba, int count, uint8_t *buf, bool write);
+
 /* gayle.c: the A600's IDE port and the hard disks */
 bool gayle_present(void);
 bool gayle_irq(void);               /* its level 2 interrupt */

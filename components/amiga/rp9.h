@@ -17,6 +17,8 @@ typedef struct {
     char disk[RP9_DISKS][RP9_NAME];
     bool harddrive;                 /* a hard disk image too: */
     char hd[RP9_NAME];              /* its member's name */
+    int boot_hdf;                   /* <boot type="hdf">135</boot>: Amiga Forever's
+                                       system disk it boots from (0: none) */
     bool turbo;                     /* fine with fast floppy disks */
 } rp9_t;
 

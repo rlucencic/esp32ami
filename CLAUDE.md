@@ -96,6 +96,8 @@ images.
 | `components/amiga/` | The machine, platform independent (`include/amiga.h`) |
 | `components/amiga/host/` | Host build for testing on the Mac (see Testing) |
 | `tools/adf.py` | Reads ADFs and patches files in them (test disks, see Testing) |
+| `tools/rdb.py`, `tools/ffsls.py` | An HDF's RDB, its first partition's files |
+| `tools/clxboot.py` | Boot disks that test sprite collisions |
 | `roms/` | The Kickstarts (copyrighted, not distributed) |
 | `partitions.csv` | nvs, phy, factory 8 MB, the six ROMs (type 0x40), storage |
 
@@ -148,9 +150,20 @@ images.
   LBA, READ/WRITE (MULTIPLE), IDENTIFY, INITIALIZE DEVICE PARAMETERS, SET
   MULTIPLE, the rest accepted; two lines a sector, then the interrupt.
   Kickstart 2.05 and 3.1 (the A600's ROMs) mount an RDB disk on the
-  master (their FFS); they never look for a slave. An RP9's hard disk is
-  unpacked once into `.<name>.rp9.hdf` beside it (3.3 s for 7 MB on the
-  board; the package replaced or deleted: the copies go, `disk_removed()`).
+  master (their FFS); they never look for a slave.
+- **Hard disk images** (`hdf.c`, under Gayle and later our own board): a
+  drive's blocks are pieces (files, made-up blocks, zeros). A plain HDF
+  with an RDB is one piece. A bare partition (a filesystem from block 0,
+  e.g. DOS\5) gets an RDB of ours in front (Amiga Forever's defaults: 2
+  reserved, 32 blocks a track, one surface), so scsi.device mounts it. An
+  RP9 game's disk is unpacked once into `.<name>.rp9.hdf` (3.3 s for 7 MB
+  on the board; replaced or deleted package: the copies go,
+  `disk_removed()`) and, with `<boot type="hdf">NNN</boot>` and
+  `workbench-NNN.hdf` in the folder, joined with it into one disk: our RDB
+  (the PART blocks, both disks' FSHD/LSEG chains renumbered), the system
+  partitions (bootable, DH0...), the game's (not bootable, its volume
+  AF-Application), each at a cylinder of its own geometry, the size a
+  multiple of 16 x 63. The web page's DH0: detail says which.
 - **Autoconfig** (`autoconf.c`): the boards at $E80000 one after another
   (nibbles, all but er_Type inverted; the address written low nibble
   first, the high one configures; $4C shuts up), unconfigured by a reset
@@ -297,6 +310,11 @@ images.
   scsi.device swaps them back. Sent in the Amiga's order, the geometry
   came out as 4096 heads and 0 sectors: INITIALIZE DEVICE PARAMETERS
   selected the absent slave and the boot waited forever.
+- **Kickstart 2.0+'s shell refuses a file without the E bit; 1.3's
+  doesn't**: Hannibal's executable (an RP9 for 1.3) is "RW-D". The joined
+  disk boots Workbench 1.3.5 and runs the game's user-startup, but under
+  3.1 it ends in "file is not executable": the 1.3 games need Kickstart
+  1.3, so our own hard disk board.
 - **SD writes from an unaligned buffer go sector by sector**: unpacking
   an RP9's hard disk wrote at 0.35 MB/s (20 s for 7 MB; the inflating took
   0.25 s) until the output was gathered into 64 KB aligned to the cache
@@ -344,8 +362,8 @@ images.
   no C: or S:Startup-Sequence; Amiga Forever boots its system disk
   (`<boot type="hdf">135</boot>`: workbench-135.hdf), whose startup runs
   `AF-Application:S/user-startup`. Alone they stop at the `1>` prompt.
-  `scratchpad`-style tools: an RDB lister and an FFS tree lister were
-  enough to see that (not in the repo).
+  `tools/rdb.py disk.hdf` lists an RDB (partitions, filesystems),
+  `tools/ffsls.py disk.hdf [depth]` the first partition's tree.
 - **Amiga Test Kit** 1.21 (Keir Fraser, public domain,
   `github.com/keirf/amiga-stuff` releases; `AmigaTestKit.adf` is on the
   Tab5's card): F-keys pick the tests ($50 F1 ...), Esc goes up, Ctrl+Left
@@ -383,10 +401,11 @@ images.
   on the setup screen yet.
 - `.adz`/`.dms` converters for the web page (the user's collection has
   DMS files beside the ADFs); extended ADFs can't be written.
-- The RP9 games with a hard disk need their system disk beside it: next,
-  one virtual disk made of the system HDF's and the game's partitions (an
-  RDB of our own: Gayle's scsi.device mounts the master only), then our
-  own hard disk board for Kickstart 1.2-2.04 (their RP9s want 1.3).
+- The RP9 games with a hard disk: joined with their system disk (above).
+  The six for 1.3 need our own hard disk board (Kickstart 1.3 has no IDE
+  driver; under 3.1 the shell refuses their executables); the ten for 3.1
+  are A1200 games (Football Glory loads and runs, picture black: AGA,
+  phase 7); three name no system disk.
 - A local git repository (`main`), not on GitHub yet. The attach modes
   of Paula's channels, absolute touch positioning (the pointer under the
   finger) are not done. Collisions are checked by the test disks only:

@@ -159,6 +159,7 @@ bool amiga_hd_insert(int n, const char *path);
 void amiga_hd_eject(int n);
 const char *amiga_hd_path(int n);           /* NULL: none */
 bool amiga_hd_write_protected(int n);
+const char *amiga_hd_detail(int n);         /* how an RP9's disk was put together (NULL: a plain file) */
 
 typedef struct {
     int light;                      /* the drive last used (-1: none) */

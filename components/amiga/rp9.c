@@ -381,6 +381,11 @@ bool rp9_read(const char *path, rp9_t *r)
     p = xml;
     r->harddrive = element(xml, "harddrive", &p, r->hd, sizeof(r->hd), NULL);
     r->turbo = strstr(xml, "<compatibility>turbo-floppy</compatibility>") != NULL;
+    const char *boot = strstr(xml, "<boot ");
+    const char *end = boot ? strchr(boot, '>') : NULL;
+    if (end && strstr(boot, "type=\"hdf\"") && strstr(boot, "type=\"hdf\"") < end) {
+        r->boot_hdf = atoi(end + 1);
+    }
     free(xml);
     return true;
 }

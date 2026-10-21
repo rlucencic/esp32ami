@@ -29,16 +29,11 @@
  * swapped (scsi.device swaps them back). Each sector takes two lines,
  * then the interrupt.
  *
- * An RP9 package's hard disk image is unpacked once into a hidden file
- * beside it (".<name>.rp9.hdf") and used from there.
+ * The images (hdf.c): a file, or an RP9 game's disk with its system disk.
  */
 #include <stdio.h>
 #include <string.h>
-#include <strings.h>
-#include <unistd.h>
-#include <sys/stat.h>
 #include "amiga_internal.h"
-#include "rp9.h"
 
 #define SECTOR          512
 #define BLOCK_MAX       16
@@ -52,9 +47,9 @@ enum {
 };
 
 typedef struct {
-    FILE *f;
+    hdf_t hdf;
+    bool present;
     char path[256];                 /* as inserted (an RP9: the package) */
-    bool read_only;
     uint32_t blocks;
     uint16_t cylinders, heads, sectors;         /* its own geometry (IDENTIFY's) */
     uint16_t cur_heads, cur_sectors;            /* INITIALIZE DEVICE PARAMETERS' */
@@ -85,12 +80,12 @@ static struct {
 static drive_t *selected(void)
 {
     drive_t *d = &s_drive[(g.sdh >> 4) & 1];
-    return d->f ? d : NULL;
+    return d->present ? d : NULL;
 }
 
 bool gayle_present(void)
 {
-    return ami.model == AMIGA_A600 || s_drive[0].f || s_drive[1].f;
+    return ami.model == AMIGA_A600 || s_drive[0].present || s_drive[1].present;
 }
 
 /* Gayle's level 2 interrupt */
@@ -150,31 +145,6 @@ static void geometry(drive_t *d)
     d->cur_sectors = d->sectors;
 }
 
-bool amiga_rp9_hard_disk(const char *path)
-{
-    rp9_t r;
-    return rp9_read(path, &r) && r.harddrive;
-}
-
-/* An RP9's hard disk: its hidden copy, unpacked the first time */
-static bool rp9_image(const char *path, char *image, size_t len)
-{
-    rp9_t r;
-    if (!rp9_read(path, &r) || !r.harddrive) {
-        AMI_LOGW("%s: no hard disk in it", path);
-        return false;
-    }
-    const char *slash = strrchr(path, '/');
-    int dir = slash ? (int)(slash - path + 1) : 0;
-    snprintf(image, len, "%.*s.%s.hdf", dir, path, slash ? slash + 1 : path);
-    struct stat st;
-    if (stat(image, &st) == 0 && st.st_size > 0) {
-        return true;
-    }
-    AMI_LOGI("%s: unpacking %s", path, r.hd);
-    return rp9_extract(path, r.hd, image);
-}
-
 bool amiga_hd_insert(int n, const char *path)
 {
     if (n < 0 || n >= AMIGA_HARD_DISKS) {
@@ -182,57 +152,41 @@ bool amiga_hd_insert(int n, const char *path)
     }
     amiga_hd_eject(n);
     drive_t *d = &s_drive[n];
-    char image[256];
-    size_t plen = strlen(path);
-    if (plen > 4 && strcasecmp(path + plen - 4, ".rp9") == 0) {
-        if (!rp9_image(path, image, sizeof(image))) {
-            return false;
-        }
-    } else {
-        snprintf(image, sizeof(image), "%s", path);
-    }
-    bool ro = false;
-    FILE *f = fopen(image, "r+b");
-    if (f == NULL) {
-        f = fopen(image, "rb");
-        ro = true;
-    }
-    if (f == NULL) {
+    if (!hdf_open(&d->hdf, path)) {
         return false;
     }
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    if (size < SECTOR * 16) {
-        fclose(f);
-        return false;
-    }
-    d->f = f;
-    d->read_only = ro;
-    d->blocks = (uint32_t)(size / SECTOR);
+    d->present = true;
+    d->blocks = d->hdf.blocks;
     snprintf(d->path, sizeof(d->path), "%s", path);
     geometry(d);
     d->reads = d->writes = 0;
     AMI_LOGI("DH%d: %s, %lu KB, %u/%u/%u%s", n, path, (unsigned long)(d->blocks / 2), d->cylinders, d->heads,
-             d->sectors, ro ? ", read-only" : "");
+             d->sectors, d->hdf.read_only ? ", read-only" : "");
     return true;
 }
 
 void amiga_hd_eject(int n)
 {
-    if (n >= 0 && n < AMIGA_HARD_DISKS && s_drive[n].f) {
-        fclose(s_drive[n].f);
+    if (n >= 0 && n < AMIGA_HARD_DISKS && s_drive[n].present) {
+        hdf_close(&s_drive[n].hdf);
         memset(&s_drive[n], 0, sizeof(s_drive[n]));
     }
 }
 
 const char *amiga_hd_path(int n)
 {
-    return n >= 0 && n < AMIGA_HARD_DISKS && s_drive[n].f ? s_drive[n].path : NULL;
+    return n >= 0 && n < AMIGA_HARD_DISKS && s_drive[n].present ? s_drive[n].path : NULL;
 }
 
 bool amiga_hd_write_protected(int n)
 {
-    return n >= 0 && n < AMIGA_HARD_DISKS && s_drive[n].read_only;
+    return n >= 0 && n < AMIGA_HARD_DISKS && s_drive[n].hdf.read_only;
+}
+
+const char *amiga_hd_detail(int n)
+{
+    return n >= 0 && n < AMIGA_HARD_DISKS && s_drive[n].present && s_drive[n].hdf.detail[0] ? s_drive[n].hdf.detail
+                                                                                                : NULL;
 }
 
 void amiga_hd_get_status(amiga_hd_status_t *st)
@@ -246,18 +200,13 @@ void amiga_hd_get_status(amiga_hd_status_t *st)
 
 static bool io(drive_t *d, uint32_t lba, int count, bool write_it)
 {
-    int fd = fileno(d->f);
-    ssize_t len = (ssize_t)count * SECTOR;
-    if (lba + (uint32_t)count > d->blocks || lseek(fd, (off_t)lba * SECTOR, SEEK_SET) < 0) {
-        return false;
-    }
     g.light = (int)(d - s_drive);
     if (write_it) {
         d->writes += (uint32_t)count;
-        return write(fd, g.buf, (size_t)len) == len;
+    } else {
+        d->reads += (uint32_t)count;
     }
-    d->reads += (uint32_t)count;
-    return read(fd, g.buf, (size_t)len) == len;
+    return hdf_io(&d->hdf, lba, count, g.buf, write_it);
 }
 
 /* ---- Commands ---- */
@@ -399,7 +348,7 @@ static void command(uint8_t cmd)
         g.lba = lba;
         g.left = g.count ? g.count : 256;
         if (cmd == 0x30 || cmd == 0x31 || cmd == 0xC5) {
-            if (d->read_only) {
+            if (d->hdf.read_only) {
                 finish(ER_ABRT);
                 return;
             }

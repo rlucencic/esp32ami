@@ -514,7 +514,13 @@ measurements written down.
   Found: Gayle swaps the bus's bytes (IDENTIFY's words arrive swapped), the
   ROMs' scsi.device only ever uses the master, SD writes need aligned
   buffers (the unpack: 20 s to 3.3 s).
-- The RP9 games' hard disks are data volumes (AF-Application) for Amiga
-  Forever's system disk: next, one virtual disk with both partitions;
-  then our own hard disk board for Kickstart 1.2-2.04; then `.adz`/`.dms`
-  on the web page.
+- **The RP9 games' hard disks** are data volumes (AF-Application) for
+  Amiga Forever's system disk: with workbench-135/311.hdf beside the
+  package, DH0: is one disk of both (`hdf.c`: an RDB of ours, the system's
+  partitions bootable, the game's after). Checked on the host and the
+  Tab5: Workbench 1.3.5 boots from it and runs Hannibal's user-startup,
+  which 3.1's shell stops ("not executable": the E bit 1.3 ignored);
+  Football Glory (3.1, an A1200 game) loads and runs with a black picture.
+  Bare partitions (no RDB) get our RDB too and mount alone.
+- Next: our own hard disk board for Kickstart 1.2-2.04 (the 1.3 games),
+  then `.adz`/`.dms` on the web page.

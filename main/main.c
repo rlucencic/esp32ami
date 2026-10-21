@@ -627,9 +627,10 @@ static void status(emu_json_t *j, int section)
         }
         amiga_hd_status_t hs;
         amiga_hd_get_status(&hs);
-        const char *name = disks_name(AMIGA_FLOPPIES);
+        const char *name = disks_name(AMIGA_FLOPPIES), *how = amiga_hd_detail(0);
+        snprintf(text, sizeof(text), "IDE on Gayle (Kickstart 2.05 and 3.1)%s%s", how ? ": " : "", how ? how : "");
         emu_json_drive(j, drive_names[AMIGA_FLOPPIES], name, amiga_hd_write_protected(0), hs.light == 0, hs.reads[0],
-                       hs.writes[0], name ? "IDE on Gayle: Kickstart 2.05 and 3.1 mount a disk with an RDB" : NULL);
+                       hs.writes[0], name ? text : NULL);
         return;
     }
     if (section != EMU_STATUS_ROWS) {
