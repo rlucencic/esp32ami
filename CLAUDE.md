@@ -506,10 +506,8 @@ images.
   panel's picture), `tab5-setup.png` (status lines cut), `web.png` (a
   local mock with example data, halved).
 - Phases 4-7 (`docs/architecture.md`): games (the rest of phase 4:
-  blitter timing per slot), A2000/A600
-  specifics (autoconfig fast RAM, Gayle IDE, the hard disk board, the RP9s
-  with hard disk images), NTSC's 227/228 colour clock lines, the A1200
-  (the 25 A1200 RP9s). The chip bus model is an average (`SLOT_WAIT`), not
+  blitter timing per slot), NTSC's 227/228 colour clock lines, the A1200
+  (phase 7: AGA, the 68020; the 25 A1200 RP9s). The chip bus model is an average (`SLOT_WAIT`), not
   per access: a slot-exact one (the 68000's accesses against the line's
   DMA slots) would bring SysInfo and xSysInfo to 1.0; the Tab5 has the
   room (core 1 ~25% in SysInfo).
@@ -538,8 +536,7 @@ images.
   chip RAM; the machine isn't set from the manifest yet); the ten for
   3.1 are A1200 games (Football Glory loads and runs, picture black: AGA,
   phase 7); three name no system disk.
-- A local git repository (`main`), not on GitHub yet. The attach modes
-  of Paula's channels, absolute touch positioning (the pointer under the
+- The attach modes of Paula's channels, absolute touch positioning (the pointer under the
   finger) are not done. Collisions are checked by the test disks only:
   the one game that reads CLXDAT (X-Balls) behaves the same without
   them. Sprites show (and collide) outside the vertical window too:
