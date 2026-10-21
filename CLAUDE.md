@@ -465,7 +465,11 @@ images.
   makes one, `tools/mkinstall.py` a Workbench floppy whose startup formats
   DH0: and copies itself onto it (Return at Format's prompt: frame ~700
   with 3.1, ~900 with 1.3); then the floppy out (`AMI_INSERT=<f>:0:`) and
-  Ctrl-Amiga-Amiga: it boots from DH0:. Checked: an A600 with 3.1 (Gayle,
+  Ctrl-Amiga-Amiga: it boots from DH0:. Its startup-sequence is
+  `mkinstall.py`'s minimal one (ENV: empty, no IPrefs: the prefs editors
+  fail, "ENV:Sys/screenmode.prefs, object not found"): copy the
+  Workbench floppy's own over it (`copy df0:s/startup-sequence dh0:s/`,
+  done on the Tab5's HD 2026-10-21). Checked: an A600 with 3.1 (Gayle,
   FFS QUICK: ~2200 sectors written one a command, ~4 ms each, as a real
   A600 does) and an A500 with 1.3 (our board, the old filesystem: Format
   formats and verifies every cylinder, ~16000 frames for 20 MB), both to
@@ -539,6 +543,8 @@ images.
   chip RAM; the machine isn't set from the manifest yet); the ten for
   3.1 are A1200 games (Football Glory loads and runs, picture black: AGA,
   phase 7); three name no system disk.
+- ECS's super-hires (BPLCON0 SHRES, 1280 pixels across) isn't drawn:
+  ScreenMode offers PAL:1280 x 256/512 on ECS, and they'd show wrong.
 - The attach modes of Paula's channels, absolute touch positioning (the pointer under the
   finger) are not done. Collisions are checked by the test disks only:
   the one game that reads CLXDAT (X-Balls) behaves the same without
