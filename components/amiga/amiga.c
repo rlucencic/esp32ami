@@ -431,6 +431,7 @@ void amiga_run_frame(void)
     }
     ami.frames++;
     input_frame();
+    space_frame();
     /* the keyboard's reset: a few frames after its warning, for the OS */
     static int reset_in;
     if (input_reset_wanted()) {

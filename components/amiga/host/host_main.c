@@ -377,6 +377,14 @@ int main(int argc, char **argv)
             printf("DH%d: %lu sectors read, %lu written\n", d, (unsigned long)hs.reads[d], (unsigned long)hs.writes[d]);
         }
     }
+    for (int d = 0; d < AMIGA_FLOPPIES + AMIGA_HARD_DISKS; d++) {
+        uint64_t free_bytes, size;
+        if (amiga_disk_space(d, &free_bytes, &size)) {
+            printf("%s%d: %llu bytes free of %llu\n", d < AMIGA_FLOPPIES ? "DF" : "DH",
+                   d < AMIGA_FLOPPIES ? d : d - AMIGA_FLOPPIES, (unsigned long long)free_bytes,
+                   (unsigned long long)size);
+        }
+    }
     amiga_mem_free_t mem[3];
     if (amiga_mem_free(&mem[0], &mem[1], &mem[2])) {
         static const char *const kinds[] = { "chip", "slow", "fast" };

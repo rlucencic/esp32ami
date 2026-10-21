@@ -100,6 +100,12 @@ typedef struct {
     uint32_t free, largest;         /* bytes; largest 0: not known */
 } amiga_mem_free_t;
 bool amiga_mem_free(amiga_mem_free_t *chip, amiga_mem_free_t *slow, amiga_mem_free_t *fast);
+/* The free space on a drive's disk (0-1 DF0:-DF1:, 2-3 DH0:-DH1:) as its
+ * AmigaDOS volumes count it, in bytes: false if not known (no disk, not
+ * AmigaDOS, its bitmap being validated); updated once a second, a hard
+ * disk once its writes stop
+ */
+bool amiga_disk_space(int drive, uint64_t *free_bytes, uint64_t *size);
 uint8_t amiga_peek8(uint32_t address);
 void amiga_poke8(uint32_t address, uint8_t value);
 

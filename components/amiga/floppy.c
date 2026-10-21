@@ -772,6 +772,13 @@ const char *amiga_floppy_path(int drive)
     return drive >= 0 && drive < AMIGA_FLOPPIES && s_drive[drive].data ? s_drive[drive].shown : NULL;
 }
 
+/* A drive's ADF (an ordinary one; NULL: none, or an extended ADF) */
+const uint8_t *floppy_image(int drive)
+{
+    const drive_t *d = drive >= 0 && drive < AMIGA_FLOPPIES ? &s_drive[drive] : NULL;
+    return d && d->data && !d->ext && d->size == ADF_SIZE ? d->data : NULL;
+}
+
 bool amiga_floppy_write_protected(int drive)
 {
     return drive >= 0 && drive < AMIGA_FLOPPIES && s_drive[drive].protect;

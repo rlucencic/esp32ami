@@ -642,8 +642,10 @@ static void status(emu_json_t *j, int section)
             } else {
                 snprintf(text, sizeof(text), "cylinder %u", (unsigned)fs.cylinder[d]);
             }
-            emu_json_drive(j, drive_names[d], name, amiga_floppy_write_protected(d), fs.light == d, fs.reads[d],
-                           fs.writes[d], name ? text : NULL);
+            uint64_t free_bytes = 0, size = 0;
+            amiga_disk_space(d, &free_bytes, &size);
+            emu_json_drive_space(j, drive_names[d], name, amiga_floppy_write_protected(d), fs.light == d, fs.reads[d],
+                                 fs.writes[d], name ? text : NULL, free_bytes, size);
         }
         amiga_hd_status_t hs;
         amiga_hd_get_status(&hs);
@@ -653,8 +655,10 @@ static void status(emu_json_t *j, int section)
             const char *by = settings.kick == KICK_12 ? "Kickstart 1.2 can't boot from a hard disk (1.3 can)"
                              : ide && h == 0 ? "IDE on Gayle" : "the esp32ami hard disk board";
             snprintf(text, sizeof(text), "%s%s%s", by, how ? ": " : "", how ? how : "");
-            emu_json_drive(j, drive_names[AMIGA_FLOPPIES + h], name, amiga_hd_write_protected(h), hs.light == h,
-                           hs.reads[h], hs.writes[h], name ? text : NULL);
+            uint64_t free_bytes = 0, size = 0;
+            amiga_disk_space(AMIGA_FLOPPIES + h, &free_bytes, &size);
+            emu_json_drive_space(j, drive_names[AMIGA_FLOPPIES + h], name, amiga_hd_write_protected(h), hs.light == h,
+                                 hs.reads[h], hs.writes[h], name ? text : NULL, free_bytes, size);
         }
         return;
     }

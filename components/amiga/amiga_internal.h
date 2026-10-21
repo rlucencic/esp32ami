@@ -302,6 +302,10 @@ uint8_t floppy_status(void);    /* CIA-A PRA bits 5-2: /RDY /TK0 /WPRO /CHNG */
 void floppy_line(int cycles);   /* the disks turn */
 void floppy_write(uint32_t reg, uint16_t value);
 uint16_t floppy_dskbytr(void);
+const uint8_t *floppy_image(int drive);     /* its ADF (NULL: none, extended) */
+
+/* space.c: the disks' free space for the web page */
+void space_frame(void);                     /* once a frame, from the frame loop */
 
 static inline int ami_now(void)
 {
