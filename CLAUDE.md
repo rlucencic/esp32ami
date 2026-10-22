@@ -113,6 +113,7 @@ images.
 | `tools/clxboot.py` | Boot disks that test sprite collisions |
 | `tools/laceboot.py` | A boot disk that tests interlace (white long frames, black short ones) |
 | `tools/blitboot.py` | A boot disk that times a blit with 0, 4, 6 lores and 4 hires planes (`--check` compares a dump with the slots worked out) |
+| `tools/attachboot.py` | Boot disks that test Paula's attach modes (`check` measures the host's recorded sound) |
 | `tools/mkinstall.py` | A Workbench floppy that formats DH0: and copies itself onto it (the hard disk test) |
 | `tools/hdrom.py` | Assembles the hard disk board's boot ROM into `components/amiga/hdrom.h` |
 | `tools/collection.py` | Runs a folder of RP9 games on two host builds and compares their pictures (see Testing) |
@@ -306,7 +307,11 @@ images.
   output); the joystick in JOY1DAT, fire on PRA bit 7.
 - **Sound** (`audio.c`): Paula's four channels per line (DMA with the
   buffer reload and the interrupt at each, or AUDxDAT written; a channel
-  whose DMA goes off finishes its word, then the interrupt), each
+  whose DMA goes off finishes its word, then the interrupt; attached
+  through ADKCON, a channel is silent and its words set the next one's
+  volume and/or period, each in place of a byte: a volume word at the
+  low byte's end, a period word at the high byte's, after WinUAE's state
+  machine and the HRM's alternating volume/period), each
   sample's time averaged into 44.1 kHz stereo (0+3 left, 1+2 right), the
   A500's fixed low-pass and the LED's filter (CIA-A PRA bit 1 low), into a
   ring the runtime's speaker task drains (and paces the emulation by).
@@ -608,6 +613,12 @@ the top two bits do nothing, Aerial Racers' race sets them),
   `AMI_DF0=<copy> AMI_DUMP=7F000:8:dump.bin ami_host roms/amiga-os-130.rom
   700` and `tools/blitboot.py --check dump.bin`: the lines a 4096-slot
   blit takes with each display, against the slots a line leaves it.
+- **Paula's attach modes**: `tools/attachboot.py out.adf vol|per|both|off3|none`,
+  then `AMI_DF0=<copy> AMI_WAV=out.wav ami_host roms/amiga-os-130.rom 500`
+  and `tools/attachboot.py check <mode> out.wav`: channel 0's words to
+  channel 1's volume, period or both, each stretch's frequency and level
+  against the words (`off3`: channel 3 with its bits, silent). All right
+  (2026-10-22); the code before it got 25 and 37 of them wrong.
 - **Interlace**: `tools/laceboot.py out.adf`: the woven picture's lines
   alternate white and black (host and Tab5). Workbench 1.3 interlaced:
   `devs/system-configuration` byte 185 bit 0 (LaceWB) set with
@@ -712,9 +723,8 @@ the top two bits do nothing, Aerial Racers' race sets them),
 
 ## Open items
 
-- The work still to do, sketched and in order: `TODO.md` (the blitter's
-  and the 68000's slots, attach modes,
-  super-hires, extended ADF writes, AGA's rest, the 68EC020's cache). The
+- The work still to do, sketched and in order: `TODO.md` (super-hires,
+  extended ADF writes, AGA's rest, the 68EC020's cache). The
   items below are the state of things; `TODO.md` says what to do next.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
@@ -756,8 +766,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
   planes as one), BPLCON1's scroll is taken as lores pixels (4
   super-hires ones), the sprites' 70 ns positions aren't there; a lores
   or hires screen dragged over a super-hires one wasn't tried.
-- The attach modes of Paula's channels are not done (`TODO.md` 4;
-  Datastorm sets them). Absolute touch
+- Paula's attach modes are checked by the test disks only: Datastorm, the
+  collection's one user, sets them while its sound is off (its recording
+  the same with and without them). Absolute touch
   positioning (the pointer under the finger) is not wanted: the user
   finds the touchpad better (the pointer's tip in sight, a tap anywhere
   clicks). Collisions are checked by the test disks only:

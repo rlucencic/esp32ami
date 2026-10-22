@@ -715,3 +715,13 @@ measurements written down.
   the two loaders). Host ~23% slower; Tab5: SysInfo the same, core 1 25%;
   Kick Off 2 at 100%. A `ctz(0)` in the first version's slot scan hung the
   board (undefined: the Mac's gave 32): a table now.
+- **4. Paula's attach modes** (2026-10-22): an attached channel is silent
+  and its words go to the next channel's volume (where a played word's
+  low byte ends, and at the DMA's start) and/or period (where the high
+  byte ends); with both, one a period, volume first (the HRM's table,
+  WinUAE's state machine). Channel 3's bits silence it. `tools/attachboot.py`:
+  boot disks for volume, period, both, channel 3 and none, and a check of
+  the recorded sound stretch by stretch: all right (the code before got
+  25 and 37 wrong). Datastorm, the collection's one user, sets ADKCON
+  $80DF in its loader with the sound off and clears it before its music:
+  the same recording as before.

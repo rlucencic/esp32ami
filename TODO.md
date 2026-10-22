@@ -5,23 +5,7 @@ how, how it's checked, and roughly how big it is. Done items move to
 `docs/architecture.md` (Progress, "The to-do list") and leave this list;
 the others keep their numbers (done: 1, an RP9 setting up its machine;
 2, the blitter's timing slot by slot; 3, the 68000 on the chip bus slot by
-slot).
-
-## 4. Paula's attach modes
-
-- **Why**: not done at all. ADKCON's bits 0-3 (USExV) send channel x's
-  words to channel x+1's volume, bits 4-7 (USExP) to its period; with both,
-  the words alternate volume and period. The attached channel itself is
-  silent.
-- **How**: `audio.c`: a word channel c fetches (DMA) while attached goes
-  to `ch[c + 1].vol` and/or `.per` instead of playing; channel 3's bits
-  have no partner.
-- **Check**: Datastorm is the collection's only user (ADKCON $15DF from
-  frame 687: bits 0-4, 6, 7; maybe its loader's leftovers): `AMI_WAV`
-  before and after, the user listens. A tone disk
-  (`tools/attachboot.py`: channel 0 sweeping channel 1's period) for the
-  exact behaviour.
-- **Size**: small (~40 lines).
+slot; 4, Paula's attach modes).
 
 ## 5. ECS super-hires: the rest
 

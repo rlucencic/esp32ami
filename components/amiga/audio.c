@@ -9,6 +9,13 @@
  * When a channel's DMA goes off, the word playing finishes, then the
  * interrupt (replay routines stop a channel and wait for it).
  *
+ * Attached (ADKCON bits 0-7): a channel's words go to the next channel's
+ * volume and/or period instead of playing, and it's silent (channel 3's
+ * bits only silence it). Each word stands in for one of a played word's two
+ * bytes: a volume word where the low byte would end (and the first at the
+ * DMA's start), a period word where the high byte would; with both, one a
+ * period, alternating volume and period.
+ *
  * Mixed channels 0 and 3 left, 1 and 2 right, averaged over each sample's
  * time at AMIGA_AUDIO_HZ, through the A500's fixed low-pass filter (and the
  * second one the power LED switches on), into a ring the speaker's task
@@ -19,6 +26,8 @@
 
 #define RING            8192            /* frames, ~190 ms */
 #define MIN_PERIOD      113             /* what Paula's DMA keeps up with */
+#define ATT_VOL         0x01            /* ADKCON >> c: channel c attached to c + 1's volume */
+#define ATT_PER         0x10            /* ... and/or its period */
 
 typedef struct {
     uint32_t lc, pt;
@@ -63,10 +72,36 @@ void audio_reset(void)
     au.sample_left = au.period;
 }
 
+static inline int attached(int c)
+{
+    return (ami.adkcon >> c) & (ATT_VOL | ATT_PER);
+}
+
 static void set_out(chan_t *ch)
 {
     int8_t sample = (int8_t)(ch->byte ? (ch->dat & 0xFF) : (ch->dat >> 8));
-    ch->out = sample * ch->vol;
+    ch->out = attached((int)(ch - au.ch)) ? 0 : sample * ch->vol;
+}
+
+static void set_vol(chan_t *ch, uint16_t v)
+{
+    ch->vol = (v & 0x40) ? 64 : (v & 0x3F);
+    if (ch->playing) {
+        set_out(ch);
+    }
+}
+
+/* An attached channel's word to the next one's period or volume */
+static void modulate(int c, bool period)
+{
+    if (c == 3) {
+        return;
+    }
+    if (period) {
+        au.ch[c + 1].per = au.ch[c].dat;
+    } else {
+        set_vol(&au.ch[c + 1], au.ch[c].dat);
+    }
 }
 
 static uint16_t period_of(const chan_t *ch)
@@ -98,18 +133,31 @@ static void start_dma(int c)
     fetch(c);
     ch->byte = 0;
     ch->cnt = period_of(ch) * 256;
+    if (attached(c) & ATT_VOL) {
+        modulate(c, false);
+    }
     set_out(ch);
 }
 
-/* A byte played out */
+/* A byte played out (attached: a word's half used) */
 static void next_byte(int c)
 {
     chan_t *ch = &au.ch[c];
+    int att = attached(c);
     if (ch->byte == 0) {
         ch->byte = 1;
+        if (att & ATT_PER) {
+            if ((att & ATT_VOL) && ch->dma) {
+                fetch(c);
+            }
+            modulate(c, true);
+        }
     } else if (ch->dma) {
         fetch(c);
         ch->byte = 0;
+        if (att & ATT_VOL) {
+            modulate(c, false);
+        }
     } else {
         /* a written word played: its interrupt, then the last sample holds;
          * the last word of a DMA turned off: its interrupt, then silence */
@@ -157,10 +205,7 @@ void audio_write(uint32_t reg, uint16_t v)
         ch->per = v;
         break;
     case 0x8:
-        ch->vol = (v & 0x40) ? 64 : (v & 0x3F);
-        if (ch->playing) {
-            set_out(ch);
-        }
+        set_vol(ch, v);
         break;
     case 0xA:
         if (!ch->dma) {
@@ -169,6 +214,9 @@ void audio_write(uint32_t reg, uint16_t v)
             ch->byte = 0;
             ch->cnt = period_of(ch) * 256;
             ch->playing = true;
+            if (attached(c) & ATT_VOL) {
+                modulate(c, false);
+            }
             set_out(ch);
         }
         break;

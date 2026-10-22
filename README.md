@@ -85,7 +85,7 @@ all are built on the shared runtime
   sprites 16 to 64 pixels wide and their colour banks; the A1200 games of
   Amiga Forever's collection show their AGA pictures
 - **Paula**: four sound channels with the A500's filters (and the power
-  LED's), disk DMA with the sync word at any bit, the interrupts
+  LED's) and the attach modes, disk DMA with the sync word at any bit, the interrupts
 - **Two 8520 CIAs**: timers, the time-of-day counters, the keyboard's
   serial handshake; the **battery-backed clock**, set from the internet
 - **Expansion**: autoconfig fast RAM (1 to 8 MB, Zorro II), the A600's and A1200's
