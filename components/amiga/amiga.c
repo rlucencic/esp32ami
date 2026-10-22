@@ -408,6 +408,7 @@ void amiga_run_frame(void)
             cia_tod_tick(&cia[0]);
         }
         display_line_start();
+        blitter_line_start();
         ami.stall += blitter_steal_line();
         if (ami.stall > 4 * CYCLES_LINE) {
             ami.stall = 4 * CYCLES_LINE;

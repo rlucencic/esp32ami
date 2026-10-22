@@ -340,9 +340,10 @@ lessons learned along the way.
   written (Kickstart 3.1).
   No 68010/68020 for the A500/A2000, no accelerator boards, no Zorro III,
   no CD32/CDTV.
-- The chip bus is modelled on average (3 clocks for each slot the DMA
-  takes), not slot by slot; the blitter's timing likewise. Demos that count
-  on exact bus cycles may show it.
+- The 68000's share of the chip bus is modelled on average (3 clocks for
+  each slot the DMA takes), not slot by slot; the blitter gets the slots
+  each line's display leaves it, counted a line at a time. Demos that
+  count on exact bus cycles may show it.
 - Extended ADFs are read-only; no IPF (SPS) images. DMS archives in the
   "quick", "medium", "deep" and "heavy 1" modes are written but untested
   (no such archives at hand).

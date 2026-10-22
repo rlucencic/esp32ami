@@ -430,6 +430,46 @@ void display_line_start(void)
     sprite_dma();
 }
 
+/* Fetched in blocks: each plane max(fw, r) words in 8 * that / r colour
+ * clocks (fw the words a fetch, r 1, 2, 4 for lores, hires, super-hires:
+ * OCS's 8-clock units), whole blocks, the one DDFSTOP falls in too
+ * (Kickstart 1.3's hires screens: $3C-$D0 is 40 words; 3.1's $40-$D0 38).
+ * AGA in FMODE 3: Workbench 3.1's hires $38-$D8 44 words (its modulo 72,
+ * two planes interleaved), Deluxe Pacman's lores $38-$D0 24 (modulo -8).
+ * A plane's words; *wb the block's (for the first pixel)
+ */
+static int fetch_words(uint16_t con0, uint16_t fmode, int *wb_out)
+{
+    bool shres = con0 & BPLCON0_SHRES;
+    bool hires = !shres && (con0 & BPLCON0_HIRES);
+    int start, stop;
+    ddf(&start, &stop);
+    int fw = fetch_width(fmode), r = shres ? 4 : hires ? 2 : 1;
+    int wb = fw > r ? fw : r, block = 8 * wb / r;
+    int words = ((stop - start + block - 1) / block + 1) * wb;
+    *wb_out = wb;
+    return words > MAX_PLANE_WORDS ? MAX_PLANE_WORDS : words;
+}
+
+/* The bus slots this line's display DMA takes, what the blitter can't
+ * have: the bitplane fetch's (a word each, AGA's wide fetches one for 2 or
+ * 4 words) and the sprites' 16 after vertical blank
+ */
+int display_dma_slots(void)
+{
+    int n = 0;
+    if (s.fetch_at != NEVER || s.fetched) {
+        uint16_t con0 = s.fetched ? s.con0 : s.bplcon0, fmode = s.fetched ? s.fmode_line : s.fmode;
+        int wb;
+        n = planes_of(con0) * fetch_words(con0, fmode, &wb) / fetch_width(fmode);
+    }
+    int first = (ami_ntsc_beam() ? VBLANK_END_NTSC : VBLANK_END_PAL) - 1;
+    if ((ami.dmacon & (DMA_EN | DMA_SPR)) == (DMA_EN | DMA_SPR) && ami.line >= first) {
+        n += 16;
+    }
+    return n;
+}
+
 AMI_HOT void display_fetch(void)
 {
     s.fetch_at = NEVER;
@@ -443,23 +483,13 @@ AMI_HOT void display_fetch(void)
     bool shres = s.con0 & BPLCON0_SHRES;
     bool hires = !shres && (s.con0 & BPLCON0_HIRES);
     int planes = planes_of(s.con0);
-    int start, stop;
+    int start, stop, wb;
     ddf(&start, &stop);
-    /* Fetched in blocks: each plane max(fw, r) words in 8 * that / r colour
-     * clocks (fw the words a fetch, r 1, 2, 4 for lores, hires, super-
-     * hires: OCS's 8-clock units), whole blocks, the one DDFSTOP falls in
-     * too (Kickstart 1.3's hires screens: $3C-$D0 is 40 words; 3.1's
-     * $40-$D0 38). AGA in FMODE 3: Workbench 3.1's hires $38-$D8 44 words
-     * (its modulo 72, two planes interleaved), Deluxe Pacman's lores
-     * $38-$D0 24 (modulo -8). The first pixel after DDFSTRT: 16 * fw / that
-     * + 1 lores pixels (OCS's 17, 9, 5; FMODE 3's 17).
+    int fw = fetch_width(s.fmode);
+    int words = fetch_words(s.con0, s.fmode, &wb);
+    /* the first pixel after DDFSTRT: 16 * fw / wb + 1 lores pixels (OCS's
+     * 17, 9, 5; FMODE 3's 17)
      */
-    int fw = fetch_width(s.fmode), r = shres ? 4 : hires ? 2 : 1;
-    int wb = fw > r ? fw : r, block = 8 * wb / r;
-    int words = ((stop - start + block - 1) / block + 1) * wb;
-    if (words > MAX_PLANE_WORDS) {
-        words = MAX_PLANE_WORDS;
-    }
     s.first = start * 2 + 16 * fw / wb + 1;
     s.planes = planes;
     s.words = words;

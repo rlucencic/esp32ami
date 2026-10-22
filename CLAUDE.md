@@ -112,6 +112,7 @@ images.
 | `tools/rdb.py`, `tools/ffsls.py` | An HDF's RDB, its first partition's files |
 | `tools/clxboot.py` | Boot disks that test sprite collisions |
 | `tools/laceboot.py` | A boot disk that tests interlace (white long frames, black short ones) |
+| `tools/blitboot.py` | A boot disk that times a blit with 0, 4, 6 lores and 4 hires planes (`--check` compares a dump with the slots worked out) |
 | `tools/mkinstall.py` | A Workbench floppy that formats DH0: and copies itself onto it (the hard disk test) |
 | `tools/hdrom.py` | Assembles the hard disk board's boot ROM into `components/amiga/hdrom.h` |
 | `tools/collection.py` | Runs a folder of RP9 games on two host builds and compares their pictures (see Testing) |
@@ -321,8 +322,15 @@ images.
 - **Blitter** (`blitter.c`): area mode (minterms with fast paths, shifts,
   masks, descending, inclusive/exclusive fill through tables), line mode
   (octants as SUD/SUL/AUL, SING, texture), ECS BLTSIZV/BLTSIZH/BLTCON0L.
-  Done at once; BBUSY and the interrupt wait for the real duration (words
-  x colour clocks per word by channels; lines 4 a pixel).
+  Done at once; BBUSY and the interrupt wait for the real duration: words
+  x colour clocks per word by channels (lines 4 a pixel), each a bus slot
+  it gets only where the line's other DMA leaves one (`plan_end()`: a
+  line's colour clocks less refresh 4, disk 3, a slot an audio channel,
+  sprites 16 and the bitplane fetch, `display_dma_slots()`, spread over
+  the line; the copper's few not counted). `tools/blitboot.py` times a
+  4096-slot blit: 18, 29, 40 and 66 lines with no planes, 4 and 6 lores
+  and 4 hires planes, as worked out (18.4, 28.6, 39.8, 65.0; before: 18
+  whatever the display).
 - **Display** (`display.c`): Agnus's vertical window flip-flop (opens at
   VSTART, closes at VSTOP, reset at line 0; no DMA in vertical blank), the
   fetch at DDFSTRT's position (words: ((stop-start)/8+1), x2 in hires,
@@ -575,6 +583,10 @@ the top two bits do nothing, Aerial Racers' race sets them),
   read ORed into $7F000 (`AMI_DUMP=7F000:2:out.bin`, 700 frames). Cases
   checked (expected values from the HRM's rules, lores and hires):
   overlapping or not by one pixel, MVBP 0/1, sprite pairs, ENSP1.
+- **The blitter's timing**: `tools/blitboot.py out.adf`, then
+  `AMI_DF0=<copy> AMI_DUMP=7F000:8:dump.bin ami_host roms/amiga-os-130.rom
+  700` and `tools/blitboot.py --check dump.bin`: the lines a 4096-slot
+  blit takes with each display, against the slots a line leaves it.
 - **Interlace**: `tools/laceboot.py out.adf`: the woven picture's lines
   alternate white and black (host and Tab5). Workbench 1.3 interlaced:
   `devs/system-configuration` byte 185 bit 0 (LaceWB) set with
@@ -692,8 +704,8 @@ the top two bits do nothing, Aerial Racers' race sets them),
   the 3.1 floppy), all from the host build; `tab5-workbench.png` (the
   panel's picture), `tab5-setup.png` (status lines cut), `web.png` (a
   local mock with example data, halved).
-- Phases 4-7 (`docs/architecture.md`): games (the rest of phase 4:
-  blitter timing per slot, `TODO.md` 2), the A1200's rest (phase 7, below). The chip bus model is an average (`SLOT_WAIT`), not
+- Phases 4-7 (`docs/architecture.md`): games (phase 4's blitter timing
+  per slot: done, `TODO.md` 2), the A1200's rest (phase 7, below). The chip bus model is an average (`SLOT_WAIT`), not
   per access: a slot-exact one (`TODO.md` 3) would bring SysInfo and
   xSysInfo to 1.0; the Tab5 has the room (core 1 ~25% in SysInfo).
 - AROS (the setup screen's Kickstart "AROS", every model): its ROM at

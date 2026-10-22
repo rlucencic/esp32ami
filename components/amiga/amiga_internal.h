@@ -287,7 +287,8 @@ typedef struct {
     uint16_t dat[3];                /* A, B, C */
     uint32_t height, width;
     bool busy, pending, zero;
-    int end;
+    int end;                        /* when it's done (beyond this line: not yet known) */
+    int left;                       /* the bus slots it still needs after this line's */
     int steal;                      /* the 68000's clocks it still takes (spread over its lines) */
     int steal_line;                 /* of a line */
 } blitter_t;
@@ -295,6 +296,7 @@ extern blitter_t blit;
 void blitter_reset(void);
 void blitter_write(uint32_t reg, uint16_t value, int at);
 void blitter_dma_changed(int at);
+void blitter_line_start(void);      /* a line's free slots to a blit under way */
 void blitter_finish(void);
 int blitter_steal_line(void);       /* the clocks the blitter takes from the 68000 this line */
 bool blitter_busy(int at);
@@ -305,6 +307,7 @@ void display_reset(void);
 void display_write(uint32_t reg, uint16_t value, int at);
 void display_line_start(void);
 int display_fetch_at(void);
+int display_dma_slots(void);        /* the bus slots this line's bitplanes and sprites take */
 void display_fetch(void);
 void display_line_end(void);
 bool display_frame_end(void);       /* true: the frame was interlaced */

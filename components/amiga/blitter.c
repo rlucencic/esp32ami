@@ -3,8 +3,11 @@
  * word masks, descending, inclusive and exclusive fill) and line mode.
  *
  * A blit is done the moment it starts; BBUSY stays set and the interrupt
- * waits for as long as the real one would take (its words times the
- * colour clocks a word needs with those channels).
+ * waits for as long as the real one would take: its words times the
+ * colour clocks a word needs with those channels, each a bus slot it gets
+ * only where the line's other DMA leaves one (refresh, disk, audio,
+ * sprites, the bitplanes: 4 hires planes leave none in the fetch window).
+ * The copper's few slots aren't counted.
  */
 #include "amiga_internal.h"
 
@@ -234,12 +237,48 @@ static int blit_line(void)
     return (int)blit.height * 4;
 }
 
+/* The slots of this line the blitter may have: its colour clocks less
+ * refresh (4), disk (3), audio (one a channel) and the display's
+ */
+static int line_free(void)
+{
+    uint16_t dma = (ami.dmacon & DMA_EN) ? ami.dmacon : 0;
+    int free = ami_line_cck(ami.line) - 4 - ((dma & DMA_DSK) ? 3 : 0) - __builtin_popcount(dma & DMA_AUD) -
+               display_dma_slots();
+    return free > 0 ? free : 0;
+}
+
+/* Its slots from `from` on, the rest of this line's free ones spread over
+ * the line: done in it (the end), or the rest in the next lines
+ */
+static void plan_end(int from)
+{
+    int len = 2 * ami_line_cck(ami.line), line_end = ami.line_start + len;
+    int span = line_end - from;
+    int avail = span > 0 ? (int)((int64_t)line_free() * span / len) : 0;
+    if (blit.left <= avail) {
+        blit.end = from + (avail > 0 ? (int)((int64_t)blit.left * span / avail) : 0);
+        blit.left = 0;
+    } else {
+        blit.left -= avail;
+        blit.end = line_end + 2 * blit.left;    /* (at the earliest: the next lines say) */
+    }
+}
+
+void blitter_line_start(void)
+{
+    if (blit.busy && blit.left > 0) {
+        plan_end(ami.line_start);
+    }
+}
+
 static void start(int at)
 {
     blit.pending = false;
     int cck = (blit.con1 & LINE) ? blit_line() : blit_area();
     blit.busy = true;
-    blit.end = at + 8 + cck * 2;
+    blit.left = cck;
+    plan_end(at + 8);
     /* The 68000's slots it takes: those its channels use (a line: C and
      * D), all of them with BLTPRI ("nasty"), else the 68000 gets one in
      * four it waits for

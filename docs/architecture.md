@@ -689,3 +689,14 @@ measurements written down.
   On the way: Kickstart 1.2 crashed in a loop whenever a hard disk was in
   (our board's word-wide DiagArea and a bug in 1.2's expansion.library):
   the board isn't offered to 1.2 any more.
+- **2. The blitter's timing slot by slot** (2026-10-22): a blit's slots
+  (its words x the colour clocks a word takes with its channels) come only
+  from what each line's other DMA leaves (refresh, disk, audio, sprites,
+  the bitplane fetch: `display_dma_slots()`), spread over the line; its
+  end moves on line by line (`plan_end()`). `tools/blitboot.py` times a
+  4096-slot blit: 18, 29, 40 and 66 lines with no planes, 4 and 6 lores and
+  4 hires planes, as the slots say (18.4, 28.6, 39.8, 65.0); before, 18 to
+  22 whatever the display. The collection: 52 of 96 games show other
+  moments, all still at their screens (looked at side by side); Flight of
+  the Amazon Queen reaches its scene ~1000 frames later, Lethal Xcess its
+  next screen sooner. Tab5: Aerial Racers' race 98-100%, core 1 74-82%.

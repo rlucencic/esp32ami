@@ -3,32 +3,8 @@
 In order: "what's next" is the first item here. Each one says why, where,
 how, how it's checked, and roughly how big it is. Done items move to
 `docs/architecture.md` (Progress, "The to-do list") and leave this list;
-the others keep their numbers (1, an RP9 setting up its machine, is done).
-
-## 2. The blitter's timing slot by slot
-
-- **Why**: phase 4's rest. A blit is done at once and BBUSY and its
-  interrupt wait `8 + cck * 2` clocks: its words times the colour clocks a
-  word takes with its channels (the HRM's table), whatever else the line
-  does. A real Agnus gives the blitter only the slots left by refresh (4),
-  disk (3), audio (4), sprites (16), the bitplane fetch and the copper: with
-  6 lores or 4 hires planes there are few in the fetch window, and blits
-  last longer. Games that wait for the blitter, or count on it being slow,
-  see it end early here.
-- **How**: a count of each line's slots free for the blitter (227 or 228
-  colour clocks less the fixed ones, the fetch's from `display_fetch()`, the
-  copper's from the instructions it ran); `blit.left` (the slots it still
-  needs, from the table) goes down by that at each line's end from the
-  line it started in; BBUSY until it reaches 0, the end time worked out
-  within that line. The 68000's share (`steal`, BLTPRI) as now.
-- **Where**: `blitter.c` (`start()`, `blitter_busy()`, the end event),
-  `amiga.c` (the frame loop's events), `display.c` (the fetch's slots).
-- **Check**: a boot disk (`tools/blitboot.py`, as `laceboot.py`) timing one
-  blit in lines with 0, 4 and 6 lores planes, against the HRM's figures;
-  the collection before and after (pictures that move: look at them); Kick
-  Off 2 and Aerial Racers as today.
-- **Size**: medium (~150 lines and the test disk). Item 3 builds on its
-  slot count.
+the others keep their numbers (done: 1, an RP9 setting up its machine;
+2, the blitter's timing slot by slot).
 
 ## 3. The 68000 on the chip bus, slot by slot
 
@@ -36,9 +12,10 @@ the others keep their numbers (1, an RP9 setting up its machine, is done).
   clocks a slot, owed as `ami.stall`, at most 4 lines). SysInfo 4.4 gives
   1.00 times an A600 in chip RAM, xSysInfo 0.12 1.09: a slot-exact bus
   brings both to 1.00 and timing-sensitive code closer.
-- **How**: each line's slot map (item 2's count, kept as a 228-bit mask:
-  refresh, disk, audio, sprites, the fetch; the copper's as it runs; the
-  blitter's), and each 68000 access to chip RAM or the chips at its time
+- **How**: each line's slot map (item 2 counts the slots a line, in
+  `blitter.c`'s `line_free()` and `display_dma_slots()`; this needs where
+  they fall: a 228-bit mask of refresh, disk, audio, sprites, the fetch,
+  the copper's as it runs, the blitter's), and each 68000 access to chip RAM or the chips at its time
   (`ami_now()` plus 4 clocks a bus cycle into the instruction: a counter
   reset by the instruction hook) waits for the next free even slot (a
   count of trailing zeros over the mask), the wait taken from Musashi's
