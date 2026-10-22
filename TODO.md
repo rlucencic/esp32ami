@@ -5,24 +5,7 @@ how, how it's checked, and roughly how big it is. Done items move to
 `docs/architecture.md` (Progress, "The to-do list") and leave this list;
 the others keep their numbers (done: 1, an RP9 setting up its machine;
 2, the blitter's timing slot by slot; 3, the 68000 on the chip bus slot by
-slot; 4, Paula's attach modes).
-
-## 5. ECS super-hires: the rest
-
-- **Why**: Workbench in super-hires works (the user went through every
-  ScreenMode mode on the Tab5); what isn't there: dual playfield in
-  super-hires (2 planes drawn as one 4-colour playfield in `draw_shres()`'s
-  ECS path; AGA's has it), BPLCON1's scroll there (taken as lores pixels, 4
-  super-hires ones: check the units), sprites' 70 ns positions, and a lores
-  or hires screen dragged down over a super-hires one (lines of both in a
-  frame: the frame is drawn 1440 wide, its other lines doubled; not tried).
-- **How**: compare the behaviour with the ECS documentation and UAE (not
-  copied); dual playfield as the AGA path does it with ECS's colours.
-- **Check**: Workbench 3.1 in PAL super-hires on the A600 (the recipe in
-  CLAUDE.md, Testing), a lores screen opened and dragged down (by eye,
-  host and Tab5); a boot disk for dual playfield and scroll
-  (`tools/shresboot.py`).
-- **Size**: medium.
+slot; 4, Paula's attach modes; 5, ECS super-hires).
 
 ## 6. Writing extended ADFs
 
@@ -66,6 +49,10 @@ slot; 4, Paula's attach modes).
 
 - Sprites outside the vertical window: shown (and colliding) here; does
   OCS Denise hide them? Settle from the documentation and UAE.
+- The Overscan editor's "Edit Text Size..." from a super-hires Workbench
+  (A600, 3.1, host) never opens its screen; from a hires one it does.
+  Find what its task waits for (it may be how AmigaOS is; a hires screen
+  over a super-hires one is then still to be tried by eye).
 - DMS modes 2-5: written after xDMS, untested (no archive uses them).
 - The clock's saved offset keeps a clock set while the board's time was
   wrong (unlikely with the Tab5's RTC).

@@ -114,6 +114,7 @@ images.
 | `tools/laceboot.py` | A boot disk that tests interlace (white long frames, black short ones) |
 | `tools/blitboot.py` | A boot disk that times a blit with 0, 4, 6 lores and 4 hires planes (`--check` compares a dump with the slots worked out) |
 | `tools/attachboot.py` | Boot disks that test Paula's attach modes (`check` measures the host's recorded sound) |
+| `tools/shresboot.py` | A boot disk that tests ECS super-hires: colours, scroll, sprites, mixed lines (`check` reads a picture) |
 | `tools/mkinstall.py` | A Workbench floppy that formats DH0: and copies itself onto it (the hard disk test) |
 | `tools/hdrom.py` | Assembles the hard disk board's boot ROM into `components/amiga/hdrom.h` |
 | `tools/collection.py` | Runs a folder of RP9 games on two host builds and compares their pictures (see Testing) |
@@ -377,12 +378,15 @@ images.
   BPLCON0 bit 6, masked off with OCS; at most 2 planes, fetching like 4
   hires ones, plane 2 in the 68000's slots): a frame with such a line is
   drawn 1440 wide (`amiga_screen_width()`, the frame's flag like its LACE
-  one), its other lines' pixels doubled. Colours as the ECS HRM's
-  appendix and graphics.library have them: pixel v shows register 5v (0,
-  5, 10, 15), each gun the mean of its nibble's halves (register 4a+b
-  holds colour a's upper 2 bits in the low half, b's in the high half: 64
-  colours, Workbench's blue turns teal), the sprites registers 16+5v at
-  4 pixels a lores one. graphics.library fetches from DDFSTRT $38 with
+  one), its other lines' pixels doubled. Colours a hires pixel, as
+  WinUAE has them: its two super-hires pixels a, b look up register 4b+a,
+  a shows each gun's upper 2 bits, b the lower 2 (doubled: 64 colours;
+  graphics.library fills the registers so each pixel gets its colour,
+  Workbench's blue turns teal). Sprites: registers 16-31 the same way, a
+  lores pixel's two halves paired (their colour's low 2 bits), 4 pixels a
+  lores one, SPRxCTL bit 4 a 70 ns step, sprites 4-7 not drawn (WinUAE);
+  dual playfield drawn as one playfield (WinUAE too). BPLCON1 counts
+  lores pixels, 4 super-hires ones. graphics.library fetches from DDFSTRT $38 with
   the pointers 3 words early for DIWSTRT $81: the +5 delay puts the
   bitmap's first pixel on the window's (any other would shift it 16).
   **AGA** (the A1200: `ami.aga`; VPOSR's Alice ID $23/$33, DENISEID $00F8):
@@ -632,6 +636,15 @@ the top two bits do nothing, Aerial Racers' race sets them),
   text sharp, the pointer in its three colours (2026-10-21). On the Tab5
   the user went through every mode ScreenMode offers (lores, hires,
   super-hires, interlaced or not) and found them all right on the panel.
+  The exact rules: `tools/shresboot.py out.adf`, then `AMI_MODEL=2
+  AMI_ECS=1 AMI_DF0=<copy> ami_host roms/amiga-os-205-a600.rom 1200
+  out.ppm` and `tools/shresboot.py check out.ppm` (or the board's
+  screenshot as PPM): bands of lores, hires and super-hires lines in a
+  frame, a palette graphics.library wouldn't set; 11 checks (the pairs'
+  colours, BPLCON1 3 = 12 pixels, dual playfield, sprite 0's colours and
+  70 ns step, sprite 4 hidden), all right on the host and the Tab5
+  (2026-10-22; the code before failed 5). Workbench 3.1 in super-hires
+  (the recipe above, 4800 frames): the same picture as before.
 - **NTSC**: `AMI_NTSC`: Workbench 1.3 (640 x 200) and 3.1 from HD at
   720 x 484, interlace too. Kickstart 3.1's **Early Startup Control**:
   both mouse buttons held from power-on (`AMI_INPUT=0:m:0:0:3`, the
@@ -723,8 +736,8 @@ the top two bits do nothing, Aerial Racers' race sets them),
 
 ## Open items
 
-- The work still to do, sketched and in order: `TODO.md` (super-hires,
-  extended ADF writes, AGA's rest, the 68EC020's cache). The
+- The work still to do, sketched and in order: `TODO.md` (extended ADF
+  writes, AGA's rest, the 68EC020's cache). The
   items below are the state of things; `TODO.md` says what to do next.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
@@ -762,10 +775,14 @@ the top two bits do nothing, Aerial Racers' race sets them),
   which the board now offers from the manifest); the ten for
   3.1 are A1200 games (all show their AGA pictures now, Football Glory
   too); three name no system disk.
-- Super-hires (`TODO.md` 5): dual playfield in it isn't drawn as such (2
-  planes as one), BPLCON1's scroll is taken as lores pixels (4
-  super-hires ones), the sprites' 70 ns positions aren't there; a lores
-  or hires screen dragged over a super-hires one wasn't tried.
+- ECS super-hires follows WinUAE where the HRM says nothing (the colour
+  pairs, sprites 4-7 hidden, dual playfield as one playfield): not
+  compared with a real ECS Denise. A hires screen dragged over a
+  super-hires one wasn't tried in Workbench: the Overscan editor's "Edit
+  Text Size..." (the one hires screen at hand) never opens from a
+  super-hires Workbench (host, A600 3.1: its task waits, Workbench stays
+  usable; from a hires Workbench it opens). Not looked into; the boot
+  disk's bands (lores, hires, super-hires lines in a frame) draw right.
 - Paula's attach modes are checked by the test disks only: Datastorm, the
   collection's one user, sets them while its sound is off (its recording
   the same with and without them). Absolute touch

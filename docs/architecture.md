@@ -725,3 +725,14 @@ measurements written down.
   25 and 37 wrong). Datastorm, the collection's one user, sets ADKCON
   $80DF in its loader with the sound off and clears it before its music:
   the same recording as before.
+- **5. ECS super-hires: the rest** (2026-10-22): colours as WinUAE has
+  them (a hires pixel's two super-hires pixels a, b look up register 4b+a,
+  a the upper 2 bits of each gun, b the lower; before, each pixel took
+  register 5v's mean), the sprites the same from registers 16-31, on 70
+  ns steps with SPRxCTL bit 4, sprites 4-7 hidden. Dual playfield stays
+  one playfield and BPLCON1 4 super-hires pixels a step: both as WinUAE
+  has them. `tools/shresboot.py`: 11 checks, all right on the host and
+  the Tab5 (5 failed before); Workbench 3.1 in super-hires the same
+  picture as before; the collection 96 of 96 the same. Not done: a hires
+  screen dragged over a super-hires Workbench (the Overscan editor, the
+  one at hand, never opens from it: CLAUDE.md, Open items).

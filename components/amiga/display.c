@@ -30,11 +30,14 @@
  *
  * ECS super-hires (SHRES in BPLCON0, up to 2 planes, 4 pixels a lores
  * one): a frame with such lines is drawn in super-hires pixels (1440
- * wide), the other lines' pixels doubled. Its 4 colours are registers 0,
- * 5, 10 and 15, each gun the mean of its nibble's two halves (the way
- * graphics.library sets them up: register 4a + b holds colour a's upper 2
- * bits in the lower half and b's in the upper one); the sprites' are
- * 16, 21, 26 and 31, at their lores positions.
+ * wide), the other lines' pixels doubled. Denise looks up a colour a
+ * hires pixel: two super-hires pixels a, b take register 4b + a, a its
+ * guns' upper 2 bits, b their lower 2 (graphics.library fills the
+ * registers so that each pixel gets its colour). The sprites the same
+ * from registers 16-31, the two halves of a lores pixel paired, their
+ * colour's lower 2 bits; SPRxCTL bit 4 puts them on hires pixels, and
+ * sprites 4-7 don't show (as WinUAE has it). Dual playfield is drawn as
+ * one playfield there, also as WinUAE does.
  *
  * AGA (the A1200's Alice and Lisa): 256 colours of 24 bits (BPLCON3's
  * bank picks the 32 a register write reaches, LOCT the low nibbles: a
@@ -100,7 +103,7 @@ typedef struct {
     uint8_t sprites;                /* shown on this line */
     uint8_t spr_words;              /* each one's words (16 pixels each) */
     uint8_t spr_num[8];             /* the sprite (bit 7: attached to the one before) */
-    int16_t spr_x[8];               /* lores pixels from the picture's left edge */
+    int16_t spr_x[8];               /* super-hires pixels from the picture's left edge */
     uint16_t spr_a[8][SPR_WORDS], spr_b[8][SPR_WORDS];      /* DATA, DATB */
     uint32_t color[NCOLORS];        /* as the line began (ncolors of them) */
     change_t change[MAX_CHANGES];
@@ -165,7 +168,6 @@ static struct {
 static uint8_t s_r5[256], s_g6[256];    /* 8-bit guns to RGB565's 5 and 6 bits */
 static uint64_t s_p2c[256];
 static uint8_t s_pf1[256], s_pf2[256];
-static uint8_t s_shres_gun[16];     /* super-hires: a nibble's two halves' mean, 4 bits */
 
 #define LATEST(st)      ((st) & 3u)
 #define PINNED(st)      (((st) >> 2) & 3u)
@@ -214,9 +216,6 @@ void display_init(void *picture)
             v |= (uint64_t)((b >> (7 - k)) & 1) << (8 * k);
         }
         s_p2c[b] = v;
-    }
-    for (int n = 0; n < 16; n++) {
-        s_shres_gun[n] = (uint8_t)(((n >> 2) + (n & 3)) * 5 / 2);
     }
     /* dual playfield: the odd planes (bits 0, 2, 4, 6) and the even ones */
     for (int v = 0; v < 256; v++) {
@@ -901,10 +900,11 @@ AMI_HOT void display_line_end(void)
         collide();
     }
     bool bpl = s.fetched && x0 < x1;
+    bool ecs_shres = bpl && !ami.aga && (s.con0 & BPLCON0_SHRES);
     /* the sprites showing their data on this line */
     int nspr = 0, nw = spr_words();
     uint8_t num[8];
-    for (int i = 0; i < 8 && x0 < x1; i++) {
+    for (int i = 0; i < (ecs_shres ? 4 : 8) && x0 < x1; i++) {
         const sprite_t *sp = &s.spr[i];
         if (sp->armed) {
             num[nspr++] = (uint8_t)(i | ((i & 1) && (sp->ctl & 0x80) ? 0x80 : 0));
@@ -929,7 +929,7 @@ AMI_HOT void display_line_end(void)
     }
     for (int i = 0; i < nspr; i++) {
         const sprite_t *sp = &s.spr[num[i] & 7];
-        h = mix(h, (uint32_t)num[i] << 24 | (uint32_t)(sp->pos & 0xFF) << 8 | (sp->ctl & 1));
+        h = mix(h, (uint32_t)num[i] << 24 | (uint32_t)(sp->pos & 0xFF) << 8 | (sp->ctl & 0x11));
         for (int w = 0; w < nw; w++) {
             h = mix(h, (uint32_t)sp->data[w] << 16 | sp->datb[w]);
         }
@@ -963,7 +963,8 @@ AMI_HOT void display_line_end(void)
         for (int i = 0; i < nspr; i++) {
             const sprite_t *sp = &s.spr[num[i] & 7];
             r->spr_num[i] = num[i];
-            r->spr_x[i] = (int16_t)((((sp->pos & 0xFF) << 1) | (sp->ctl & 1)) - FIRST_LORES);
+            int lores = (((sp->pos & 0xFF) << 1) | (sp->ctl & 1)) - FIRST_LORES;
+            r->spr_x[i] = (int16_t)(4 * lores + (ecs_shres && (sp->ctl & 0x10) ? 2 : 0));
             memcpy(r->spr_a[i], sp->data, nw * sizeof(uint16_t));
             memcpy(r->spr_b[i], sp->datb, nw * sizeof(uint16_t));
         }
@@ -1042,7 +1043,7 @@ static struct {
     uint32_t color[NCOLORS];        /* 24-bit */
     uint16_t rgb[NCOLORS];          /* RGB565 */
     uint16_t pix[NCOLORS];          /* a pixel's RGB565 (EHB's halves, BPLAM) */
-    uint16_t srgb[8];               /* ECS super-hires: the 4 colours, the sprites' 4 */
+    uint16_t shi[32], slo[32];      /* ECS super-hires: each register's upper and lower gun bits */
     uint32_t ham;
     const row_t *row;               /* the row in line[] */
     uint32_t key;
@@ -1075,13 +1076,20 @@ static inline void set_color(int reg, uint32_t c)
     }
 }
 
-/* (a and b even) */
-static void fill(uint16_t *out, int a, int b, uint16_t c)
+/* (a and b even) c0 at even pixels, c1 at odd ones */
+static void fill2(uint16_t *out, int a, int b, uint16_t c0, uint16_t c1)
 {
-    uint32_t *o32 = (uint32_t *)out, c2 = c * 0x10001u;
+    uint16_t pair[2] = { c0, c1 };
+    uint32_t *o32 = (uint32_t *)out, c2;
+    memcpy(&c2, pair, sizeof(c2));
     for (int i = a / 2; i < b / 2; i++) {
         o32[i] = c2;
     }
+}
+
+static inline void fill(uint16_t *out, int a, int b, uint16_t c)
+{
+    fill2(out, a, b, c, c);
 }
 
 /* The scroll delays of the odd and even planes, in super-hires pixels
@@ -1187,14 +1195,17 @@ static void compose(const row_t *r, uint16_t *out, int xa, int xb)
     }
 }
 
-/* ECS super-hires colours from the registers (see the top) */
+/* ECS super-hires colours from the registers (see the top): the first
+ * pixel of a pair shows shi[], the second slo[], each gun's 2 bits doubled
+ */
 static void shres_colors(void)
 {
-    for (int v = 0; v < 8; v++) {
-        uint32_t c = d.color[(v & 4) * 4 + 5 * (v & 3)];
-        uint16_t c12 = (uint16_t)(s_shres_gun[(c >> 20) & 15] << 8 | s_shres_gun[(c >> 12) & 15] << 4 |
-                                  s_shres_gun[(c >> 4) & 15]);
-        d.srgb[v] = to565(expand12(c12));
+    for (int i = 0; i < 32; i++) {
+        uint32_t c = d.color[i];
+        uint16_t c12 = (uint16_t)(((c >> 12) & 0xF00) | ((c >> 8) & 0xF0) | ((c >> 4) & 0xF));
+        uint16_t hi = c12 & 0xCCC, lo = (uint16_t)((c12 & 0x333) << 2);
+        d.shi[i] = to565(expand12(hi | hi >> 2));
+        d.slo[i] = to565(expand12(lo | lo >> 2));
     }
 }
 
@@ -1278,7 +1289,7 @@ static void draw_sprites(const row_t *r, uint16_t *out, bool wide)
     for (int k = r->sprites - 1; k >= 0; k--) {
         int n = r->spr_num[k] & 7;
         bool attached = r->spr_num[k] & 0x80;
-        int x = 4 * r->spr_x[k];
+        int x = r->spr_x[k];
         const uint16_t *a = r->spr_a[k], *b = r->spr_b[k];
         /* an attached odd sprite: its bits over its partner's (k - 1) */
         const uint16_t *pa = NULL, *pb = NULL;
@@ -1319,16 +1330,24 @@ static void draw_sprites(const row_t *r, uint16_t *out, bool wide)
     int step = wide ? 1 : 2, scale = wide ? 2 : 1;
     int x0 = r->x0 * scale, x1 = r->x1 * scale;
     for (int u = lo; u <= hi; u++) {
-        if (!col[u]) {
+        if (!col[u] || u % step) {
             continue;
         }
-        if (u % step == 0) {
-            int x = u / step;
-            if (x >= x0 && x < x1 && pair[u] < pf_code(r, x, scale)) {
-                out[x] = ecs_shres ? d.srgb[4 + ((col[u] - 16) & 3)] : d.rgb[col[u]];
-            }
+        int x = u / step;
+        if (x < x0 || x >= x1 || pair[u] >= pf_code(r, x, scale)) {
+            continue;
         }
-        col[u] = 0;
+        if (ecs_shres) {
+            /* a lores pixel's two halves paired */
+            int b = u & ~3, v0 = col[b] ? (col[b] - 16) & 3 : 0, v1 = col[b + 2] ? (col[b + 2] - 16) & 3 : 0;
+            int reg = 16 + 4 * v1 + v0;
+            out[x] = (u & 2) ? d.slo[reg] : d.shi[reg];
+        } else {
+            out[x] = d.rgb[col[u]];
+        }
+    }
+    if (lo <= hi) {
+        memset(col + lo, 0, (size_t)(hi - lo + 1));
     }
 }
 
@@ -1357,16 +1376,19 @@ static void draw_shres(const row_t *r, uint16_t *out)
         if (changed && !d.aga) {
             shres_colors();
         }
-        uint16_t bc = d.aga ? border(r) : d.srgb[0];
+        /* (ECS: the border's pairs are colour 0's) */
+        uint16_t bc0 = d.aga ? border(r) : d.shi[0], bc1 = d.aga ? bc0 : d.slo[0];
         int end = ci < n ? 2 * (int)r->change[ci].x : WIDE_W;
         int ws = x > x0 ? x : x0, we = end < x1 ? end : x1;
         if (ws >= we) {
-            fill(out, x, end, bc);
+            fill2(out, x, end, bc0, bc1);
         } else {
-            fill(out, x, ws, bc);
+            fill2(out, x, ws, bc0, bc1);
             if (!d.aga) {
-                for (int i = ws; i < we; i++) {
-                    out[i] = d.srgb[po[i] | pe[i]];
+                for (int i = ws; i < we; i += 2) {
+                    int reg = 4 * (po[i + 1] | pe[i + 1]) + (po[i] | pe[i]);
+                    out[i] = d.shi[reg];
+                    out[i + 1] = d.slo[reg];
                 }
             } else if (r->con0 & BPLCON0_DPF) {
                 for (int i = ws; i < we; i++) {
@@ -1381,7 +1403,7 @@ static void draw_shres(const row_t *r, uint16_t *out)
                     out[i] = d.pix[po[i] | pe[i]];
                 }
             }
-            fill(out, we, end, bc);
+            fill2(out, we, end, bc0, bc1);
         }
         x = end;
     }
