@@ -669,3 +669,23 @@ measurements written down.
   bits (Deluxe Galaga, Soccer Kid); their pictures look right on the host.
 - Not yet: FMODE 2, 32-pixel sprites, AGA super-hires (no game here uses
   them).
+
+### The to-do list (`TODO.md`), item by item
+
+- **1. An RP9 sets up the machine its manifest names** (2026-10-22): the
+  manifest's system, Kickstart and RAM as one of our machines
+  (`amiga_rp9_machine()`); a package in DF0: or DH0: naming another
+  machine than the settings is offered on the setup screen's Disks page
+  and the web page ("Kick Off 2 wants an A500: 512 KB chip RAM, 512 KB
+  slow RAM, Kickstart 1.2", a button: the user's choice over an automatic
+  restart), through a new, general esp32emu mechanism (`disks_config_t`'s
+  `offer`/`take_offer`, `/api/status`'s `offers`, `POST
+  /api/drive/<n>/offer`). The host sets up the package's machine by itself
+  (a ROM folder: the Kickstart too); `tools/collection.py` dropped its own
+  mapping: 90 of 96 games the same, the six others where the manifest asks
+  for other fast RAM (all six still reach their screens). Tab5: an A1200
+  to an A500 with 1.2 for Kick Off 2 from the setup screen, slow RAM added
+  from the web page, an A2000 with fast RAM for Hannibal in DH0:.
+  On the way: Kickstart 1.2 crashed in a loop whenever a hard disk was in
+  (our board's word-wide DiagArea and a bug in 1.2's expansion.library):
+  the board isn't offered to 1.2 any more.

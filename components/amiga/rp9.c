@@ -362,6 +362,21 @@ bool rp9_read(const char *path, rp9_t *r)
     p = xml;
     if (element(xml, "systemrom", &p, rom, sizeof(rom), NULL)) {
         r->rom = atoi(rom);
+    } else {
+        /* (or <rom type="system">130</rom>: Ants) */
+        const char *s = strstr(xml, "<rom type=\"system\">");
+        r->rom = s ? atoi(s + strlen("<rom type=\"system\">")) : 0;
+    }
+    /* <ram type="chip|fast|z3">bytes</ram> */
+    for (const char *s = xml; (s = strstr(s, "<ram type=\"")) != NULL; s++) {
+        const char *type = s + strlen("<ram type=\"");
+        const char *end = strchr(type, '>');
+        uint32_t bytes = end ? (uint32_t)strtoul(end + 1, NULL, 10) : 0;
+        if (strncmp(type, "chip\"", 5) == 0) {
+            r->chip_ram = bytes;
+        } else if (strncmp(type, "fast\"", 5) == 0 || strncmp(type, "z3\"", 3) == 0) {
+            r->fast_ram += bytes;
+        }
     }
     /* the floppies by priority */
     int prio[RP9_DISKS];
@@ -387,5 +402,51 @@ bool rp9_read(const char *path, rp9_t *r)
         r->boot_hdf = atoi(end + 1);
     }
     free(xml);
+    return true;
+}
+
+/* The fast RAM a board of ours has nearest to what's asked (1-8 MB, Zorro
+ * II: Zorro III's 8 MB as 8)
+ */
+static int fast_kb(uint32_t bytes)
+{
+    int kb = 0;
+    for (int k = 1024; k <= 8192 && (uint32_t)k * 1024 <= bytes; k *= 2) {
+        kb = k;
+    }
+    return bytes && !kb ? 1024 : kb;
+}
+
+/* The systems as our models (Kickstart: the nearest one that model takes) */
+bool amiga_rp9_machine(const char *path, amiga_rp9_machine_t *m)
+{
+    rp9_t r;
+    if (!rp9_read(path, &r) || !r.system[0]) {
+        return false;
+    }
+    memset(m, 0, sizeof(*m));
+    snprintf(m->title, sizeof(m->title), "%s", r.title);
+    snprintf(m->system, sizeof(m->system), "%s", r.system);
+    int rom = r.rom;
+    if (strcmp(r.system, "a-1200") == 0 || strcmp(r.system, "a-4000") == 0) {
+        m->model = AMIGA_A1200;
+        m->kickstart = rom == 300 ? 300 : 310;
+        m->chip_kb = 2048;
+    } else if (strcmp(r.system, "a-600") == 0) {
+        m->model = AMIGA_A600;
+        m->kickstart = rom >= 300 ? 310 : 205;
+        m->chip_kb = r.chip_ram >= 2048u * 1024 ? 2048 : 1024;
+    } else if (strcmp(r.system, "a-500") == 0 || strcmp(r.system, "a-500plus") == 0 ||
+               strcmp(r.system, "a-2000") == 0) {
+        bool plus = strcmp(r.system, "a-500plus") == 0;
+        m->model = strcmp(r.system, "a-2000") == 0 ? AMIGA_A2000 : AMIGA_A500;
+        m->kickstart = rom == 0 ? (plus ? 204 : 130) : rom <= 120 ? 120 : rom < 200 ? 130 : rom < 300 ? 204 : 310;
+        /* the A500+: ECS with 1 MB chip RAM; else 512 KB and 512 KB slow */
+        m->chip_kb = plus || r.chip_ram >= 1024u * 1024 ? 1024 : 512;
+        m->slow_kb = m->chip_kb == 512 ? 512 : 0;
+    } else {
+        return false;
+    }
+    m->fast_kb = fast_kb(r.fast_ram);
     return true;
 }

@@ -2,40 +2,8 @@
 
 In order: "what's next" is the first item here. Each one says why, where,
 how, how it's checked, and roughly how big it is. Done items move to
-`docs/architecture.md` (Progress) and leave this list.
-
-## 1. An RP9 sets up the machine its manifest names
-
-- **Why**: the user's "nice to have". The games name their machine: 63
-  an A500 (59 with Kickstart 1.2), 3 an A500+ (Ants: ECS, 1 MB chip RAM),
-  4 an A2000, 25 an A1200, 1 an A4000. Today the setup screen has to match
-  by hand before the package goes in.
-- **The manifest**: `<system>` (a-500, a-500plus, a-2000, a-1200,
-  a-4000), the Kickstart as `<rom type="system">130</rom>` or
-  `<systemrom>310</systemrom>`, sometimes `<ram type="fast|chip|z3">bytes</ram>`.
-  `rp9.c` keeps the system and the Kickstart, not the RAM yet.
-- **How**: one mapping in `components/amiga` (`rp9_machine()`: model,
-  Kickstart, chip/slow/fast RAM), used by `main.c` and the host:
-  a-500: A500, 512 + 512 KB, Kickstart 1.2 (110, 120) or 1.3;
-  a-500plus: A500 with 1 MB chip RAM (ECS follows), no slow RAM;
-  a-2000: A2000; a-1200 and a-4000: A1200, Kickstart 3.0 or 3.1, fast RAM
-  from `<ram type="fast">` (z3: the most our Zorro II board has, 8 MB).
-  A package going into the boot drive (DF0:, or DH0: for a hard disk
-  game) from the setup screen or the web page, naming another machine
-  than the settings: save the settings as the console's `R` does
-  (`settings_model_defaults()`, Kickstart, RAM, `settings_save()`),
-  `emu_restart()`, the disk stays in (the drives are in NVS), a message
-  says what changed. The host: `AMI_DF0`/`AMI_HD0` with an RP9 sets the
-  machine the same way unless `AMI_MODEL` is given (`tools/collection.py`
-  then drops its own mapping).
-- **Decide with the user**: automatic, or a button on the drive's line
-  ("Set up as A500+, 1 MB chip, Kickstart 1.3").
-- **Check**: host: the collection with the manifest's machine gives the
-  pictures `tools/collection.py` gives now; Ants reaches its menu without
-  settings. Tab5: Ants' package into DH0: on an A1200 restarts as an
-  A500+ and reaches its menu; Aerial Racers' into DF0: on an A500 restarts
-  as an A1200.
-- **Size**: small to medium (~150 lines).
+`docs/architecture.md` (Progress, "The to-do list") and leave this list;
+the others keep their numbers (1, an RP9 setting up its machine, is done).
 
 ## 2. The blitter's timing slot by slot
 

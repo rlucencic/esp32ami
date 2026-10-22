@@ -527,18 +527,98 @@ static const char *disk_extension_for(uint32_t bytes)
     return bytes > 901120 ? ".hdf" : ".adf";
 }
 
+/* The machine an RP9 in a boot drive (DF0:, DH0:) names, read as it goes
+ * in: the setup screen and the web page offer it (disk_offer())
+ */
+static amiga_rp9_machine_t s_wants[AMIGA_FLOPPIES + AMIGA_HARD_DISKS];
+static bool s_has_wants[AMIGA_FLOPPIES + AMIGA_HARD_DISKS];
+
 static bool disk_insert(int drive, const char *path)
 {
-    return drive >= AMIGA_FLOPPIES ? amiga_hd_insert(drive - AMIGA_FLOPPIES, path) : amiga_floppy_insert(drive, path);
+    bool ok = drive >= AMIGA_FLOPPIES ? amiga_hd_insert(drive - AMIGA_FLOPPIES, path)
+                                      : amiga_floppy_insert(drive, path);
+    s_has_wants[drive] = ok && (drive == 0 || drive == AMIGA_FLOPPIES) && has_ext(path, ".rp9") &&
+                         amiga_rp9_machine(path, &s_wants[drive]);
+    return ok;
 }
 
 static void disk_eject(int drive)
 {
+    s_has_wants[drive] = false;
     if (drive >= AMIGA_FLOPPIES) {
         amiga_hd_eject(drive - AMIGA_FLOPPIES);
     } else {
         amiga_floppy_eject(drive);
     }
+}
+
+/* A Kickstart version (130, 310, ...) as one of this model's choices */
+static int kick_for(int model, int version)
+{
+    if (model == AMIGA_A1200) {
+        return version == 300 ? KICK_30 : KICK_31_A1200;
+    }
+    if (model == AMIGA_A600) {
+        return version >= 300 ? KICK_31 : KICK_205;
+    }
+    return version <= 120 ? KICK_12 : version < 200 ? KICK_13 : version < 300 ? KICK_204 : KICK_31;
+}
+
+static const char *ram_text(char *buf, size_t len, int kb)
+{
+    snprintf(buf, len, kb >= 1024 ? "%d MB" : "%d KB", kb >= 1024 ? kb / 1024 : kb);
+    return buf;
+}
+
+/* "Ants wants an A500+: 1 MB chip RAM, 1 MB fast RAM, Kickstart 1.3" while
+ * the settings are otherwise
+ */
+static const char *disk_offer(int drive)
+{
+    static char text[AMIGA_FLOPPIES + AMIGA_HARD_DISKS][160];
+    const amiga_rp9_machine_t *w = &s_wants[drive];
+    if (!s_has_wants[drive] || (settings.model == w->model && settings.kick == kick_for(w->model, w->kickstart) &&
+                                settings.chip_kb == w->chip_kb && settings.slow_kb == w->slow_kb &&
+                                settings.fast_kb == w->fast_kb)) {
+        return NULL;
+    }
+    char chip[16], t[16], slow[32] = "", fast[32] = "";
+    ram_text(chip, sizeof(chip), w->chip_kb);
+    if (w->slow_kb) {
+        snprintf(slow, sizeof(slow), ", %s slow RAM", ram_text(t, sizeof(t), w->slow_kb));
+    }
+    if (w->fast_kb) {
+        snprintf(fast, sizeof(fast), ", %s fast RAM", ram_text(t, sizeof(t), w->fast_kb));
+    }
+    const char *name = strcmp(w->system, "a-500plus") == 0 ? "A500+" : model_names[w->model];
+    snprintf(text[drive], sizeof(text[drive]), "%.60s wants an %s: %s chip RAM%s%s, Kickstart %d.%d", w->title, name,
+             chip, slow, fast, w->kickstart / 100, w->kickstart % 100 / 10);
+    return text[drive];
+}
+
+/* The settings the package names (the caller restarts the machine) */
+static void disk_take_offer(int drive)
+{
+    const amiga_rp9_machine_t *w = &s_wants[drive];
+    if (!s_has_wants[drive]) {
+        return;
+    }
+    settings_model_defaults(w->model);
+    int kick = kick_for(w->model, w->kickstart);
+    if (settings_kick_ok(w->model, kick)) {
+        settings.kick = (uint8_t)kick;
+    }
+    if (settings_chip_ok(w->model, w->chip_kb)) {
+        settings.chip_kb = (uint16_t)w->chip_kb;
+    }
+    if (settings_slow_ok(w->model, w->slow_kb)) {
+        settings.slow_kb = (uint16_t)w->slow_kb;
+    }
+    if (settings_fast_ok(w->model, w->fast_kb)) {
+        settings.fast_kb = (uint16_t)w->fast_kb;
+    }
+    settings_save();
+    ESP_LOGI(TAG, "set up as %s wants", w->title);
 }
 
 static const char *disk_path(int drive)
@@ -598,6 +678,8 @@ static const disks_config_t disks = {
     .create = disk_create,
     .removed = disk_removed,
     .accepts = disk_accepts,
+    .offer = disk_offer,
+    .take_offer = disk_take_offer,
     .takes_blank = disk_takes_blank,
     .default_size = disk_default_size,
     .extension_for = disk_extension_for,

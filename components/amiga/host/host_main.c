@@ -2,7 +2,11 @@
  * Run the Amiga on the host: boot a Kickstart for a number of frames and
  * write the last picture as a PPM image.
  *
- *   ./ami_host <kickstart.rom> [frames] [out.ppm]
+ *   ./ami_host <kickstart.rom | folder of them> [frames] [out.ppm]
+ *
+ * An RP9 in AMI_DF0 or AMI_HD0 without AMI_MODEL: the machine its manifest
+ * names (model, memory; given a folder, its Kickstart by FS-UAE's names,
+ * amiga-os-130.rom ...).
  *
  * Environment: AMI_CHIP_KB (512), AMI_SLOW_KB (512; 0 for none), AMI_FAST_KB
  * (0; 1024-8192: an autoconfig board), AMI_ECS,
@@ -27,6 +31,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/stat.h>
 #include <time.h>
 #include "amiga.h"
 #include "m68k.h"
@@ -237,17 +243,45 @@ int main(int argc, char **argv)
     int frames = argc > 2 ? atoi(argv[2]) : 500;
     const char *out = argc > 3 ? argv[3] : "screen.ppm";
 
+    /* the machine an RP9 names (the board's setup rows: ECS with more than
+     * 512 KB chip RAM or Kickstart 2.04, the A600's and A1200's own)
+     */
+    amiga_rp9_machine_t rm;
+    const char *pkg = NULL;
+    for (int i = 0; i < 2 && !pkg; i++) {
+        const char *p = getenv(i ? "AMI_DF0" : "AMI_HD0");
+        if (p && strlen(p) > 4 && strcasecmp(p + strlen(p) - 4, ".rp9") == 0) {
+            pkg = p;
+        }
+    }
+    bool from_rp9 = !getenv("AMI_MODEL") && pkg && amiga_rp9_machine(pkg, &rm);
+
     amiga_config_t cfg = { 0 };
-    cfg.model = (amiga_model_t)env_int("AMI_MODEL", AMIGA_A500);
-    cfg.ecs = getenv("AMI_ECS") != NULL;
+    cfg.model = from_rp9 ? rm.model : (amiga_model_t)env_int("AMI_MODEL", AMIGA_A500);
+    cfg.ecs = from_rp9 ? rm.model >= AMIGA_A600 || rm.chip_kb > 512 || rm.kickstart == 204 : getenv("AMI_ECS") != NULL;
     cfg.ntsc = getenv("AMI_NTSC") != NULL;
-    cfg.chip_size = env_int("AMI_CHIP_KB", 512) * 1024;
+    cfg.chip_size = (from_rp9 ? rm.chip_kb : env_int("AMI_CHIP_KB", 512)) * 1024;
     cfg.chip = malloc(cfg.chip_size);
-    cfg.slow_size = env_int("AMI_SLOW_KB", 512) * 1024;
+    cfg.slow_size = (from_rp9 ? rm.slow_kb : env_int("AMI_SLOW_KB", 512)) * 1024;
     cfg.slow = cfg.slow_size ? malloc(cfg.slow_size) : NULL;
-    cfg.fast_size = env_int("AMI_FAST_KB", 0) * 1024;
+    cfg.fast_size = (from_rp9 ? rm.fast_kb : env_int("AMI_FAST_KB", 0)) * 1024;
     cfg.fast = cfg.fast_size ? malloc(cfg.fast_size) : NULL;
-    cfg.kickstart = load(argv[1], &cfg.kickstart_size);
+    struct stat st;
+    char kick[600];
+    snprintf(kick, sizeof(kick), "%s", argv[1]);
+    if (stat(argv[1], &st) == 0 && S_ISDIR(st.st_mode)) {
+        int k = from_rp9 ? rm.kickstart : 130;
+        const char *name = k == 120 ? "120" : k == 130 ? "130" : k == 204 ? "204" : k == 205 ? "205-a600"
+                           : k == 300                                           ? "300-a1200"
+                           : cfg.model == AMIGA_A1200                           ? "310-a1200"
+                                                                                : "310-a600";
+        snprintf(kick, sizeof(kick), "%s/amiga-os-%s.rom", argv[1], name);
+    }
+    if (from_rp9) {
+        printf("%s: %s, Kickstart %d.%d, %d KB chip, %d KB slow, %d KB fast RAM (%s)\n", rm.title, rm.system,
+               rm.kickstart / 100, rm.kickstart % 100 / 10, rm.chip_kb, rm.slow_kb, rm.fast_kb, kick);
+    }
+    cfg.kickstart = load(kick, &cfg.kickstart_size);
     cfg.rom = malloc(cfg.kickstart_size);
     if (getenv("AMI_EXT")) {
         uint32_t ext_size = 0;

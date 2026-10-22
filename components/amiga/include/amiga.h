@@ -211,6 +211,19 @@ bool amiga_hd_create(const char *path, uint32_t bytes);
 /* An RP9 package with a hard disk image (else floppies) */
 bool amiga_rp9_hard_disk(const char *path);
 
+/* The machine an RP9 package's manifest names: its system (a-500, a-500plus,
+ * a-2000, a-600, a-1200, a-4000 as an A1200), Kickstart and RAM (the
+ * system's own unless it says). False if it isn't a package or names none.
+ */
+typedef struct {
+    char title[64];
+    char system[16];                /* as the manifest says ("a-500plus") */
+    amiga_model_t model;
+    int kickstart;                  /* 120, 130, 204, 205, 300, 310 */
+    int chip_kb, slow_kb, fast_kb;
+} amiga_rp9_machine_t;
+bool amiga_rp9_machine(const char *path, amiga_rp9_machine_t *m);
+
 /* Debugging: called as the 68000 takes each exception (vector number), as
  * a disk DMA starts (DSKLEN's value, DSKSYNC, ADKCON, the drive's
  * cylinder and side, DSKPT)

@@ -1,6 +1,6 @@
 /*
- * Our own hard disk board, for the Kickstarts without an IDE driver (1.2,
- * 1.3, 2.04): an autoconfig board (Zorro II, 256 KB, in the I/O space)
+ * Our own hard disk board, for the Kickstarts without an IDE driver (1.3,
+ * 2.04; not 1.2: see hdboard_wanted()): an autoconfig board (Zorro II, 256 KB, in the I/O space)
  * with a boot ROM whose device driver is native code here. On the other
  * Kickstarts Gayle's IDE (gayle.c) serves the same drives instead: a disk
  * is never mounted by both.
@@ -141,9 +141,14 @@ static bool serves(int d)
     return hd_image(d) && (d > 0 || !ami_kick_has_ide());
 }
 
+/* (not with Kickstart 1.2: its expansion.library copies a word-wide
+ * DiagArea with exec's CopyMem and then takes AllocMem from exec's base as
+ * if it were its own, at $24: a jump into chip RAM, an address error, the
+ * alert, a reset, again. 1.2 can't boot from a board anyway.)
+ */
 bool hdboard_wanted(void)
 {
-    return serves(0) || serves(1);
+    return ami.kick_major >= 34 && (serves(0) || serves(1));
 }
 
 uint8_t *hdboard_memory(uint32_t *base, uint32_t *size)

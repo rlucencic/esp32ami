@@ -13,6 +13,7 @@ typedef struct {
     char title[64];
     char system[16];                /* "a-500", "a-1200", ... */
     int rom;                        /* systemrom: 120 = Kickstart 1.2, 310 = 3.1 */
+    uint32_t chip_ram, fast_ram;    /* bytes it asks for (fast: Zorro III's too; 0: the system's) */
     int disks;                      /* floppies, in their order */
     char disk[RP9_DISKS][RP9_NAME];
     bool harddrive;                 /* a hard disk image too: */

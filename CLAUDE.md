@@ -196,7 +196,7 @@ images.
   master (their FFS); they never look for a slave, and Gayle answers for
   the master (DH0:) alone: DH1: is our board's.
 - **Our hard disk board** (`hdboard.c`: both drives with Kickstart
-  1.2-2.04, no IDE driver there; with 2.05 and 3.1 DH1: alone, Gayle
+  1.3-2.04, no IDE driver there; not with 1.2, see the lessons; with 2.05 and 3.1 DH1: alone, Gayle
   having DH0:; a disk is never mounted by both): autoconfig,
   Zorro II, 256 KB in the I/O space ($E90000), present while a hard disk
   is in (decided as the chain gets to it). Its boot ROM (`hdrom.h`, made by
@@ -275,7 +275,20 @@ images.
   or deflated: miniz's `tinfl` on the board, its 10 KB state on the heap,
   zlib on the host) into hidden `.<name>.rp9.<n>.adf` beside it and used
   as ADFs; inserting the same package again gives its next disk (the drive
-  detail says which). Hard disk images in an RP9 wait for phase 5.
+  detail says which). **The machine a package names**
+  (`amiga_rp9_machine()`: `<system>`, the Kickstart as `<systemrom>` or
+  `<rom type="system">`, `<ram type="chip|fast|z3">`): a-500 an A500 with
+  512 + 512 KB, a-500plus one with 1 MB chip RAM (ECS follows), a-2000
+  an A2000 with 512 + 512 KB, a-600 an A600, a-1200 and a-4000 an A1200;
+  fast RAM as asked (8 MB at most). A package in a boot drive (DF0:, DH0:)
+  naming another machine than the settings: `main.c` offers it through
+  esp32emu's disk offers (the setup screen's Disks page and the web page:
+  "Kick Off 2 wants an A500: 512 KB chip RAM, 512 KB slow RAM, Kickstart
+  1.2" and a button), read from the manifest as it goes in; taking it sets
+  the settings as the console's `R` does and restarts (the user's choice
+  over an automatic restart, 2026-10-22). The host takes it by itself
+  unless `AMI_MODEL` is set, and with a ROM folder for its first argument
+  the Kickstart too (FS-UAE's names).
 - **Input** (`input.c`): key codes through CIA-A's serial port (rotated,
   inverted), the next only after the handshake (CIA-A's serial port to
   output and back) or 143 ms; $FD, $FE at reset; Ctrl and both Amiga keys:
@@ -463,6 +476,15 @@ the top two bits do nothing, Aerial Racers' race sets them),
   gives 32 bits, double CAS (3), as on an A1200: 256-colour hires in
   FMODE 3. (SysInfo read the IDs right all along; the host's `AMI_DUMP` of
   chip RAM and GfxBase's bytes at $EC/$ED showed it.)
+- **Kickstart 1.2 with our hard disk board crashes in a loop**: its
+  expansion.library copies a word-wide DiagArea with exec's CopyMem, then
+  calls AllocMem through what it takes for its own base at $24 but is
+  exec's: a jump to $00FE79 in chip RAM, an address error, the alert
+  ("HELP" at 0), a reset, again (a grey screen; the CPU sampled in the
+  early delay at $FC00DE or the alert's at $FC30F4). Found when an RP9's
+  offer restarted the board as an A500 with 1.2 while a hard disk was in
+  DH0:; `AMI_STOP=fe79` on the host showed the path. The board isn't
+  offered to 1.2 (`hdboard_wanted()`), which can't boot from one anyway.
 - **A drive's ID: the nth selection after its motor goes off shows bit
   31 - n**, not bit 31 first as the HRM's loop reads: with $AAAAAAAA given
   bit 31 first, Kickstart 3.1 read the HD drive as something it didn't
@@ -657,8 +679,8 @@ the top two bits do nothing, Aerial Racers' race sets them),
 
 ## Open items
 
-- The work still to do, sketched and in order: `TODO.md` (RP9s setting
-  the machine, the blitter's and the 68000's slots, attach modes,
+- The work still to do, sketched and in order: `TODO.md` (the blitter's
+  and the 68000's slots, attach modes,
   super-hires, extended ADF writes, AGA's rest, the 68EC020's cache). The
   items below are the state of things; `TODO.md` says what to do next.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
@@ -689,15 +711,12 @@ the top two bits do nothing, Aerial Racers' race sets them),
   presenter's scaling 35%, Denise's drawing 14%).
 - Extended ADFs can't be written (`TODO.md` 6). DMS modes 2-5 untested
   (no archives).
-- The user's "nice to have", next (`TODO.md` 1): an RP9 inserted in the
-  boot drive sets the machine its manifest names (model, Kickstart,
-  memory: Ants wants an A500+ with 1 MB chip RAM).
 - The RP9 games with a hard disk: joined with their system disk (above).
   The six for 1.3 run through our board (host, KS 1.3 with 1 MB fast
   RAM: Hannibal's menu, also on the Tab5; Epsilon 9's intro, Flight of the
   Amazon Queen in a scene, Starbase 13 and Tactical Manager their title
-  screens; Ants its menu once set up as its manifest's A500+: ECS, 1 MB
-  chip RAM; the machine isn't set from the manifest yet); the ten for
+  screens; Ants its menu as its manifest's A500+: ECS, 1 MB chip RAM,
+  which the board now offers from the manifest); the ten for
   3.1 are A1200 games (all show their AGA pictures now, Football Glory
   too); three name no system disk.
 - Super-hires (`TODO.md` 5): dual playfield in it isn't drawn as such (2
