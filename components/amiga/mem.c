@@ -21,7 +21,8 @@
  * The A1200's 68EC020 waits for the chip bus: each access to chip RAM (32
  * bits at once), the custom chips or a CIA costs it WAIT_* of its clocks
  * (s_wait by 64 KB bank, the others in the slow path); the ROM and fast
- * RAM don't. The 68000's waits are counted otherwise (amiga.c).
+ * RAM don't, nor instructions from its cache (below). The 68000's waits
+ * are counted otherwise (the slots, below).
  */
 #include <string.h>
 #include "m68k.h"
@@ -31,7 +32,7 @@ static const uint8_t *s_rmap[256];
 static uint8_t *s_wmap[256];
 static uint8_t s_wait[256];           /* the 68EC020's waits, by bank (0: none) */
 
-#define WAIT_CHIP       5
+#define WAIT_CHIP       8               /* two chip bus cycles (SysInfo: 1.04 times an A1200) */
 #define WAIT_CUSTOM     8
 #define WAIT_CIA        20
 
@@ -370,6 +371,108 @@ unsigned int AMI_HOT m68k_read_memory_32(unsigned int a)
     }
     uint32_t hi = m68k_read_memory_16(a);
     return (hi << 16) | m68k_read_memory_16((a + 2) & 0xFFFFFF);
+}
+
+/* ---- The 68EC020's instruction cache ----
+ *
+ * 64 longwords, direct-mapped by address bits 7-2, tagged with the rest,
+ * filled while CACR's E bit is set (F freezes it; a write with C set
+ * empties it). An instruction word from a longword in it costs no bus
+ * time; otherwise the longword is read (the chip bus's wait), once for
+ * both its words (the 68020 fetches longwords). Only the time: the words
+ * themselves always come from memory (no stale ones after code changes).
+ */
+#define IC_LINES        64
+static uint32_t s_ic_tag[IC_LINES];         /* its longword's address / 4 + 1 (0: empty) */
+static uint32_t s_ic_prev = 1;              /* the last instruction word fetched (odd: none) */
+static uint32_t s_cacr;
+
+void mem_cacr(uint32_t cacr)
+{
+    if (cacr != s_cacr && (cacr & 8)) {
+        memset(s_ic_tag, 0, sizeof(s_ic_tag));
+    }
+    s_cacr = cacr;
+}
+
+static inline void ic_word(uint32_t a)
+{
+    uint32_t prev = s_ic_prev;
+    s_ic_prev = a;
+    if (a == prev + 2 && (a & 2)) {
+        return;                     /* the longword's second word: read with the first */
+    }
+    if (s_cacr & 1) {
+        uint32_t lw = (a >> 2) + 1, *t = &s_ic_tag[(a >> 2) & (IC_LINES - 1)];
+        if (*t == lw) {
+            return;
+        }
+        if (!(s_cacr & 2)) {
+            *t = lw;
+        }
+    }
+    if (s_wait[a >> 16]) {
+        ami_cpu_wait(s_wait[a >> 16]);
+    }
+}
+
+unsigned int AMI_HOT m68k_read_immediate_16(unsigned int a)
+{
+    if (!ami.cpu_shift) {
+        return m68k_read_memory_16(a);
+    }
+    ic_word(a);
+    const uint8_t *p = s_rmap[a >> 16];
+    return p ? rd16(p, a & 0xFFFF) : slow_read16(a);
+}
+
+unsigned int AMI_HOT m68k_read_immediate_32(unsigned int a)
+{
+    if (!ami.cpu_shift) {
+        return m68k_read_memory_32(a);
+    }
+    ic_word(a);
+    ic_word((a + 2) & 0xFFFFFF);
+    const uint8_t *p = s_rmap[a >> 16];
+    if (p && (a & 0xFFFF) <= 0xFFFC) {
+        return ((uint32_t)rd16(p, a & 0xFFFF) << 16) | rd16(p, (a & 0xFFFF) + 2);
+    }
+    return ((uint32_t)slow_read16(a) << 16) | slow_read16((a + 2) & 0xFFFFFF);
+}
+
+/* The instruction at pc, then a conditional branch back to it: a loop of
+ * the two (custom.c's polls)
+ */
+bool mem_poll_loop(uint32_t pc)
+{
+    char text[100];
+    uint32_t b = pc + m68k_disassemble(text, pc, ami.cpu_shift ? M68K_CPU_TYPE_68EC020 : M68K_CPU_TYPE_68000);
+    uint16_t op = (uint16_t)m68k_read_disassembler_16(b);
+    if ((op & 0xF000) != 0x6000 || (op & 0x0F00) < 0x0200) {
+        return false;               /* not a Bcc (BRA and BSR aren't) */
+    }
+    int8_t d8 = (int8_t)(op & 0xFF);
+    if (d8 == -1) {
+        return false;               /* (68020: a 32-bit displacement) */
+    }
+    uint32_t target = d8 ? b + 2 + d8 : b + 2 + (int16_t)m68k_read_disassembler_16(b + 2);
+    return (target & 0xFFFFFF) == pc;
+}
+
+/* PC-relative operands: data (the cache holds instructions only) */
+unsigned int m68k_read_pcrelative_8(unsigned int a)
+{
+    return m68k_read_memory_8(a);
+}
+
+unsigned int m68k_read_pcrelative_16(unsigned int a)
+{
+    return m68k_read_memory_16(a);
+}
+
+unsigned int m68k_read_pcrelative_32(unsigned int a)
+{
+    return m68k_read_memory_32(a);
 }
 
 void AMI_HOT m68k_write_memory_8(unsigned int a, unsigned int v)

@@ -187,6 +187,8 @@ void ami_cpu_wake(void);            /* an earlier event was scheduled: end the C
 
 /* mem.c */
 void mem_update_map(void);
+void mem_cacr(uint32_t cacr);
+bool mem_poll_loop(uint32_t pc);
 /* The 68000 on the chip bus: a line's even slots the DMA takes (`at` in
  * clocks into the frame), cleared as a line begins
  */

@@ -6,20 +6,8 @@ how, how it's checked, and roughly how big it is. Done items move to
 the others keep their numbers (done: 1, an RP9 setting up its machine;
 2, the blitter's timing slot by slot; 3, the 68000 on the chip bus slot by
 slot; 4, Paula's attach modes; 5, ECS super-hires; 6, writing extended
-ADFs; 7, AGA's untested and missing parts).
-
-## 8. The 68EC020's instruction cache
-
-- **Why**: every access to chip RAM waits `WAIT_CHIP` (5 clocks),
-  instruction fetches too. A real 68EC020 runs loops from its 256-byte
-  cache without the bus, so code in chip RAM (most A1200 games: no fast
-  RAM) has different timing; SysInfo's 1.03 is an average that fits.
-- **How**: `M68K_SEPARATE_READS` (instruction fetches through their own
-  callbacks), a 64-longword direct-mapped cache with CACR's enable and
-  clear (Musashi has CACR); a hit doesn't wait.
-- **Check**: SysInfo 4.4 on the A1200 near 1.0; Aerial Racers' and
-  Deluxe Galaga's speed by eye.
-- **Size**: medium; changes every A1200 game's timing.
+ADFs; 7, AGA's untested and missing parts; 8, the 68EC020's instruction
+cache).
 
 ## 9. Small things
 

@@ -324,7 +324,11 @@ static void run_cpu(int until)
             return;
         }
     }
-    /* (the 68EC020 runs two of its clocks a 68000 one: the remainder kept) */
+    /* (the 68EC020 runs two of its clocks a 68000 one: the remainder kept;
+     * its instruction cache follows CACR as it was) */
+    if (ami.cpu_shift) {
+        mem_cacr(m68k_get_reg(NULL, M68K_REG_CACR));
+    }
     ami.cpu_running = true;
     int used = m68k_execute((until - ami.cycle) << ami.cpu_shift) + ami.cpu_rem;
     ami.cpu_running = false;

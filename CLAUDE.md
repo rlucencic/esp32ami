@@ -147,7 +147,17 @@ images.
   earlier event (COPJMP, a blit, a CIA timer) or raises the interrupt
   level ends the CPU's slice (`ami_cpu_wake()`: Musashi samples the IRQ
   lines only as a slice starts). At the line's end the display records the
-  line; CIA-B's TOD counts lines, CIA-A's frames.
+  line; CIA-B's TOD counts lines, CIA-A's frames. **Poll loops**
+  (`custom.c`, `poll_wait()`): a read of DMACONR, VPOSR or INTREQR from a
+  loop of two instructions, the read and a Bcc back to it
+  (`mem_poll_loop()`: Musashi's disassembler for its length, cached by PC),
+  lets the slice's rest pass at once: those change only where a slice ends
+  (an event, the line's end), so the loop leaves at most a pass sooner. A
+  loop that does more (a speed test counting its passes) runs as it is;
+  SysInfo the same before and after on both CPUs. For the host's time:
+  with the 68EC020's cache Aerial Racers' `btst #0,$dff005 / bne` ran 2.6
+  times the instructions (117 M in the collection's 7000 frames, 33 M with
+  the skip, 45 M before the cache).
 - **The 68000 and the chip bus, slot by slot** (`mem.c`): its
   instructions take a multiple of 4 clocks (the cycle table rounded up at
   init: a bus cycle starts on a 2-colour-clock slot). Each line has a map
@@ -172,16 +182,27 @@ images.
   slower for the 68000, host and Tab5), set before the tables' copies (they
   take its cycles). 14.19 MHz: two of its clocks a time unit
   (`ami.cpu_shift`, the odd one kept in `ami.cpu_rem`; `ami_now()`), no
-  4-clock rounding. It waits for the chip bus (`mem.c`): `WAIT_CHIP` (5) of
-  its clocks an access to chip RAM (32 bits at once), `WAIT_CUSTOM` (8) the
-  chips, `WAIT_CIA` (20) a CIA; ROM and fast RAM none (`ami_cpu_wait()`:
-  the slice ends sooner, the time counts: inline, taken from Musashi's
-  remaining cycles). No bus errors on the Amiga: `CONFIG_M68K_NO_BUS_ERRORS`
+  4-clock rounding. It waits for the chip bus (`mem.c`): `WAIT_CHIP` (8: two
+  chip bus cycles) of its clocks an access to chip RAM (32 bits at once),
+  `WAIT_CUSTOM` (8) the chips, `WAIT_CIA` (20) a CIA; ROM and fast RAM none
+  (`ami_cpu_wait()`: the slice ends sooner, the time counts: inline, taken
+  from Musashi's remaining cycles). Its **instruction cache**: 64
+  longwords, direct-mapped, filled while CACR's E bit is set (F freezes,
+  a write with C empties it; `run_cpu()` passes CACR to `mem_cacr()`
+  before each slice); an instruction word from it costs no wait, from
+  outside a longword's wait for both its words; only the time (the words
+  always from memory: no stale code). Instruction reads come apart from
+  data through `CONFIG_M68K_PROGRAM_READS` (esp32emu; `-DM68K_PROGRAM_READS`
+  in the host build): `m68k_read_immediate_16/32()`, the 68000 straight to
+  its usual reads. SysInfo 4.4: 1.04 times an A1200 (1270 Dhrystones,
+  14.60 MHz; with the cache and the old wait of 5: 1.38; without the
+  cache: 1.03, 11.30 MHz, the instruction waits making up for the cheap
+  data ones). No bus errors on the Amiga: `CONFIG_M68K_NO_BUS_ERRORS`
   (`-DM68K_NO_BUS_ERRORS` in the host build) spares the 68EC020 Musashi's
   copy of its 16 registers before every instruction (the host's Aerial
-  Racers run 37% faster, the pictures the same). SysInfo 4.4: 1.03 times an
-  A1200 (1256 Dhrystones; without the waits 3630, 2.98 times, and the Tab5
-  at 55% in a game), "AGA ALICE - 2Meg", "AGA LISA CHIP".
+  Racers run 37% faster, the pictures the same). Before the cache: SysInfo
+  1.03 times an A1200 (1256 Dhrystones; without the waits 3630, 2.98 times,
+  and the Tab5 at 55% in a game), "AGA ALICE - 2Meg", "AGA LISA CHIP".
 - **Memory** (`mem.c`): 64 KB banks to host pointers for reads and writes
   (chip RAM mirrored by its size over $000000-$1FFFFF, the ROM over it for
   reads while OVL is set, slow RAM at $C00000, fast RAM where autoconfig
@@ -437,6 +458,13 @@ the top two bits do nothing, Aerial Racers' race sets them),
   scaled back to hires pixels.
 
 ## Lessons (each one cost a debugging session)
+
+- **A faster emulated CPU costs host time in its waiting loops**: the
+  68EC020's instruction cache made code from it free of chip waits, so a
+  game's VBL poll loop ran 2.6 times as many instructions per frame; the
+  Tab5 fell to 86-94% in Aerial Racers' race with core 1 at 100% (73-81%
+  before). Skipping two-instruction poll loops to their slice's end
+  (`poll_wait()`) brought it back.
 
 - **ECS's DIWHIGH matters**: Kickstart 3.1's copper list opens a window at
   line 1 with VSTOP 2 through DIWHIGH = 0 (OCS rules would make VSTOP 258):
@@ -846,8 +874,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
   uses FMODE 2, 32-pixel sprites or AGA super-hires, CLXCON2 or wide
   sprites' collisions: `tools/agaboot.py` checks them (Testing). Virtual
   Karting 2 sets the sprites' 35/70 ns bits: its sprite text 1-3
-  super-hires pixels further right since they count; the 68EC020's waits are an average
-  (no instruction cache); the A1200's 32-bit trapdoor fast RAM is the
+  super-hires pixels further right since they count; the 68EC020's data
+  waits are an average (8 clocks, no slots), its instruction cache times
+  only (no stale code, FC2 not in the tags); the A1200's 32-bit trapdoor fast RAM is the
   Zorro II board at $200000. Core 1 is 73-81% busy in Aerial Racers' race
   (100%; profile in Testing; 90-99% before the changes here). Done: `chip_read16()` inline
   (every DMA word) and read directly in `display_fetch()`, `beam()` (VPOSR

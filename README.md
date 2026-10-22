@@ -68,9 +68,9 @@ all are built on the shared runtime
   its memory accesses fall on the bus's slots and wait for the chips' DMA,
   except when it runs from fast RAM or the ROM. SysInfo and xSysInfo
   measure 1.00 times an A600 in chip RAM and a B2000 in fast RAM
-- **68EC020** at 14.19 MHz for the A1200, waiting for the chip bus on
-  each access to chip RAM and the chips: SysInfo measures 1.03 times an
-  A1200
+- **68EC020** at 14.19 MHz for the A1200 with its 256-byte instruction
+  cache, waiting for the chip bus on each access to chip RAM and the
+  chips: SysInfo measures 1.04 times an A1200 and 14.6 MHz
 - **Agnus**: the DMA slots of every line, the **copper** (its waits to the
   line and the position), the **blitter** (area and line modes, fill), the
   bitplane and sprite DMA; ECS's bigger chip RAM, the display window's high

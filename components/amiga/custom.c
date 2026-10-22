@@ -4,6 +4,7 @@
  * display; Paula's interrupt and Agnus's DMA control registers live here.
  */
 #include <string.h>
+#include "m68k.h"
 #include "amiga_internal.h"
 
 /* Agnus's ID in VPOSR: OCS 8370/8371, ECS 8372, AGA's Alice (PAL, NTSC) */
@@ -29,11 +30,43 @@ static void beam(int *line, int *h)
 
 static uint16_t read_reg(uint32_t reg);
 
+/* A program waiting for the blitter, the beam or an interrupt in a loop of
+ * two instructions, this read and a branch back to it (Aerial Racers:
+ * btst #0,$dff005 / bne): DMACONR's busy bit, VPOSR and INTREQR change
+ * only where the CPU's slice ends (an event, the line's end), so the
+ * slice's rest passes at once. The loop then leaves at most a pass sooner;
+ * one that does more (counts its passes: a speed test) runs as it is.
+ * (Each PC decoded once while it stays in the table: a game reads these
+ * from many places.)
+ */
+#define POLL_PCS        32
+static void poll_wait(void)
+{
+    static uint32_t s_pc[POLL_PCS];             /* the PCs looked at + 1, by their low bits */
+    static bool s_loop[POLL_PCS];
+    if (!ami.cpu_running) {
+        return;
+    }
+    uint32_t pc = m68k_get_reg(NULL, M68K_REG_PPC);
+    int i = (pc >> 1) & (POLL_PCS - 1);
+    if (s_pc[i] != pc + 1) {
+        s_pc[i] = pc + 1;
+        s_loop[i] = mem_poll_loop(pc);
+    }
+    if (s_loop[i]) {
+        extern int m68ki_remaining_cycles;
+        ami_cpu_wait(m68ki_remaining_cycles > 0 ? m68ki_remaining_cycles : 0);
+    }
+}
+
 /* What the 68000 reads; a write-only register gives the last word on the
  * bus (Dr. Mario keeps a counter in one)
  */
 uint16_t custom_read(uint32_t reg)
 {
+    if (reg == 0x002 || reg == 0x004 || reg == 0x01E) {
+        poll_wait();
+    }
     uint16_t v = read_reg(reg);
     ami.bus = v;
     return v;

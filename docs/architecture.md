@@ -757,3 +757,20 @@ measurements written down.
   and the wide sprite's collision. The collection: 95 of 96 the same,
   Virtual Karting 2's sprite text 1-3 super-hires pixels further right
   (it sets those bits).
+- **8. The 68EC020's instruction cache** (2026-10-23): instruction reads
+  apart from data through esp32emu's new `CONFIG_M68K_PROGRAM_READS`
+  (Musashi's `M68K_SEPARATE_READS`; all 24 builds checked); 64 longwords,
+  direct-mapped, CACR's E/F/C; a hit costs no wait, a miss one for both
+  words of the longword. With it SysInfo's MHz read 14.60 (11.30 before),
+  Dhrystone 1.38 times an A1200: the chip waits of 5 clocks had been too
+  cheap, hidden by the per-word instruction waits; 8 (two chip bus
+  cycles) gives 1.04 (7: 1.13, 9: 0.96, 11: 0.83), the same on the Tab5.
+  The faster 68EC020 ran 2.6 times the instructions in Aerial Racers' VBL
+  poll loop and the Tab5 fell to 86-94% in its race (core 1 at 100%):
+  two-instruction poll loops on DMACONR, VPOSR and INTREQR now skip to
+  their slice's end (they can change only there), SysInfo the same on both
+  CPUs, the race 98-102% with core 1 at 71-78% (73-81% before). The
+  collection: the 20 A1200 games show other moments with the cache
+  (Soccer Kid's and Aerial Racers' scripted presses land elsewhere, none
+  stuck), all A500 ones the same; the poll skip then 19 others (11 on the
+  68000), the same scenes a frame apart.

@@ -106,3 +106,4 @@ CONFIG_EMU_HOSTNAME="amiga"
 # doesn't copy its registers before each instruction)
 CONFIG_M68K_RUNTIME=y
 CONFIG_M68K_NO_BUS_ERRORS=y
+CONFIG_M68K_PROGRAM_READS=y
