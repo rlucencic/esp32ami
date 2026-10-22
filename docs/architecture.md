@@ -736,3 +736,13 @@ measurements written down.
   picture as before; the collection 96 of 96 the same. Not done: a hires
   screen dragged over a super-hires Workbench (the Overscan editor, the
   one at hand, never opens from it: CLAUDE.md, Open items).
+- **6. Writing extended ADFs** (2026-10-22): a written AmigaDOS track back
+  into its sectors when all 11 decode with their checksums, anything else
+  as the turn's raw MFM; an AmigaDOS track turning raw moves the tracks
+  after it (the image laid out again in its 2.5 MB buffer, written whole
+  at the flush). `tools/extadf.py`: Workbench 1.2 writing a file onto an
+  extended ADF of AmigaDOS tracks and one of raw tracks: the file right,
+  the same blocks as on the plain ADF; a boot block's TD_RAWWRITE (2.04)
+  turns a track raw, the image grows by 7036 bytes, the words there. Host
+  and Tab5. Son Shu Shi (the collection's one extended ADF) doesn't write
+  in its 140 s.

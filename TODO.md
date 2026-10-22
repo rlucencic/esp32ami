@@ -5,22 +5,8 @@ how, how it's checked, and roughly how big it is. Done items move to
 `docs/architecture.md` (Progress, "The to-do list") and leave this list;
 the others keep their numbers (done: 1, an RP9 setting up its machine;
 2, the blitter's timing slot by slot; 3, the 68000 on the chip bus slot by
-slot; 4, Paula's attach modes; 5, ECS super-hires).
-
-## 6. Writing extended ADFs
-
-- **Why**: UAE-1ADF images (raw MFM tracks) are read-only. Son Shu Shi
-  (both disks) is the collection's only one; whether it writes (high
-  scores) isn't known.
-- **How**: `floppy.c`: a track written to an extended ADF: AmigaDOS tracks
-  (type 0) decoded back into its data as an ADF's; raw tracks (type 1) take
-  the written words (one turn's worth; a longer track rewrites the image
-  with a new track table at the flush); `flush_drive()` writes the image
-  whole.
-- **Check**: an extended ADF made from Workbench's ADF (type 0 tracks)
-  with the write test (CLAUDE.md, Testing: a startup-sequence that writes
-  a file); Son Shu Shi played until it writes, if it does.
-- **Size**: medium (~100 lines).
+slot; 4, Paula's attach modes; 5, ECS super-hires; 6, writing extended
+ADFs).
 
 ## 7. AGA: the untested and the missing
 

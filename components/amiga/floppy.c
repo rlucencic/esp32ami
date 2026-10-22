@@ -20,7 +20,10 @@
  * through the DMA is decoded back into sectors when the write ends.
  *
  * UAE's extended ADFs ("UAE-1ADF": per track AmigaDOS sectors or raw MFM
- * of its own length, as copy-protected disks need) are read-only. An RP9
+ * of its own length, as copy-protected disks need) are written too: an
+ * AmigaDOS track whose 11 sectors all come back (checksums right) into its
+ * sectors, anything else as the turn's raw MFM (an AmigaDOS track then
+ * becomes a raw one: the image laid out again, written whole). An RP9
  * package's disks are unpacked once each into a hidden ADF beside it
  * (".<name>.rp9.<n>.adf", written to like any ADF); putting the package in
  * the same drive again takes its next disk.
@@ -65,6 +68,7 @@ typedef struct {
     bool ext;                       /* an extended ADF */
     int ext_tracks;
     uint32_t ext_off[EXT_TRACKS];   /* where each track's data is */
+    bool ext_moved;                 /* its tracks laid out again: written whole */
     uint16_t *mfm;                  /* the track under the head */
     int mfm_track;                  /* which (cylinder * 2 + side), -1: none */
     int track_words;                /* its length */
@@ -73,7 +77,7 @@ typedef struct {
     int rp9_disk, rp9_disks;
     bool fast;                      /* turning 8x as fast (amiga_floppy_insert()) */
     bool protect;
-    uint8_t dirty[CYLINDERS * 2 / 8];
+    uint8_t dirty[(EXT_TRACKS + 7) / 8];
     bool any_dirty;
 
     int pos;                        /* the word under the head */
@@ -151,6 +155,14 @@ static uint32_t put_odd_even(track_writer_t *t, const uint32_t *v, int n)
 static uint32_t be32(const uint8_t *p)
 {
     return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+}
+
+static void put_be32(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)(v >> 24);
+    p[1] = (uint8_t)(v >> 16);
+    p[2] = (uint8_t)(v >> 8);
+    p[3] = (uint8_t)v;
 }
 
 /* A turn of the disk in the drive, in MFM words (high density: twice) */
@@ -274,6 +286,95 @@ static void decode_track(drive_t *d, int track)
     }
 }
 
+/* An AmigaDOS track's 11 sectors from the turn written (n words) into out,
+ * their checksums right; false if one isn't there
+ */
+static bool dos_sectors(const uint16_t *w, int n, int track, uint8_t *out)
+{
+    unsigned found = 0;
+    for (int i = 0; i < n; i++) {
+        if (w[i] != SYNC || w[(i + 1) % n] == SYNC) {
+            continue;
+        }
+        int h = i + 1;
+        uint32_t info = decode(w, h, h + 2, n);
+        int sector = (info >> 8) & 0xFF;
+        if ((info >> 24) != 0xFF || (int)((info >> 16) & 0xFF) != track || sector >= SECTORS_DD) {
+            continue;
+        }
+        uint32_t hsum = 0, dsum = 0;
+        for (int k = 0; k < 10; k++) {
+            hsum ^= get_long(w, h + 2 * k, n);
+        }
+        int data_at = h + 28;
+        for (int k = 0; k < 256; k++) {
+            dsum ^= get_long(w, data_at + 2 * k, n);
+        }
+        if ((hsum & 0x55555555) != decode(w, h + 20, h + 22, n) ||
+            (dsum & 0x55555555) != decode(w, h + 24, h + 26, n)) {
+            continue;
+        }
+        for (int k = 0; k < 128; k++) {
+            put_be32(out + sector * 512 + 4 * k, decode(w, data_at + 2 * k, data_at + 256 + 2 * k, n));
+        }
+        found |= 1u << sector;
+    }
+    return found == (1u << SECTORS_DD) - 1;
+}
+
+/* An extended ADF's track entry: type (0 AmigaDOS, 1 raw), bytes, bits */
+static uint8_t *ext_entry(drive_t *d, int track)
+{
+    return d->data + 12 + track * 12;
+}
+
+/* An extended ADF's track given room for bytes (the tracks after it moved) */
+static bool ext_resize(drive_t *d, int track, uint32_t bytes)
+{
+    uint8_t *e = ext_entry(d, track);
+    uint32_t old = be32(e + 4), end = d->ext_off[track] + old;
+    if (d->size - old + bytes > EXT_MAX) {
+        return false;
+    }
+    memmove(d->data + end - old + bytes, d->data + end, d->size - end);
+    d->size = d->size - old + bytes;
+    for (int t = track + 1; t < d->ext_tracks; t++) {
+        d->ext_off[t] = d->ext_off[t] - old + bytes;
+    }
+    put_be32(e + 4, bytes);
+    d->ext_moved = true;
+    return true;
+}
+
+/* A track written to an extended ADF back into it (see the top) */
+static void write_ext_track(drive_t *d, int track)
+{
+    static uint8_t sectors[SECTORS_DD * 512];
+    uint8_t *e = ext_entry(d, track);
+    int type = (e[2] << 8) | e[3];
+    uint32_t bytes = (uint32_t)d->track_words * 2;
+    if (type == 0 && be32(e + 4) >= sizeof(sectors) && dos_sectors(d->mfm, d->track_words, track, sectors)) {
+        memcpy(d->data + d->ext_off[track], sectors, sizeof(sectors));
+    } else {
+        if ((type != 1 || be32(e + 4) < bytes) && !ext_resize(d, track, bytes)) {
+            AMI_LOGW("DF%d: track %d doesn't fit in the image", (int)(d - s_drive), track);
+            return;
+        }
+        if (type != 1 || be32(e + 8) / 16 != (uint32_t)d->track_words) {
+            e[2] = 0;
+            e[3] = 1;
+            put_be32(e + 8, bytes * 8);
+        }
+        uint8_t *dst = d->data + d->ext_off[track];
+        for (int i = 0; i < d->track_words; i++) {
+            dst[2 * i] = (uint8_t)(d->mfm[i] >> 8);
+            dst[2 * i + 1] = (uint8_t)d->mfm[i];
+        }
+    }
+    d->dirty[track / 8] |= (uint8_t)(1u << (track & 7));
+    d->any_dirty = true;
+}
+
 /* ---- The drives ---- */
 
 void floppy_reset(void)
@@ -392,6 +493,8 @@ static void end_dma(void)
         if (d->data && !d->ext && d->mfm_track >= 0 && d->mfm_track < CYLINDERS * 2 && !d->protect &&
             d->track_words == turn_words(d)) {
             decode_track(d, d->mfm_track);
+        } else if (d->data && d->ext && d->mfm_track >= 0 && d->mfm_track < d->ext_tracks && !d->protect) {
+            write_ext_track(d, d->mfm_track);
         }
         d->writes++;
     }
@@ -559,20 +662,36 @@ uint16_t floppy_dskbytr(void)
 
 /* ---- The images ---- */
 
+/* The written tracks back to the file (an extended ADF laid out again:
+ * all of it; it only grows)
+ */
 static void flush_drive(drive_t *d)
 {
     if (!d->data || !d->any_dirty || d->protect || !d->path[0]) {
         return;
     }
     FILE *f = fopen(d->path, "r+b");
-    if (f) {
-        for (int t = 0; t < CYLINDERS * 2; t++) {
-            if (d->dirty[t / 8] & (1u << (t & 7))) {
+    if (f && d->ext && d->ext_moved) {
+        fwrite(d->data, 1, d->size, f);
+        d->ext_moved = false;
+    } else if (f) {
+        for (int t = 0; t < (d->ext ? d->ext_tracks : CYLINDERS * 2); t++) {
+            if (!(d->dirty[t / 8] & (1u << (t & 7)))) {
+                continue;
+            }
+            if (d->ext) {
+                fseek(f, 12 + t * 12, SEEK_SET);
+                fwrite(ext_entry(d, t), 1, 12, f);
+                fseek(f, (long)d->ext_off[t], SEEK_SET);
+                fwrite(d->data + d->ext_off[t], 1, be32(ext_entry(d, t) + 4), f);
+            } else {
                 long off = (long)t * d->sectors * 512;
                 fseek(f, off, SEEK_SET);
                 fwrite(d->data + off, 1, (size_t)d->sectors * 512, f);
             }
         }
+    }
+    if (f) {
         fclose(f);
     }
     memset(d->dirty, 0, sizeof(d->dirty));
@@ -645,7 +764,8 @@ static bool take(int drive, const char *file, bool ro)
         return false;
     }
     d->mfm_track = -1;
-    d->protect = ro || d->ext;
+    d->protect = ro;
+    d->ext_moved = false;
     d->changed = true;
     memset(d->dirty, 0, sizeof(d->dirty));
     d->any_dirty = false;
@@ -676,7 +796,8 @@ static bool load_file(int drive, const char *path)
         fclose(f);
         return false;
     }
-    bool ok = buffers(drive, (uint32_t)size) && fread(d->data, 1, (size_t)size, f) == (size_t)size;
+    /* (an extended ADF: room for its tracks to grow when written) */
+    bool ok = buffers(drive, size == ADF_SIZE ? ADF_SIZE : EXT_MAX) && fread(d->data, 1, (size_t)size, f) == (size_t)size;
     fclose(f);
     if (!ok) {
         d->data = NULL;

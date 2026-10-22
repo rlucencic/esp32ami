@@ -103,7 +103,7 @@ all are built on the shared runtime
 - **Two floppy drives** (DF0:, DF1:): `.adf` images read and written,
   AmigaDOS disks turning faster than a real drive and the others (custom
   loaders) at a real drive's pace; UAE's extended ADFs (raw tracks of
-  copy-protected disks), read-only
+  copy-protected disks), read and written
 - **Amiga Forever's `.rp9` game packages**: the manifest read, the disks
   unpacked and inserted; putting the package in again gives its next disk
 - **Two hard disks** (DH0:, DH1:): `.hdf` images with an RDB or a bare
@@ -346,7 +346,7 @@ lessons learned along the way.
   xSysInfo give 1.03 and 1.06 times an A600. The blitter gets the slots
   each line's display leaves it, counted a line at a time. Demos that
   count on exact bus cycles may show it.
-- Extended ADFs are read-only; no IPF (SPS) images. DMS archives in the
+- No IPF (SPS) images. DMS archives in the
   "quick", "medium", "deep" and "heavy 1" modes are written but untested
   (no such archives at hand).
 - No serial or parallel devices, MIDI, or a second mouse.

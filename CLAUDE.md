@@ -115,6 +115,7 @@ images.
 | `tools/blitboot.py` | A boot disk that times a blit with 0, 4, 6 lores and 4 hires planes (`--check` compares a dump with the slots worked out) |
 | `tools/attachboot.py` | Boot disks that test Paula's attach modes (`check` measures the host's recorded sound) |
 | `tools/shresboot.py` | A boot disk that tests ECS super-hires: colours, scroll, sprites, mixed lines (`check` reads a picture) |
+| `tools/extadf.py` | Extended ADFs from ADFs (AmigaDOS or raw tracks) and back; a boot disk that writes a raw track |
 | `tools/mkinstall.py` | A Workbench floppy that formats DH0: and copies itself onto it (the hard disk test) |
 | `tools/hdrom.py` | Assembles the hard disk board's boot ROM into `components/amiga/hdrom.h` |
 | `tools/collection.py` | Runs a folder of RP9 games on two host builds and compares their pictures (see Testing) |
@@ -280,7 +281,12 @@ images.
   startup-sequence read back from the image, host and Tab5); their root
   block is 1760 (`dos_filesystem()`, `space.c`, `tools/adf.py`).
   **Extended ADFs** (UAE-1ADF: raw MFM tracks, any length up to 12668 words)
-  are read-only, at real speed. **RP9** (`rp9.c`, Amiga Forever's
+  at real speed, written too (`write_ext_track()`): a written AmigaDOS
+  track (type 0) back into its sectors when all 11 decode with their
+  checksums right, anything else as the turn's raw MFM (a raw track in
+  place; an AmigaDOS one becomes raw: the tracks after it move in the
+  2.5 MB buffer and the flush writes the whole image, which only grows).
+  **RP9** (`rp9.c`, Amiga Forever's
   packages: a ZIP with `rp9-manifest.xml`): the floppies unpacked (stored
   or deflated: miniz's `tinfl` on the board, its 10 KB state on the heap,
   zlib on the host) into hidden `.<name>.rp9.<n>.adf` beside it and used
@@ -617,6 +623,19 @@ the top two bits do nothing, Aerial Racers' race sets them),
   `AMI_DF0=<copy> AMI_DUMP=7F000:8:dump.bin ami_host roms/amiga-os-130.rom
   700` and `tools/blitboot.py --check dump.bin`: the lines a 4096-slot
   blit takes with each display, against the slots a line leaves it.
+- **Writing extended ADFs** (`tools/extadf.py`): Workbench 1.2's ADF
+  (336 free blocks; 1.3.4's and 3.1's are full) with the startup-sequence
+  `copy s:startup-sequence to df0:Written` (`tools/adf.py`), made into an
+  extended ADF of AmigaDOS tracks (`make`) and one of raw 6400-word
+  tracks (`make ... raw`), 4000 frames with 1.3, decoded back (`adf`):
+  Written equals the startup-sequence in both, the same blocks changed
+  as in the plain ADF (only dates differ), the raw tracks kept in place.
+  `rawboot out.adf 100`: its boot block writes two syncs and 2000 words to
+  track 100 through trackdisk's TD_RAWWRITE (2.04, 900 frames; 1.3's
+  trackdisk answers IOERR_BADLENGTH): the track turns raw, the image
+  903052 -> 910088 bytes, the words in a row (`find`), the other tracks
+  the same. Both on the host and the Tab5 (images downloaded back,
+  2026-10-22).
 - **Paula's attach modes**: `tools/attachboot.py out.adf vol|per|both|off3|none`,
   then `AMI_DF0=<copy> AMI_WAV=out.wav ami_host roms/amiga-os-130.rom 500`
   and `tools/attachboot.py check <mode> out.wav`: channel 0's words to
@@ -736,8 +755,8 @@ the top two bits do nothing, Aerial Racers' race sets them),
 
 ## Open items
 
-- The work still to do, sketched and in order: `TODO.md` (extended ADF
-  writes, AGA's rest, the 68EC020's cache). The
+- The work still to do, sketched and in order: `TODO.md` (AGA's rest,
+  the 68EC020's cache). The
   items below are the state of things; `TODO.md` says what to do next.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
@@ -765,8 +784,11 @@ the top two bits do nothing, Aerial Racers' race sets them),
   100% with core 1 56% busy (68000 memory reads 13%, Denise's fetch 7%,
   memcpy of line records 6%, blitter 2.4%) and core 0 ~65% (the
   presenter's scaling 35%, Denise's drawing 14%).
-- Extended ADFs can't be written (`TODO.md` 6). DMS modes 2-5 untested
-  (no archives).
+- Extended ADFs are written (the test disks); no game was seen writing
+  to one: Son Shu Shi, the collection's only extended ADF (154 raw
+  tracks, 12 AmigaDOS), only reads in its 140 s. A game whose disk turns
+  AmigaDOS tracks raw has a pause while the whole image (~2 MB) is
+  written, once. DMS modes 2-5 untested (no archives).
 - The RP9 games with a hard disk: joined with their system disk (above).
   The six for 1.3 run through our board (host, KS 1.3 with 1 MB fast
   RAM: Hannibal's menu, also on the Tab5; Epsilon 9's intro, Flight of the
