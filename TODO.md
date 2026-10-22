@@ -6,17 +6,7 @@ how, how it's checked, and roughly how big it is. Done items move to
 the others keep their numbers (done: 1, an RP9 setting up its machine;
 2, the blitter's timing slot by slot; 3, the 68000 on the chip bus slot by
 slot; 4, Paula's attach modes; 5, ECS super-hires; 6, writing extended
-ADFs).
-
-## 7. AGA: the untested and the missing
-
-- **Untested** (no game in the collection uses them): FMODE 2 fetches,
-  32-pixel sprites, super-hires in AGA's colours. A boot disk per case
-  (`tools/agaboot.py`): a known pattern, the expected pixels worked out by
-  the tool, compared with the host's picture.
-- **Missing**: sprites' 35 ns positions (super-hires, SPRES), CLXCON2
-  (planes 7 and 8 in collisions), the wide sprites' collisions.
-- **Size**: medium; nothing needs them yet.
+ADFs; 7, AGA's untested and missing parts).
 
 ## 8. The 68EC020's instruction cache
 
@@ -34,7 +24,10 @@ ADFs).
 ## 9. Small things
 
 - Sprites outside the vertical window: shown (and colliding) here; does
-  OCS Denise hide them? Settle from the documentation and UAE.
+  OCS Denise hide them? Settle from the documentation and UAE. (It
+  matters for collisions: a sprite written by hand, armed on every line,
+  meets an all-zero playfield above and below the window; agaboot's clx7
+  arms it inside the window only.)
 - The Overscan editor's "Edit Text Size..." from a super-hires Workbench
   (A600, 3.1, host) never opens its screen; from a hires one it does.
   Find what its task waits for (it may be how AmigaOS is; a hires screen

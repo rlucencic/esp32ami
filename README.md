@@ -334,9 +334,10 @@ lessons learned along the way.
   mice.
 - The A1200 is new: Workbench 3.1 runs, its games show their AGA pictures
   (Aerial Racers' race on the Tab5 at 100%, core 1 73-81% busy); HAM8,
-  64-pixel sprites and 32-bit fetches checked in the games that use them;
-  AGA's screen modes in Workbench, 32-pixel sprites and super-hires in
-  AGA's colours aren't checked yet. High-density floppies (1.76 MB) are read and
+  64-pixel sprites and 32-bit fetches checked in the games that use them,
+  the rest (32-pixel sprites, super-hires in AGA's colours, sprite
+  positions to 35 ns, collisions with planes 7-8 and wide sprites) by
+  test disks; AGA's screen modes in Workbench aren't checked yet. High-density floppies (1.76 MB) are read and
   written (Kickstart 3.1).
   No 68010/68020 for the A500/A2000, no accelerator boards, no Zorro III,
   no CD32/CDTV.

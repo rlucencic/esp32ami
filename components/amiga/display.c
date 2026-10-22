@@ -46,7 +46,8 @@
  * pixels and the sprites' colour banks, dual playfield's second colours
  * from BPLCON3's offset, EHB unless BPLCON2 kills it, scroll delays in
  * super-hires pixels, sprites 16, 32 or 64 pixels wide in lores, hires or
- * super-hires pixels, the border blanked. Super-hires pixels have their
+ * super-hires pixels and placed to the super-hires pixel (SPRxCTL bits 4
+ * and 3), the border blanked. Super-hires pixels have their
  * own colours there. Colours are kept as 24 bits for every chipset; OCS
  * and ECS ones are their 12 bits with each nibble doubled (the same
  * RGB565 as before).
@@ -145,7 +146,7 @@ static struct {
     uint32_t pal_hash;              /* their hash (each colour's, XORed) */
 
     /* collisions */
-    uint16_t clxcon, clxdat;
+    uint16_t clxcon, clxcon2, clxdat;
     int clx_frames;                 /* worked out while > 0 (a CLXDAT read sets it) */
 
     /* the frames: each field's three (an interlaced picture's short
@@ -350,6 +351,18 @@ static int spr_words(void)
 {
     static const uint8_t w[4] = { 1, 2, 2, 4 };
     return ami.aga ? w[(s.fmode >> 2) & 3] : 1;
+}
+
+/* A sprite's HSTART in super-hires pixels: AGA's SPRxCTL bits 4 and 3 (70
+ * and 35 ns), ECS's bit 4 on a super-hires line (shres)
+ */
+static int spr_hstart(const sprite_t *sp, bool shres)
+{
+    int x = ((((sp->pos & 0xFF) << 1) | (sp->ctl & 1)) << 2) | ((sp->ctl >> 4) & 1) << 1;
+    if (ami.aga) {
+        return x | ((sp->ctl >> 3) & 1);
+    }
+    return shres ? x : x & ~2;
 }
 
 static void spr_fetch_control(sprite_t *sp, int n)
@@ -660,6 +673,11 @@ void display_write(uint32_t reg, uint16_t v, int at)
             s.bplcon4 = v;
         }
         break;
+    case 0x10E:
+        if (ami.aga) {
+            s.clxcon2 = v;
+        }
+        break;
     case 0x1FC:
         if (ami.aga) {
             s.fmode = v;
@@ -686,9 +704,10 @@ void amiga_display_regs(char *buf, size_t len)
  * against the even ones, inside the display window. A playfield matches
  * where its planes that CLXCON enables (ENBP) have the values it asks for
  * (MVBP: a plane not fetched is 0); a sprite pair is its even sprite, the
- * odd one too with ENSP. Hires pixels count for the sprites' lores pixel
- * they're in. (AGA's planes 7 and 8, CLXCON2, and wide sprites' further
- * pixels aren't looked at.)
+ * odd one too with ENSP. Hires and super-hires pixels count for the lores
+ * pixel they're in, the sprites' too (AGA's SPRES, their positions' 35 and
+ * 70 ns bits). AGA: planes 7 and 8 through CLXCON2 (a CLXCON write clears
+ * it), wide sprites all their pixels.
  */
 #define CLX_FRAMES      4
 
@@ -703,6 +722,7 @@ uint16_t display_clxdat(void)
 void display_clxcon(uint16_t v)
 {
     s.clxcon = v;
+    s.clxcon2 = 0;
 }
 
 /* 16 pixels of plane p's line from pixel idx on (outside it, or a plane
@@ -725,9 +745,10 @@ static uint16_t plane16(int p, int planes, int idx)
  */
 static void matches16(int planes, int idx_o, int idx_e, uint16_t *odd, uint16_t *even)
 {
-    int enbp = (s.clxcon >> 6) & 63, mvbp = s.clxcon & 63;
+    int enbp = ((s.clxcon >> 6) & 63) | ((s.clxcon2 >> 6) & 3) << 6;
+    int mvbp = (s.clxcon & 63) | (s.clxcon2 & 3) << 6;
     uint16_t mo = 0xFFFF, me = 0xFFFF;
-    for (int p = 0; p < 6; p++) {
+    for (int p = 0; p < MAX_PLANES; p++) {
         if (!(enbp & (1 << p))) {
             continue;
         }
@@ -806,28 +827,49 @@ static void collide(void)
             clx |= 1;
         }
     }
-    /* the sprite pairs (up to two 16-pixel spans each) against the
-     * playfields: bits 1-4 the odd one, 5-8 the even one
+    /* the sprite pairs (their sprites' pixels in spans of 16 lores ones: a
+     * 64-pixel lores sprite 4) against the playfields: bits 1-4 the odd
+     * one, 5-8 the even one
      */
-    int sx[4][2], spans[4] = { 0 };
-    uint16_t sm[4][2];
+    uint16_t con3 = s.fetched ? s.con3 : s.bplcon3;
+    int spres = ami.aga ? (con3 >> 6) & 3 : 0, nw = spr_words();
+    bool shres = s.fetched && (s.con0 & BPLCON0_SHRES);
+    int sx[4][8], spans[4] = { 0 };
+    uint16_t sm[4][8];
     for (int i = 0; i < 8; i++) {
         const sprite_t *sp = &s.spr[i];
         if (!sp->armed || ((i & 1) && !(s.clxcon & (0x1000 << (i >> 1))))) {
             continue;
         }
-        int g = i >> 1, L = ((sp->pos & 0xFF) << 1) | (sp->ctl & 1);
-        uint16_t m = (sp->data[0] | sp->datb[0]) & win16(L, hstart, hstop);
-        if (m == 0) {
-            continue;
+        uint16_t w[4], m[4];
+        for (int k = 0; k < 4; k++) {
+            w[k] = k < nw ? (uint16_t)(sp->data[k] | sp->datb[k]) : 0;
         }
-        sx[g][spans[g]] = L;
-        sm[g][spans[g]] = m;
-        spans[g]++;
-        uint16_t o, e;
-        pf_matches(L, &o, &e);
-        clx |= (uint16_t)((m & o) ? 2 << g : 0);
-        clx |= (uint16_t)((m & e) ? 0x20 << g : 0);
+        int n = nw;
+        if (spres == 2) {           /* hires sprite pixels: two a lores one */
+            m[0] = lores16((uint32_t)w[0] << 16 | w[1]);
+            m[1] = lores16((uint32_t)w[2] << 16 | w[3]);
+            n = (nw + 1) / 2;
+        } else if (spres == 3) {    /* super-hires: four */
+            m[0] = lores16((uint32_t)lores16((uint32_t)w[0] << 16 | w[1]) << 16 | lores16((uint32_t)w[2] << 16 | w[3]));
+            n = 1;
+        } else {
+            memcpy(m, w, sizeof(m));
+        }
+        int g = i >> 1, L = spr_hstart(sp, shres) >> 2;
+        for (int k = 0; k < n; k++, L += 16) {
+            uint16_t mk = m[k] & win16(L, hstart, hstop);
+            if (mk == 0) {
+                continue;
+            }
+            sx[g][spans[g]] = L;
+            sm[g][spans[g]] = mk;
+            spans[g]++;
+            uint16_t o, e;
+            pf_matches(L, &o, &e);
+            clx |= (uint16_t)((mk & o) ? 2 << g : 0);
+            clx |= (uint16_t)((mk & e) ? 0x20 << g : 0);
+        }
     }
     /* pairs against pairs: bits 9-14 (0-1, 0-2, 0-3, 1-2, 1-3, 2-3) */
     int bit = 9;
@@ -929,7 +971,7 @@ AMI_HOT void display_line_end(void)
     }
     for (int i = 0; i < nspr; i++) {
         const sprite_t *sp = &s.spr[num[i] & 7];
-        h = mix(h, (uint32_t)num[i] << 24 | (uint32_t)(sp->pos & 0xFF) << 8 | (sp->ctl & 0x11));
+        h = mix(h, (uint32_t)num[i] << 24 | (uint32_t)(sp->pos & 0xFF) << 8 | (sp->ctl & 0x19));
         for (int w = 0; w < nw; w++) {
             h = mix(h, (uint32_t)sp->data[w] << 16 | sp->datb[w]);
         }
@@ -963,8 +1005,7 @@ AMI_HOT void display_line_end(void)
         for (int i = 0; i < nspr; i++) {
             const sprite_t *sp = &s.spr[num[i] & 7];
             r->spr_num[i] = num[i];
-            int lores = (((sp->pos & 0xFF) << 1) | (sp->ctl & 1)) - FIRST_LORES;
-            r->spr_x[i] = (int16_t)(4 * lores + (ecs_shres && (sp->ctl & 0x10) ? 2 : 0));
+            r->spr_x[i] = (int16_t)(spr_hstart(sp, bpl && (s.con0 & BPLCON0_SHRES)) - 4 * FIRST_LORES);
             memcpy(r->spr_a[i], sp->data, nw * sizeof(uint16_t));
             memcpy(r->spr_b[i], sp->datb, nw * sizeof(uint16_t));
         }

@@ -116,6 +116,7 @@ images.
 | `tools/attachboot.py` | Boot disks that test Paula's attach modes (`check` measures the host's recorded sound) |
 | `tools/shresboot.py` | A boot disk that tests ECS super-hires: colours, scroll, sprites, mixed lines (`check` reads a picture) |
 | `tools/extadf.py` | Extended ADFs from ADFs (AmigaDOS or raw tracks) and back; a boot disk that writes a raw track |
+| `tools/agaboot.py` | Boot disks that test AGA: FMODE 2, super-hires colours, 32-pixel sprites, 35 ns positions, CLXCON2, wide sprites' collisions |
 | `tools/mkinstall.py` | A Workbench floppy that formats DH0: and copies itself onto it (the hard disk test) |
 | `tools/hdrom.py` | Assembles the hard disk board's boot ROM into `components/amiga/hdrom.h` |
 | `tools/collection.py` | Runs a folder of RP9 games on two host builds and compares their pictures (see Testing) |
@@ -372,7 +373,10 @@ images.
   program reads CLXDAT (for 4 frames after each read): the armed sprites'
   pixels against each other and against the playfields (a playfield
   matches where CLXCON's enabled planes have its values; a plane not
-  fetched is 0), odd planes against even, inside the window. Sprite DMA:
+  fetched is 0), odd planes against even, inside the window; AGA's
+  planes 7-8 through CLXCON2 (cleared by a CLXCON write), wide sprites
+  all their pixels, hires and super-hires sprite pixels (SPRES) to the
+  lores pixel they're in. Sprite DMA:
   control words on the line before the first bitplane line (25 PAL) and
   at each VSTOP, data words from VSTART (also a VSTART written while the
   DMA was off at line 25: Aerial Racers' cars). **Interlace**: a frame with
@@ -415,7 +419,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
   BPLCON4's XOR and the sprites' colour banks, dual playfield's second
   colours from BPLCON3's offset, BRDRBLNK; super-hires in its own colours;
   sprites 16/32/64 pixels (FMODE: the control words the first of each
-  fetch) in lores, hires or super-hires pixels (SPRES), drawn on a grid
+  fetch) in lores, hires or super-hires pixels (SPRES), placed to the
+  super-hires pixel (SPRxCTL bits 4 and 3, 70 and 35 ns: "in all
+  resolutions"; ECS uses bit 4 on super-hires lines), drawn on a grid
   of super-hires pixels. No bitplane stall counted for AGA.
 - **The picture**: 720 x 568 (lores pixels 108-467 doubled, lines 29-312
   doubled), 4:3 at 960 x 720 on the Tab5 (`view_width` 800). NTSC:
@@ -636,6 +642,19 @@ the top two bits do nothing, Aerial Racers' race sets them),
   903052 -> 910088 bytes, the words in a row (`find`), the other tracks
   the same. Both on the host and the Tab5 (images downloaded back,
   2026-10-22).
+- **AGA's corners** (`tools/agaboot.py <case> out.adf`, then `AMI_MODEL=3
+  AMI_CHIP_KB=2048 AMI_SLOW_KB=0 AMI_DF0=<copy> AMI_DUMP=7F000:2:clx.bin
+  ami_host roms/amiga-os-310-a1200.rom 2500 out.ppm` and `tools/agaboot.py
+  check <case> out.ppm|clx.bin`; the boot block loads its payload through
+  trackdisk, which runs from ~frame 1800 after the A1200's IDE wait):
+  fmode (4 planes in FMODE 0-3, 1 and 2 the same), shres (4 planes,
+  24-bit colours), spr32 (FMODE $4 and $8), sprpos (35/70 ns steps,
+  SPRES super-hires), clx7/clx7off/clx7reset (CLXCON2 and its clearing),
+  clxwide/clxwide0 (a 64-pixel sprite's last 16 pixels). All right on
+  the host (2026-10-22); the build before failed sprpos's steps, clx7off
+  and clxwide. A sprite written by hand stays armed above and below the
+  vertical window, where no planes are fetched (TODO 9's open question):
+  clx7's copper arms it on lines 50-59 only.
 - **Paula's attach modes**: `tools/attachboot.py out.adf vol|per|both|off3|none`,
   then `AMI_DF0=<copy> AMI_WAV=out.wav ami_host roms/amiga-os-130.rom 500`
   and `tools/attachboot.py check <mode> out.wav`: channel 0's words to
@@ -755,8 +774,8 @@ the top two bits do nothing, Aerial Racers' race sets them),
 
 ## Open items
 
-- The work still to do, sketched and in order: `TODO.md` (AGA's rest,
-  the 68EC020's cache). The
+- The work still to do, sketched and in order: `TODO.md` (the 68EC020's
+  instruction cache, then small things). The
   items below are the state of things; `TODO.md` says what to do next.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
@@ -824,9 +843,10 @@ the top two bits do nothing, Aerial Racers' race sets them),
   64-pixel sprites (its score table, Soccer Kid), FMODE 1 (Football Glory
   and Indoors from ~900, Leading Lap ~4300, Soccer Kid), the scroll's top
   bits (Deluxe Galaga in FMODE 3, Soccer Kid in FMODE 1). No game there
-  uses FMODE 2, 32-pixel sprites or AGA super-hires: not checked.
-  Sprites' 35 ns positions, CLXCON2 (planes 7-8)
-  and wide sprites' collisions aren't there; the 68EC020's waits are an average
+  uses FMODE 2, 32-pixel sprites or AGA super-hires, CLXCON2 or wide
+  sprites' collisions: `tools/agaboot.py` checks them (Testing). Virtual
+  Karting 2 sets the sprites' 35/70 ns bits: its sprite text 1-3
+  super-hires pixels further right since they count; the 68EC020's waits are an average
   (no instruction cache); the A1200's 32-bit trapdoor fast RAM is the
   Zorro II board at $200000. Core 1 is 73-81% busy in Aerial Racers' race
   (100%; profile in Testing; 90-99% before the changes here). Done: `chip_read16()` inline

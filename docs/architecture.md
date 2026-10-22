@@ -746,3 +746,14 @@ measurements written down.
   turns a track raw, the image grows by 7036 bytes, the words there. Host
   and Tab5. Son Shu Shi (the collection's one extended ADF) doesn't write
   in its 140 s.
+- **7. AGA: the untested and the missing** (2026-10-22): sprites placed
+  to 35 ns (SPRxCTL bits 4 and 3, which AGA honours "in all
+  resolutions"), CLXCON2 (planes 7-8; a CLXCON write clears it), wide
+  sprites' collisions with all their pixels (SPRES too). `tools/agaboot.py`:
+  a boot block that loads a payload through trackdisk (register table,
+  copper list, planes, sprites); nine cases, all right on the host. FMODE
+  2, 32-pixel sprites and super-hires in AGA's colours were right
+  already; the build before failed the 35/70 ns steps, CLXCON2's MVBP7
+  and the wide sprite's collision. The collection: 95 of 96 the same,
+  Virtual Karting 2's sprite text 1-3 super-hires pixels further right
+  (it sets those bits).
