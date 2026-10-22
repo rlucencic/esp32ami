@@ -44,6 +44,15 @@ void ami_set_intreq(uint16_t bits)
     ami_update_irq();
 }
 
+/* The slice ends that much sooner; the time counts all the same */
+void ami_cpu_wait(int clocks)
+{
+    if (ami.cpu_running) {
+        m68k_modify_timeslice(-clocks);
+        ami.cpu_waited += clocks;
+    }
+}
+
 void ami_cpu_wake(void)
 {
     if (ami.cpu_running) {
@@ -171,7 +180,9 @@ bool amiga_init(const amiga_config_t *config)
     }
     memset(&ami, 0, sizeof(ami));
     ami.model = config->model;
-    ami.ecs = config->ecs;
+    ami.ecs = config->ecs || config->model == AMIGA_A1200;
+    ami.aga = config->model == AMIGA_A1200;
+    ami.cpu_shift = config->model == AMIGA_A1200 ? 1 : 0;
     ami.ntsc = config->ntsc;
     ami.chip = config->chip;
     ami.chip_size = config->chip_size;
@@ -199,7 +210,9 @@ bool amiga_init(const amiga_config_t *config)
     display_init(config->picture);
 
     m68k_init();
-    m68k_set_cpu_type(M68K_CPU_TYPE_68000);
+    /* (the type before the tables' copies: they take its cycle counts) */
+    m68k_set_cpu_type(ami.cpu_shift ? M68K_CPU_TYPE_68EC020 : M68K_CPU_TYPE_68000);
+    s_dbg_cpus[0].name = ami.cpu_shift ? "68EC020" : "68000";
     /* The 68000's memory cycles fall on the chip bus's slots (2 colour
      * clocks): code running from chip RAM takes whole multiples of 4 clocks
      * an instruction (xSysInfo measured 10.3 MHz on Musashi's bare counts)
@@ -211,16 +224,16 @@ bool amiga_init(const amiga_config_t *config)
     if (tables) {
         m68k_use_table_copies(tables);
         uint8_t *cycles = (uint8_t *)tables + 0x10000 * sizeof(void *);
-        for (int op = 0; op < 0x10000; op++) {
+        for (int op = 0; op < 0x10000 && !ami.cpu_shift; op++) {
             cycles[op] = (uint8_t)((cycles[op] + 3) & ~3);
         }
     }
     m68k_set_int_ack_callback(int_ack);
     m68k_set_reset_instr_callback(reset_instruction);
 
-    AMI_LOGI("Kickstart %d.%d, %lu KB chip RAM%s%s, %s %s", major, minor,
+    AMI_LOGI("Kickstart %d.%d, %s, %lu KB chip RAM%s%s, %s %s", major, minor, s_dbg_cpus[0].name,
              (unsigned long)(ami.chip_size / 1024), ami.slow_size ? ", 512 KB slow RAM" : "",
-             ami.fast_size ? ", fast RAM" : "", ami.ecs ? "ECS" : "OCS", ami.ntsc ? "NTSC" : "PAL");
+             ami.fast_size ? ", fast RAM" : "", ami.aga ? "AGA" : ami.ecs ? "ECS" : "OCS", ami.ntsc ? "NTSC" : "PAL");
 
     amiga_reset();
     emudbg_set_machine(&s_dbg);
@@ -237,11 +250,14 @@ void amiga_reset(void)
         memset(ami.fast, 0, ami.fast_size);
     }
     ami.cycle = 0;
+    ami.cpu_rem = 0;
     ami.cpu_running = false;
     ami.line = 0;
     ami.line_start = 0;
     ami.lines = ami.ntsc ? 263 : 313;
     ami.lof = true;
+    ami.long_lines = false;
+    ami.lol0 = false;
     ami.e_phase = 0;
     ami.frames = 0;
     ami.halted = false;
@@ -317,10 +333,14 @@ static void run_cpu(int until)
             return;
         }
     }
+    /* (the 68EC020 runs two of its clocks a 68000 one: the remainder kept) */
+    ami.cpu_waited = 0;
     ami.cpu_running = true;
-    int used = m68k_execute(until - ami.cycle);
+    int used = m68k_execute((until - ami.cycle) << ami.cpu_shift) + ami.cpu_waited + ami.cpu_rem;
     ami.cpu_running = false;
-    ami.cycle += used;
+    ami.cpu_waited = 0;
+    ami.cycle += used >> ami.cpu_shift;
+    ami.cpu_rem = used & ((1 << ami.cpu_shift) - 1);
 }
 
 static inline int min_int(int a, int b)
@@ -348,7 +368,7 @@ static int next_event(void)
 
 static void run_line(void)
 {
-    int line_end = ami.line_start + CYCLES_LINE;
+    int line_end = ami.line_start + 2 * ami_line_cck(ami.line);
     for (;;) {
         int next = next_event();
         if (next >= line_end) {
@@ -383,14 +403,15 @@ static void run_line(void)
 
 void amiga_run_frame(void)
 {
-    ami.lines = ami_ntsc_beam() ? (ami.lof ? 263 : 262) : (ami.lof ? 313 : 312);
-    int frame_cycles = ami.lines * CYCLES_LINE;
+    ami.long_lines = ami_ntsc_beam();
+    ami.lines = ami.long_lines ? (ami.lof ? 263 : 262) : (ami.lof ? 313 : 312);
+    int frame_cycles = ami_line_start(ami.lines);
 #ifndef ESP_PLATFORM
     uint32_t insns_before = ami.insns;
 #endif
 
     for (ami.line = 0; ami.line < ami.lines; ami.line++) {
-        ami.line_start = ami.line * CYCLES_LINE;
+        ami.line_start = ami_line_start(ami.line);
         if (ami.line == 0) {
             /* the vertical blank */
             copper_vblank();
@@ -405,7 +426,7 @@ void amiga_run_frame(void)
         run_line();
         display_line_end();
         cia_tod_tick(&cia[1]);
-        floppy_line(CYCLES_LINE);
+        floppy_line(2 * ami_line_cck(ami.line));
         gayle_line();
         input_line();
         audio_line();
@@ -424,6 +445,7 @@ void amiga_run_frame(void)
         cop.at -= frame_cycles;
     }
     ami.e_phase = (ami.e_phase + frame_cycles) % 10;
+    ami.lol0 = ami.long_lines && ((ami.lines + ami.lol0) & 1);  /* the next frame's line 0 */
     /* interlace: long and short frames by turns (each field's lines) */
     bool lace = display_frame_end();
     if (lace) {

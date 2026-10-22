@@ -203,7 +203,7 @@ static void emit(void)
 
 AMI_HOT void audio_line(void)
 {
-    int32_t remaining = CCK_LINE * 256;
+    int32_t remaining = ami_line_cck(ami.line) * 256;
     while (remaining > 0) {
         int32_t step = remaining < au.sample_left ? remaining : au.sample_left;
         for (int c = 0; c < 4; c++) {

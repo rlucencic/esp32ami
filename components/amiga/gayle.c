@@ -38,7 +38,7 @@
 #define SECTOR          512
 #define BLOCK_MAX       16
 #define LINES_A_SECTOR  2
-#define GAYLE_ID        0xD0
+#define GAYLE_ID        0xD0            /* the A600's; the A1200's $D1 */
 
 enum {
     ST_ERR = 0x01, ST_DRQ = 0x08, ST_DSC = 0x10, ST_DRDY = 0x40, ST_BSY = 0x80,
@@ -94,7 +94,7 @@ hdf_t *hd_image(int n)
  */
 bool gayle_present(void)
 {
-    return ami.model == AMIGA_A600 || (s_drive[0].present && ami_kick_has_ide());
+    return ami.model == AMIGA_A600 || ami.model == AMIGA_A1200 || (s_drive[0].present && ami_kick_has_ide());
 }
 
 /* Gayle's level 2 interrupt */
@@ -556,7 +556,7 @@ static void reg_write(uint32_t a, uint8_t v)
 uint8_t gayle_read8(uint32_t a)
 {
     if ((a & 0xFF0000) == 0xDE0000) {
-        uint8_t v = (uint8_t)((GAYLE_ID << g.id_bit) & 0x80);
+        uint8_t v = (uint8_t)(((GAYLE_ID | (ami.model == AMIGA_A1200)) << g.id_bit) & 0x80);
         g.id_bit = (g.id_bit + 1) & 7;
         return v;
     }

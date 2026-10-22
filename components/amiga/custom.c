@@ -6,17 +6,15 @@
 #include <string.h>
 #include "amiga_internal.h"
 
-/* Agnus's ID in VPOSR: OCS 8370/8371, ECS 8372 (PAL, NTSC) */
+/* Agnus's ID in VPOSR: OCS 8370/8371, ECS 8372, AGA's Alice (PAL, NTSC) */
 static uint16_t agnus_id(void)
 {
-    return (ami.ecs ? 0x20 : 0x00) | (ami.ntsc ? 0x10 : 0x00);
+    return (ami.aga ? 0x23 : ami.ecs ? 0x20 : 0x00) | (ami.ntsc ? 0x10 : 0x00);
 }
 
 static void beam(int *line, int *h)
 {
-    int cck = ami_now() / 2;
-    *line = cck / CCK_LINE;
-    *h = cck % CCK_LINE;
+    ami_beam_at(ami_now() / 2, line, h);
     if (*line >= ami.lines) {
         *line -= ami.lines;
     }
@@ -42,7 +40,8 @@ static uint16_t read_reg(uint32_t reg)
         return ami.dmacon | (blitter_busy(ami_now()) ? DMA_BBUSY : 0) | (blit.zero ? DMA_BZERO : 0);
     case 0x004:                     /* VPOSR */
         beam(&line, &h);
-        return (ami.lof ? 0x8000 : 0) | (agnus_id() << 8) | ((line >> 8) & (ami.ecs ? 7 : 1));
+        return (ami.lof ? 0x8000 : 0) | (agnus_id() << 8) | ((ami.ecs && ami_long_line(line)) ? 0x80 : 0) |
+               ((line >> 8) & (ami.ecs ? 7 : 1));
     case 0x006:                     /* VHPOSR */
         beam(&line, &h);
         return ((line & 0xFF) << 8) | h;
@@ -75,8 +74,10 @@ static uint16_t read_reg(uint32_t reg)
         return ami.intena;
     case 0x01E:                     /* INTREQR */
         return ami.intreq;
-    case 0x07C:                     /* DENISEID: ECS Denise 8373; OCS's isn't there */
-        return ami.ecs ? 0xFFFC : ami.bus;
+    case 0x07C:                     /* DENISEID: ECS Denise 8373, AGA's Lisa; OCS's isn't there */
+        /* (Lisa's bits 9-8 low: graphics.library's MemType, inverted, is
+         * then 32 bits, double CAS: the bandwidth for hires in 256 colours) */
+        return ami.aga ? 0x00F8 : ami.ecs ? 0xFFFC : ami.bus;
     default:
         return ami.bus;
     }
@@ -104,7 +105,7 @@ void custom_write(uint32_t reg, uint16_t v, int at, bool copper)
         audio_write(reg, v);
         return;
     }
-    if ((reg >= 0x08E && reg <= 0x094) || (reg >= 0x0E0 && reg <= 0x1BE) || reg == 0x1E4) {
+    if ((reg >= 0x08E && reg <= 0x094) || (reg >= 0x0E0 && reg <= 0x1BE) || reg == 0x1E4 || reg == 0x1FC) {
         display_write(reg, v, at);
         return;
     }

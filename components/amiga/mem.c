@@ -17,6 +17,11 @@
  *   $F80000-$FFFFFF  Kickstart (256 KB ones mirrored)
  *
  * No bus errors: an Amiga 500's empty space just reads nothing (0 here).
+ *
+ * The A1200's 68EC020 waits for the chip bus: each access to chip RAM (32
+ * bits at once), the custom chips or a CIA costs it WAIT_* of its clocks
+ * (s_wait by 64 KB bank, the others in the slow path); the ROM and fast
+ * RAM don't. The 68000's waits are counted otherwise (amiga.c).
  */
 #include <string.h>
 #include "m68k.h"
@@ -24,6 +29,11 @@
 
 static const uint8_t *s_rmap[256];
 static uint8_t *s_wmap[256];
+static uint8_t s_wait[256];           /* the 68EC020's waits, by bank (0: none) */
+
+#define WAIT_CHIP       5
+#define WAIT_CUSTOM     8
+#define WAIT_CIA        20
 
 static inline uint16_t rd16(const uint8_t *p, uint32_t off)
 {
@@ -39,10 +49,12 @@ void mem_update_map(void)
 {
     memset(s_rmap, 0, sizeof(s_rmap));
     memset(s_wmap, 0, sizeof(s_wmap));
+    memset(s_wait, 0, sizeof(s_wait));
     for (uint32_t b = 0x00; b < 0x20; b++) {
         uint8_t *p = ami.chip + ((b << 16) & (ami.chip_size - 1));
         s_rmap[b] = p;
         s_wmap[b] = p;
+        s_wait[b] = ami.cpu_shift ? WAIT_CHIP : 0;
     }
     if (ami.ovl) {
         for (uint32_t b = 0x00; b < 0x08; b++) {
@@ -129,8 +141,17 @@ static inline bool is_gayle(uint32_t a)
     return ((a >= 0xDA0000 && a < 0xDB0000) || (a >= 0xDE1000 && a < 0xDE2000)) && gayle_present();
 }
 
+/* The 68EC020's wait in the slow path: the custom chips' or a CIA's */
+static inline void io_wait(uint32_t a)
+{
+    if (ami.cpu_shift) {
+        ami_cpu_wait(is_cia(a) ? WAIT_CIA : is_custom(a) ? WAIT_CUSTOM : 0);
+    }
+}
+
 static uint16_t slow_read16(uint32_t a)
 {
+    io_wait(a);
     if (is_custom(a)) {
         return custom_read(a & 0x1FE);
     }
@@ -157,6 +178,7 @@ static uint16_t slow_read16(uint32_t a)
 
 static uint8_t slow_read8(uint32_t a)
 {
+    io_wait(a);
     if (is_custom(a)) {
         uint16_t w = custom_read(a & 0x1FE);
         return (a & 1) ? (w & 0xFF) : (w >> 8);
@@ -178,6 +200,7 @@ static uint8_t slow_read8(uint32_t a)
 
 static void slow_write16(uint32_t a, uint16_t v)
 {
+    io_wait(a);
     if (is_custom(a)) {
         custom_write(a & 0x1FE, v, ami_now(), false);
     } else if (is_cia(a)) {
@@ -199,6 +222,7 @@ static void slow_write16(uint32_t a, uint16_t v)
 
 static void slow_write8(uint32_t a, uint8_t v)
 {
+    io_wait(a);
     if (is_custom(a)) {
         /* the byte on both halves of the bus: a word to the chips */
         custom_write(a & 0x1FE, (v << 8) | v, ami_now(), false);
@@ -218,6 +242,9 @@ static void slow_write8(uint32_t a, uint8_t v)
 unsigned int AMI_HOT m68k_read_memory_8(unsigned int a)
 {
     const uint8_t *p = s_rmap[a >> 16];
+    if (s_wait[a >> 16]) {
+        ami_cpu_wait(s_wait[a >> 16]);
+    }
     if (p) {
         return p[(a & 0xFFFF) ^ 1];
     }
@@ -227,6 +254,9 @@ unsigned int AMI_HOT m68k_read_memory_8(unsigned int a)
 unsigned int AMI_HOT m68k_read_memory_16(unsigned int a)
 {
     const uint8_t *p = s_rmap[a >> 16];
+    if (s_wait[a >> 16]) {
+        ami_cpu_wait(s_wait[a >> 16]);
+    }
     if (p) {
         return rd16(p, a & 0xFFFF);
     }
@@ -237,6 +267,9 @@ unsigned int AMI_HOT m68k_read_memory_32(unsigned int a)
 {
     const uint8_t *p = s_rmap[a >> 16];
     if (p && (a & 0xFFFF) <= 0xFFFC) {
+        if (s_wait[a >> 16]) {
+            ami_cpu_wait(s_wait[a >> 16]);
+        }
         return ((uint32_t)rd16(p, a & 0xFFFF) << 16) | rd16(p, (a & 0xFFFF) + 2);
     }
     uint32_t hi = m68k_read_memory_16(a);
@@ -246,6 +279,9 @@ unsigned int AMI_HOT m68k_read_memory_32(unsigned int a)
 void AMI_HOT m68k_write_memory_8(unsigned int a, unsigned int v)
 {
     uint8_t *p = s_wmap[a >> 16];
+    if (s_wait[a >> 16]) {
+        ami_cpu_wait(s_wait[a >> 16]);
+    }
     if (p) {
         p[(a & 0xFFFF) ^ 1] = v;
         return;
@@ -256,6 +292,9 @@ void AMI_HOT m68k_write_memory_8(unsigned int a, unsigned int v)
 void AMI_HOT m68k_write_memory_16(unsigned int a, unsigned int v)
 {
     uint8_t *p = s_wmap[a >> 16];
+    if (s_wait[a >> 16]) {
+        ami_cpu_wait(s_wait[a >> 16]);
+    }
     if (p) {
         wr16(p, a & 0xFFFF, v);
         return;
@@ -267,6 +306,9 @@ void AMI_HOT m68k_write_memory_32(unsigned int a, unsigned int v)
 {
     uint8_t *p = s_wmap[a >> 16];
     if (p && (a & 0xFFFF) <= 0xFFFC) {
+        if (s_wait[a >> 16]) {
+            ami_cpu_wait(s_wait[a >> 16]);
+        }
         wr16(p, a & 0xFFFF, v >> 16);
         wr16(p, (a & 0xFFFF) + 2, v & 0xFFFF);
         return;

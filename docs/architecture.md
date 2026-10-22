@@ -550,7 +550,7 @@ measurements written down.
 - Later: an RP9 setting the machine from its manifest (the user: a nice
   thing for the future).
 
-### Phase 6 (2026-10-21): under way
+### Phase 6 (2026-10-21): done
 
 - **Interlace, both fields**: LOF toggles in frames with LACE on; each
   field keeps its own line records (three frames each, 6 x 284 rows), the
@@ -589,6 +589,46 @@ measurements written down.
   for the chips there, as in the Kickstart); the setup screen's Kickstart
   "AROS". Its boot screen, then the Workbench 3.1 floppy into its
   Workbook 1.0 with both hard disks, on the host and the Tab5.
-- Not yet: Workbench 3.1 in an interlaced screen mode, NTSC's 227/228
-  colour clock lines; the line records' copying and the presenter's
-  scaling are the places to make faster (PPA, PIE: `../esp32emu/CLAUDE.md`).
+- **ECS super-hires** (1280 x 256 and 1280 x 512), one to one on the
+  Tab5's 1280 columns, the lines centred; with it Workbench 3.1 in every
+  ScreenMode mode, interlaced too (the user, on the Tab5).
+- **The touch screen as esp32emu's touchpad** (the Amiga's own moved
+  there for every emulator with a mouse).
+- **NTSC's lines**: 227 and 228 colour clocks by turns (227.5 on average,
+  59.83 frames a second, VPOSR's LOL on ECS), across frames too; PAL's
+  timing unchanged bit for bit (Kick Off 2's pictures); Workbench 1.3 and
+  3.1 in NTSC on the host.
+- **The clock's HOLD**: released after a plain read it no longer sets the
+  time (a read across a second set it back one and wrote NVS); setting
+  the clock (`setclock save`) changes the offset once.
+- Not yet: the line records' copying and the presenter's scaling are the
+  places to make faster (PPA, PIE: `../esp32emu/CLAUDE.md`); the Tab5 is
+  at 100% everywhere tried, so this waits.
+
+### Phase 7 (2026-10-21): under way, the A1200
+
+- **The CPU type decision**: one firmware, Musashi's type chosen at run
+  time (`CONFIG_M68K_RUNTIME` in esp32emu): the 68000's speed measured the
+  same on the host (Kick Off 2: the same pictures and instruction count,
+  1.23-1.25 s) and the Tab5 (a Shell listing: core 1 42-55% against 61%).
+- **The machine**: the setup row's A1200 (Kickstart 3.0 or 3.1 from their
+  new partitions, or AROS; 2 MB chip RAM, no slow RAM, Zorro II fast RAM),
+  the 68EC020 at 14.19 MHz waiting for the chip bus (SysInfo 4.4: 1.03
+  times an A1200; without the waits 2.98, and the Tab5 at 55% in a game),
+  Gayle with the A1200's ID.
+- **AGA**: Alice's and Lisa's IDs, 256 colours of 24 bits, 8 planes in
+  every resolution, FMODE's fetches, HAM8, BPLCON3/4, wide sprites, AGA
+  super-hires (see CLAUDE.md, Display). The OCS/ECS pictures stay bit for
+  bit; the collection's 25 A1200 games show their AGA pictures on the host
+  (Christmas Breakdown's high-density floppy aside).
+- **The Tab5**: Workbench 3.1 at 100% (cores ~20%), Aerial Racers' AGA
+  title at 100-102% with core 1 93-98%.
+- **Bandwidth**: Lisa's ID $00F8 (its bits 9-8 are graphics.library's
+  MemType, inverted: 32 bits, double CAS): Workbench 3.1 then offers
+  hires in 256 colours and fetches in FMODE 3. The fetch in blocks of
+  max(fw, r) words a plane (8 x that / r colour clocks), the first pixel
+  16 x fw / that + 1 lores pixels after DDFSTRT x 2: Workbench's hires
+  screen and the games' lores ones on their windows, OCS's counts as
+  before. Workbench in 256 colours (8 planes, hires, FMODE 3) on the host.
+- Not yet: HAM8, 64-pixel sprites and FMODE 1/2 checked; high-density
+  floppies; headroom on core 1 for the heaviest AGA games (profile first).

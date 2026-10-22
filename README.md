@@ -1,15 +1,15 @@
 <h1 align="center">esp32ami</h1>
 
 <p align="center">
-  <b>A Commodore Amiga 500, 2000 or 600 on an M5Stack Tab5.</b><br>
-  A 68000 at 7.09 MHz with the OCS and ECS chipsets (Agnus, Denise, Paula, two 8520 CIAs), Kickstart 1.2 to 3.1 or the free AROS, floppy and hard disk images, the A600's IDE port, fast RAM, Bluetooth keyboard and mouse, the touch screen as a touchpad.
+  <b>A Commodore Amiga 500, 2000, 600 or 1200 on an M5Stack Tab5.</b><br>
+  A 68000 at 7.09 MHz with the OCS and ECS chipsets (Agnus, Denise, Paula, two 8520 CIAs), or the A1200's 68EC020 with AGA (Alice, Lisa), Kickstart 1.2 to 3.1 or the free AROS, floppy and hard disk images, the A600's IDE port, fast RAM, Bluetooth keyboard and mouse, the touch screen as a touchpad.
 </p>
 
 <p align="center">
   <img alt="ESP32-P4" src="https://img.shields.io/badge/ESP32--P4-M5Stack%20Tab5-e7352c">
   <img alt="ESP-IDF" src="https://img.shields.io/badge/ESP--IDF-v5.5-blue">
   <img alt="LVGL" src="https://img.shields.io/badge/LVGL-9.4-5e48e8">
-  <img alt="68000" src="https://img.shields.io/badge/CPU-68000-555">
+  <img alt="68000, 68EC020" src="https://img.shields.io/badge/CPU-68000%20%C2%B7%2068EC020-555">
   <img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-green">
 </p>
 
@@ -32,9 +32,10 @@
 
 esp32ami turns an M5Stack Tab5 into a Commodore Amiga, chosen on its setup
 screen: the **A500** (with its 512 KB trapdoor "slow RAM"), the **A2000**
-(with fast RAM on a Zorro II board) or the **A600** (ECS, up to 2 MB chip
-RAM, the IDE port), each with the Kickstart of your choice: **1.2**,
-**1.3**, **2.04**, **2.05**, **3.1**, or **AROS**, the free one, which needs
+(with fast RAM on a Zorro II board), the **A600** (ECS, up to 2 MB chip
+RAM, the IDE port) or the **A1200** (a 68EC020 at 14 MHz, the AGA chipset,
+2 MB chip RAM), each with the Kickstart of your choice: **1.2**,
+**1.3**, **2.04**, **2.05**, **3.0**, **3.1**, or **AROS**, the free one, which needs
 no Commodore ROM at all. Floppy and hard disk images on the microSD card go
 into two floppy drives and two hard disks, Amiga Forever's game packages
 included; a Bluetooth keyboard and mouse (or your finger on the screen)
@@ -67,6 +68,9 @@ all are built on the shared runtime
   its memory accesses fall on the bus's slots and wait for the chips' DMA,
   except when it runs from fast RAM or the ROM. SysInfo and xSysInfo
   measure 1.00 times an A600 in chip RAM and a B2000 in fast RAM
+- **68EC020** at 14.19 MHz for the A1200, waiting for the chip bus on
+  each access to chip RAM and the chips: SysInfo measures 1.03 times an
+  A1200
 - **Agnus**: the DMA slots of every line, the **copper** (its waits to the
   line and the position), the **blitter** (area and line modes, fill), the
   bitplane and sprite DMA; ECS's bigger chip RAM, the display window's high
@@ -76,14 +80,18 @@ all are built on the shared runtime
   **interlace** with both fields woven into one picture; ECS
   **super-hires** (Workbench's 1280 x 256 and 1280 x 512), one to one on
   the Tab5's 1280 columns
+- **AGA** (the A1200's Alice and Lisa): 256 colours from 16.8 million, up
+  to 8 bitplanes in any resolution, 32 and 64-bit fetches, HAM8, the
+  sprites 16 to 64 pixels wide and their colour banks; the A1200 games of
+  Amiga Forever's collection show their AGA pictures
 - **Paula**: four sound channels with the A500's filters (and the power
   LED's), disk DMA with the sync word at any bit, the interrupts
 - **Two 8520 CIAs**: timers, the time-of-day counters, the keyboard's
   serial handshake; the **battery-backed clock**, set from the internet
-- **Expansion**: autoconfig fast RAM (1 to 8 MB, Zorro II), the A600's
+- **Expansion**: autoconfig fast RAM (1 to 8 MB, Zorro II), the A600's and A1200's
   **Gayle** IDE port, and a hard disk board of this project's own (a boot
   ROM and a driver) for Kickstart 1.3 and 2.04, which have no IDE driver
-- **Kickstart 1.2, 1.3, 2.04, 2.05 and 3.1**, or **AROS** with its
+- **Kickstart 1.2, 1.3, 2.04, 2.05 and 3.1**, the A1200's **3.0 and 3.1**, or **AROS** with its
   extension ROM; Kickstart 3.1's Early Startup Control (both mouse buttons
   at power-on) works, NTSC toggle included
 - **PAL or NTSC**, the picture following the beam's standard
@@ -161,7 +169,8 @@ isn't supported: its ESP32-S3 hasn't the speed for the Amiga's chipset.
 - [esp32emu](https://github.com/rlucencic/esp32emu), checked out next to this project (`../esp32emu`)
 - Kickstart ROM images, which are copyrighted and **not included**, under
   FS-UAE's names in `roms/` (see [roms/README.md](roms/README.md)), e.g.
-  `amiga-os-130.rom` (1.3) or `amiga-os-310-a600.rom` (3.1); Amiga
+  `amiga-os-130.rom` (1.3), `amiga-os-310-a600.rom` (3.1) or
+  `amiga-os-310-a1200.rom` (the A1200's 3.1); Amiga
   Forever has them. Or none: AROS's ROMs are free
 - A microSD card, FAT32 or exFAT, and disk images (`.adf`, `.hdf`, `.rp9`)
   of your software
@@ -323,8 +332,12 @@ lessons learned along the way.
   hard disks (Gayle and the board), the setup screen and the web page are
   checked. Not tried by hand yet: sound on the speaker, USB keyboards and
   mice.
-- No A1200: AGA and the 68020 are the next step. No 68010/68020 for the
-  A500/A2000, no Zorro III, no CD32/CDTV.
+- The A1200 is new: Workbench 3.1 runs, its games show their AGA pictures
+  (host and Tab5: Aerial Racers at 100%, core 1 ~95% busy); AGA's screen
+  modes in Workbench, HAM8, 64-pixel sprites and super-hires in AGA's
+  colours aren't checked yet. High-density floppies (1.76 MB) aren't read.
+  No 68010/68020 for the A500/A2000, no accelerator boards, no Zorro III,
+  no CD32/CDTV.
 - The chip bus is modelled on average (3 clocks for each slot the DMA
   takes), not slot by slot; the blitter's timing likewise. Demos that count
   on exact bus cycles may show it.

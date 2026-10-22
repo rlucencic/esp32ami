@@ -9,4 +9,6 @@ kick_205_a600,  data, 0x40,    0x910000, 512K
 kick_310_a600,  data, 0x40,    0x990000, 512K
 kick_aros,      data, 0x40,    0xA10000, 512K
 kick_aros_ext,  data, 0x40,    0xA90000, 512K
-storage,        data, fat,     0xB10000, 0x4F0000
+kick_300_a1200, data, 0x40,    0xB10000, 512K
+kick_310_a1200, data, 0x40,    0xB90000, 512K
+storage,        data, fat,     0xC10000, 0x3F0000

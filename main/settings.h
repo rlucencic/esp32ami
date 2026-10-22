@@ -12,6 +12,8 @@ typedef enum {
     KICK_31,                /* 3.1 (40.63): A500, A600, A2000 */
     KICK_12,                /* 1.2 (33.180): A500, A2000 */
     KICK_AROS,              /* AROS (free, with its extension ROM): every model */
+    KICK_30,                /* 3.0 (39.106): A1200 */
+    KICK_31_A1200,          /* 3.1 (40.68): A1200 */
     KICK_COUNT,
 } kick_t;
 
@@ -19,7 +21,7 @@ typedef enum {
 typedef struct {
     uint8_t model;          /* amiga_model_t */
     uint8_t kick;           /* kick_t */
-    uint16_t chip_kb;       /* 512, 1024, 2048 (2 MB: the A600) */
+    uint16_t chip_kb;       /* 512, 1024, 2048 (2 MB: the A600; the A1200's) */
     uint16_t slow_kb;       /* 0 or 512: the A500's and A2000's trapdoor RAM at $C00000 */
     uint16_t fast_kb;       /* 0, 1024 ... 8192: an autoconfig board's (Zorro II) */
     uint8_t ntsc;

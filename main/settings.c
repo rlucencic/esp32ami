@@ -14,17 +14,23 @@ bool settings_kick_ok(int model, int kick)
     if (model == AMIGA_A600) {
         return kick == KICK_205 || kick == KICK_31 || kick == KICK_AROS;
     }
+    if (model == AMIGA_A1200) {
+        return kick == KICK_30 || kick == KICK_31_A1200 || kick == KICK_AROS;
+    }
     return kick == KICK_12 || kick == KICK_13 || kick == KICK_204 || kick == KICK_31 || kick == KICK_AROS;
 }
 
 bool settings_chip_ok(int model, int kb)
 {
+    if (model == AMIGA_A1200) {
+        return kb == 2048;
+    }
     return kb == 512 || kb == 1024 || (kb == 2048 && model == AMIGA_A600);
 }
 
 bool settings_slow_ok(int model, int kb)
 {
-    return kb == 0 || (kb == 512 && model != AMIGA_A600);
+    return kb == 0 || (kb == 512 && model != AMIGA_A600 && model != AMIGA_A1200);
 }
 
 bool settings_fast_ok(int model, int kb)
@@ -49,6 +55,12 @@ void settings_model_defaults(int model)
         settings.slow_kb = 0;
         settings.fast_kb = 0;
         break;
+    case AMIGA_A1200:
+        settings.kick = KICK_31_A1200;
+        settings.chip_kb = 2048;
+        settings.slow_kb = 0;
+        settings.fast_kb = 0;
+        break;
     default:
         settings.kick = KICK_13;
         settings.chip_kb = 512;
@@ -69,7 +81,7 @@ void settings_load(void)
     }
     uint8_t u8;
     uint16_t u16;
-    if (nvs_get_u8(h, "model", &u8) == ESP_OK && u8 <= AMIGA_A600) {
+    if (nvs_get_u8(h, "model", &u8) == ESP_OK && u8 <= AMIGA_A1200) {
         settings_model_defaults(u8);
     }
     if (nvs_get_u8(h, "kick", &u8) == ESP_OK && settings_kick_ok(settings.model, u8)) {

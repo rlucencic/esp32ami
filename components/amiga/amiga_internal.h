@@ -28,7 +28,7 @@
 #define AMI_LOGW(fmt, ...)  printf("W amiga: " fmt "\n", ##__VA_ARGS__)
 #endif
 
-#define CCK_LINE            227         /* colour clocks a line */
+#define CCK_LINE            227         /* colour clocks a line (NTSC: every other one 228) */
 #define CYCLES_LINE         (CCK_LINE * 2)
 #define NEVER               0x7FFFFFFF
 #define VBLANK_END_PAL      26          /* first line bitplane DMA may use */
@@ -85,6 +85,10 @@ typedef struct {
 typedef struct {
     amiga_model_t model;
     bool ecs, ntsc;
+    bool aga;                       /* the A1200's Alice and Lisa */
+    int cpu_shift;                  /* the CPU's clocks a time unit: 1 << shift (the A1200's 68EC020: 2) */
+    int cpu_rem;                    /* (cpu_shift) its clocks not yet a whole unit */
+    int cpu_waited;                 /* the 68EC020's clocks waiting for the chip bus in this slice */
 
     /* Memory, each 16-bit word in host order (byte n at index n ^ 1); the
      * 68000's view through 64 KB banks (NULL: the slow path)
@@ -108,6 +112,8 @@ typedef struct {
     int line, lines;                /* this frame's line, its lines */
     int line_start;                 /* the time the line began */
     bool lof;                       /* long frame */
+    bool long_lines;                /* this frame NTSC's: 227 and 228 colour clocks by turns */
+    bool lol0;                      /* (long_lines) its line 0 a long one */
     int e_phase;                    /* the E clock's phase at the frame's start (0-9) */
     uint32_t frames;
     bool halted;
@@ -141,8 +147,43 @@ static inline bool ami_ntsc_beam(void)
     return ami.ecs ? !(ami.beamcon0 & BEAMCON0_PAL) : ami.ntsc;
 }
 
+/* NTSC's lines average 227.5 colour clocks: every other one has 228 (a
+ * long line, VPOSR's LOL), the turns going on from frame to frame (a
+ * frame of 263 lines starts the next with the other kind); PAL's all have
+ * 227. Decided for a frame at its start (ami.long_lines, ami.lol0).
+ */
+static inline bool ami_long_line(int line)
+{
+    return ami.long_lines && ((line + ami.lol0) & 1);
+}
+
+/* When line n begins, in 68000 clocks from the frame's start */
+static inline int ami_line_start(int line)
+{
+    return line * CYCLES_LINE + (ami.long_lines ? ((line + ami.lol0) >> 1) * 2 : 0);
+}
+
+static inline int ami_line_cck(int line)
+{
+    return CCK_LINE + ami_long_line(line);
+}
+
+/* The beam at colour clock cck of the frame (on past its end as if the
+ * frame went on)
+ */
+static inline void ami_beam_at(int cck, int *line, int *h)
+{
+    int t = cck * 2, l = t / CYCLES_LINE;
+    while (l > 0 && ami_line_start(l) > t) {
+        l--;
+    }
+    *line = l;
+    *h = (t - ami_line_start(l)) / 2;
+}
+
 /* amiga.c */
 void ami_update_irq(void);
+void ami_cpu_wait(int clocks);      /* the 68EC020 waits for the chip bus (its clocks) */
 void ami_set_intreq(uint16_t bits);
 void ami_cpu_wake(void);            /* an earlier event was scheduled: end the CPU's slice */
 
@@ -313,5 +354,5 @@ void space_frame(void);                     /* once a frame, from the frame loop
 static inline int ami_now(void)
 {
     extern int m68k_cycles_run(void);
-    return ami.cycle + (ami.cpu_running ? m68k_cycles_run() : 0);
+    return ami.cycle + (ami.cpu_running ? (m68k_cycles_run() + ami.cpu_waited + ami.cpu_rem) >> ami.cpu_shift : 0);
 }

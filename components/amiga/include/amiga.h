@@ -1,5 +1,6 @@
 /*
- * Amiga 500, 2000 and 600 (OCS/ECS, a 68000 at 7.09 MHz), platform
+ * Amiga 500, 2000 and 600 (OCS/ECS, a 68000 at 7.09 MHz) and 1200 (a
+ * 68EC020 at 14.19 MHz), platform
  * independent: the board side (../../main) and the host build (host/) drive
  * it. See ../../docs/architecture.md.
  */
@@ -13,6 +14,7 @@ typedef enum {
     AMIGA_A500,
     AMIGA_A2000,
     AMIGA_A600,
+    AMIGA_A1200,                /* the 68EC020, 2 MB chip RAM, Gayle */
 } amiga_model_t;
 
 /* The CPU core's handler and cycle tables, copied (see amiga_config_t) */
@@ -97,6 +99,8 @@ int amiga_screen_width(void);
 void amiga_render_line_rgb565(int y, uint16_t *dst);
 
 void amiga_get_status(amiga_status_t *status);
+/* The display's registers as text (logs) */
+void amiga_display_regs(char *buf, size_t len);
 
 /* Memory as the CPU sees it, without side effects (RAM and ROM; else 0) */
 uint16_t amiga_peek16(uint32_t address);

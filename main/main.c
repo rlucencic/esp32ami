@@ -1,5 +1,5 @@
 /*
- * Amiga 500, 2000 and 600 emulator on the M5Stack Tab5.
+ * Amiga 500, 2000, 600 and 1200 emulator on the M5Stack Tab5.
  *
  * The board side (tasks, LCD, touch, WiFi, Bluetooth, setup screen, web
  * page, console) is the shared runtime in ../esp32emu; this file plugs the
@@ -77,7 +77,8 @@ static bool start(void)
         static char text[200];
         static const char *const names[KICK_COUNT] = {
             "Kickstart 1.3 (34.5)", "Kickstart 2.04 (37.175)", "Kickstart 2.05 (37.350)", "Kickstart 3.1 (40.63)",
-            "Kickstart 1.2 (33.180)", "AROS ROM and its extension ROM",
+            "Kickstart 1.2 (33.180)", "AROS ROM and its extension ROM", "Kickstart 3.0 (39.106) for the A1200",
+            "Kickstart 3.1 (40.68) for the A1200",
         };
         snprintf(text, sizeof(text),
                  "No %s: put it in roms/ and flash with idf.py flash, or copy it into the \"roms\" folder "
@@ -90,7 +91,7 @@ static bool start(void)
     s_cfg.chip_size = settings.chip_kb * 1024u;
     s_cfg.slow_size = settings.slow_kb * 1024u;
     s_cfg.fast_size = settings.fast_kb * 1024u;
-    s_cfg.ecs = settings.model == AMIGA_A600 || settings.chip_kb > 512 || settings.kick == KICK_204;
+    s_cfg.ecs = settings.model >= AMIGA_A600 || settings.chip_kb > 512 || settings.kick == KICK_204;
     s_cfg.ntsc = settings.ntsc;
     s_cfg.kickstart = s_kick_image;
     s_cfg.kickstart_size = size;
@@ -294,13 +295,16 @@ static void touchpad(int dx, int dy, uint8_t buttons)
 
 enum { CHOICE_MODEL, CHOICE_KICK, CHOICE_CHIP, CHOICE_SLOW, CHOICE_FAST, CHOICE_VIDEO, CHOICES };
 
-static const char *const model_names[] = { "A500", "A2000", "A600", "" };
+static const char *const model_names[] = { "A500", "A2000", "A600", "A1200", "" };
 static const char *const kick_names_a500[] = { "1.2", "1.3", "2.04", "3.1", "AROS", "" };
 static const uint8_t kicks_a500[] = { KICK_12, KICK_13, KICK_204, KICK_31, KICK_AROS };
 static const char *const kick_names_a600[] = { "2.05", "3.1", "AROS", "" };
 static const uint8_t kicks_a600[] = { KICK_205, KICK_31, KICK_AROS };
+static const char *const kick_names_a1200[] = { "3.0", "3.1", "AROS", "" };
+static const uint8_t kicks_a1200[] = { KICK_30, KICK_31_A1200, KICK_AROS };
 static const char *const chip_names[] = { "512 KB", "1 MB", "" };
 static const char *const chip_names_a600[] = { "512 KB", "1 MB", "2 MB", "" };
+static const char *const chip_names_a1200[] = { "2 MB", "" };
 static const uint16_t chip_sizes[] = { 512, 1024, 2048 };
 /* The A500's trapdoor RAM (the A501 card) at $C00000: on the chip bus but
  * not for the chips, "slow RAM"; fast RAM (the 68000's own) is an
@@ -312,9 +316,10 @@ static const char *const fast_names[] = { "None", "1 MB", "2 MB", "4 MB", "8 MB"
 static const uint16_t fast_sizes[] = { 0, 1024, 2048, 4096, 8192 };
 static const char *const video_names[] = { "PAL\n50 Hz", "NTSC\n60 Hz", "" };
 
-static bool a600(void)
+/* Gayle's models: the A600 and A1200 (no trapdoor slow RAM) */
+static bool gayle_model(void)
 {
-    return settings.model == AMIGA_A600;
+    return settings.model == AMIGA_A600 || settings.model == AMIGA_A1200;
 }
 
 static int model_get(void)
@@ -324,16 +329,33 @@ static int model_get(void)
 
 static void model_set(int i)
 {
-    if (i >= AMIGA_A500 && i <= AMIGA_A600 && i != settings.model) {
+    if (i >= AMIGA_A500 && i <= AMIGA_A1200 && i != settings.model) {
         settings_model_defaults(i);
         settings_save();
     }
 }
 
+/* The model's Kickstarts, the setup row's buttons in order */
 static const uint8_t *kicks(int *n)
 {
-    *n = a600() ? 2 : 4;
-    return a600() ? kicks_a600 : kicks_a500;
+    switch (settings.model) {
+    case AMIGA_A600:
+        *n = sizeof(kicks_a600);
+        return kicks_a600;
+    case AMIGA_A1200:
+        *n = sizeof(kicks_a1200);
+        return kicks_a1200;
+    default:
+        *n = sizeof(kicks_a500);
+        return kicks_a500;
+    }
+}
+
+/* The model's chip RAM sizes (the row's buttons): the first of chip_sizes */
+static const uint16_t *chips(int *n)
+{
+    *n = settings.model == AMIGA_A600 ? 3 : settings.model == AMIGA_A1200 ? 1 : 2;
+    return settings.model == AMIGA_A1200 ? chip_sizes + 2 : chip_sizes;
 }
 
 static int kick_get(void)
@@ -360,8 +382,10 @@ static void kick_set(int i)
 
 static int chip_get(void)
 {
-    for (int i = 0; i < 3; i++) {
-        if (chip_sizes[i] == settings.chip_kb) {
+    int n;
+    const uint16_t *sizes = chips(&n);
+    for (int i = 0; i < n; i++) {
+        if (sizes[i] == settings.chip_kb) {
             return i;
         }
     }
@@ -370,8 +394,10 @@ static int chip_get(void)
 
 static void chip_set(int i)
 {
-    if (i >= 0 && i < 3 && settings_chip_ok(settings.model, chip_sizes[i])) {
-        settings.chip_kb = chip_sizes[i];
+    int n;
+    const uint16_t *sizes = chips(&n);
+    if (i >= 0 && i < n && settings_chip_ok(settings.model, sizes[i])) {
+        settings.chip_kb = sizes[i];
         settings_save();
     }
 }
@@ -434,11 +460,17 @@ static const char *const *choice_names(int i)
 {
     switch (i) {
     case CHOICE_KICK:
-        return a600() ? kick_names_a600 : kick_names_a500;
+        return settings.model == AMIGA_A600    ? kick_names_a600
+               : settings.model == AMIGA_A1200 ? kick_names_a1200
+                                               : kick_names_a500;
     case CHOICE_CHIP:
-        return a600() ? chip_names_a600 : chip_names;
+        return settings.model == AMIGA_A600    ? chip_names_a600
+               : settings.model == AMIGA_A1200 ? chip_names_a1200
+                                               : chip_names;
     case CHOICE_SLOW:
-        return a600() ? slow_names_a600 : slow_names;
+        return gayle_model() ? slow_names_a600 : slow_names;
+    case CHOICE_FAST:
+        return fast_names;          /* (the same buttons: the model's default picked again) */
     default:
         return NULL;
     }
@@ -607,7 +639,7 @@ static const char *input_text(void)
 }
 
 
-static const char *const models[] = { "Amiga 500", "Amiga 2000", "Amiga 600" };
+static const char *const models[] = { "Amiga 500", "Amiga 2000", "Amiga 600", "Amiga 1200" };
 
 static void status(emu_json_t *j, int section)
 {
@@ -630,7 +662,8 @@ static void status(emu_json_t *j, int section)
         }
         amiga_hd_status_t hs;
         amiga_hd_get_status(&hs);
-        bool ide = settings.kick == KICK_205 || settings.kick == KICK_31 || settings.kick == KICK_AROS;
+        bool ide = settings.kick == KICK_205 || settings.kick == KICK_31 || settings.kick == KICK_AROS ||
+                   settings.kick == KICK_30 || settings.kick == KICK_31_A1200;
         for (int h = 0; h < AMIGA_HARD_DISKS; h++) {
             const char *name = disks_name(AMIGA_FLOPPIES + h), *how = amiga_hd_detail(h);
             const char *by = settings.kick == KICK_12 ? "Kickstart 1.2 can't boot from a hard disk (1.3 can)"
@@ -675,7 +708,8 @@ static void status(emu_json_t *j, int section)
         }
     }
     emu_json_row(j, "Kickstart", s_kick_name ? s_kick_name : "-");
-    snprintf(text, sizeof(text), "%s, %s", s_cfg.ecs ? "ECS" : "OCS", s_cfg.ntsc ? "NTSC (60 Hz)" : "PAL (50 Hz)");
+    snprintf(text, sizeof(text), "%s, %s", s_cfg.model == AMIGA_A1200 ? "AGA" : s_cfg.ecs ? "ECS" : "OCS",
+             s_cfg.ntsc ? "NTSC (60 Hz)" : "PAL (50 Hz)");
     emu_json_row(j, "Chipset", text);
     emu_json_row(j, "Cursor keys", input_text());
 }
@@ -697,8 +731,9 @@ static void console_info(char *buf, size_t len)
  *   m <dx> <dy> <btn>  move the mouse; buttons 1 left, 2 right, 4 middle
  *   j <hex>            the joystick: 1 up, 2 down, 4 left, 8 right, 10 fire
  *   R <model> <kick> [chip KB] [slow KB] [fast KB]   restart as model 0 A500,
- *                      1 A2000, 2 A600 with Kickstart 0 1.3, 1 2.04, 2 2.05,
- *                      3 3.1, 4 1.2
+ *                      1 A2000, 2 A600, 3 A1200 with Kickstart 0 1.3, 1 2.04,
+ *                      2 2.05, 3 3.1, 4 1.2, 5 AROS, 6 3.0 (A1200), 7 3.1
+ *                      (A1200)
  */
 static bool console_command(const char *line)
 {
@@ -752,7 +787,7 @@ static bool console_command(const char *line)
     case 'R': {
         int model = 0, kick = 0, chip = 0, slow = -1, fast = -1;
         int n = sscanf(line + 1, "%d %d %d %d %d", &model, &kick, &chip, &slow, &fast);
-        if (n >= 2 && model >= AMIGA_A500 && model <= AMIGA_A600 && settings_kick_ok(model, kick)) {
+        if (n >= 2 && model >= AMIGA_A500 && model <= AMIGA_A1200 && settings_kick_ok(model, kick)) {
             settings_model_defaults(model);
             settings.kick = (uint8_t)kick;
             if (n >= 3 && settings_chip_ok(model, chip)) {

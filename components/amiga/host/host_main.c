@@ -11,7 +11,8 @@
  * AMI_SHOTS=<n> (a picture every n frames, <out>-<frame>.ppm), AMI_LOG=<n>
  * (the machine's state every n frames), AMI_RING=<n> (the last n
  * instructions at the end), AMI_STOP=<pc>[:<frame>], AMI_TRACE=<pc>:<n>,
- * AMI_EXC (exceptions other than interrupts; "all" with them),
+ * AMI_DIS=<addr hex>:<n> (disassemble and stop), AMI_EXC (exceptions other than interrupts; "all" with them), AMI_LOGREGS
+ * (AMI_LOG's lines with the display's registers),
  * AMI_DEBUG=<port> (serve the debugger, in real time), AMI_MODEL (0 A500, 1
  * A2000, 2 A600), AMI_HD0, AMI_HD1 (HDF images, written: use copies),
  * AMI_NEWHD=<path>:<MB> (a blank hard disk made first), AMI_DF0, AMI_DF1
@@ -215,6 +216,12 @@ static uint8_t *load(const char *path, uint32_t *size)
     return buf;
 }
 
+/* The clock set by the Amiga (the board saves the offset in NVS) */
+static void rtc_changed(int64_t offset)
+{
+    printf("clock offset now %lld s\n", (long long)offset);
+}
+
 static int env_int(const char *name, int def)
 {
     const char *e = getenv(name);
@@ -252,12 +259,27 @@ int main(int argc, char **argv)
         }
     }
     cfg.serial = serial;
+    cfg.rtc_changed = rtc_changed;
     amiga_exception_hook = exception;
     if (getenv("AMI_DISKLOG")) {
         amiga_disk_hook = disk_dma;
     }
     if (!amiga_init(&cfg)) {
         return 1;
+    }
+
+    /* AMI_DIS=<addr hex>:<n>: disassemble n instructions (the ROM is mapped
+     * after reset) and stop */
+    if (getenv("AMI_DIS")) {
+        unsigned pc = 0, count = 20;
+        sscanf(getenv("AMI_DIS"), "%x:%u", &pc, &count);
+        for (unsigned i = 0; i < count; i++) {
+            char text[100];
+            unsigned n = m68k_disassemble(text, pc, cfg.model == AMIGA_A1200 ? M68K_CPU_TYPE_68EC020 : M68K_CPU_TYPE_68000);
+            printf("  $%06x  %s\n", pc, text);
+            pc += n;
+        }
+        return 0;
     }
 
     for (int d = 0; d < AMIGA_FLOPPIES; d++) {
@@ -369,6 +391,11 @@ int main(int argc, char **argv)
             printf("-- frame %lu: PC $%06lx SR %04x INTENA %04x INTREQ %04x DMACON %04x%s\n",
                    (unsigned long)st.frames, (unsigned long)st.pc, st.sr, st.intena, st.intreq,
                    st.dmacon, st.halted ? " HALTED" : "");
+            if (getenv("AMI_LOGREGS")) {
+                char regs[200];
+                amiga_display_regs(regs, sizeof(regs));
+                printf("   %s\n", regs);
+            }
         }
         if (shots && (s_frame + 1) % shots == 0) {
             char path[512];

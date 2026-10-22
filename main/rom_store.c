@@ -26,6 +26,8 @@ static const struct {
     [KICK_205] = { "kick_205_a600", 512 * 1024, 37, 350, "Kickstart 2.05 (37.350)", NULL },
     [KICK_31] = { "kick_310_a600", 512 * 1024, 40, 63, "Kickstart 3.1 (40.63)", NULL },
     [KICK_AROS] = { "kick_aros", 512 * 1024, 0, 0, NULL, "kick_aros_ext" },
+    [KICK_30] = { "kick_300_a1200", 512 * 1024, 39, 106, "Kickstart 3.0 (39.106)", NULL },
+    [KICK_31_A1200] = { "kick_310_a1200", 512 * 1024, 40, 68, "Kickstart 3.1 (40.68)", NULL },
 };
 
 /* That Kickstart, or its extension ROM (AROS's say what they are at $18:

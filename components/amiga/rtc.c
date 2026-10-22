@@ -33,6 +33,7 @@ static struct {
     uint8_t cd, ce, cf;
     uint8_t digit[13];              /* the time while HOLD is set (or being written) */
     bool held;
+    bool written;                   /* a digit written while held: the time to set */
     bool past_99;                   /* years from 2000 as 100 and more (Kickstart 1.x) */
     void (*changed)(int64_t offset);
 } s_rtc;
@@ -149,9 +150,13 @@ void rtc_write(int reg, uint8_t v)
         if ((v & CD_HOLD) && !s_rtc.held) {
             digits(s_rtc.digit);
             s_rtc.held = true;
+            s_rtc.written = false;
         } else if (!(v & CD_HOLD) && s_rtc.held) {
+            /* a read under HOLD leaves the time alone (it kept counting) */
             s_rtc.held = false;
-            apply(s_rtc.digit);
+            if (s_rtc.written) {
+                apply(s_rtc.digit);
+            }
         }
         break;
     case CE:
@@ -165,6 +170,7 @@ void rtc_write(int reg, uint8_t v)
     default:
         if (s_rtc.held) {
             s_rtc.digit[reg] = v;
+            s_rtc.written = true;
         } else {
             uint8_t d[13];
             digits(d);

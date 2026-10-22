@@ -1,10 +1,11 @@
-# esp32ami: Amiga 500, 2000 and 600 on the M5Stack Tab5
+# esp32ami: Amiga 500, 2000, 600 and 1200 on the M5Stack Tab5
 
-An Amiga 500, 2000 or 600 (OCS/ECS, a 68000 at 7.09 MHz PAL) on the M5Stack
+An Amiga 500, 2000 or 600 (OCS/ECS, a 68000 at 7.09 MHz PAL) or 1200 (AGA,
+a 68EC020 at 14.19 MHz) on the M5Stack
 Tab5 (ESP32-P4) only: the user's call, the MaTouch's S3 hasn't the speed for
-the 68000 and the custom chips together. The A1200 (AGA, a 68020) is a later
-phase if the P4 has the speed. Plan and decisions: `docs/architecture.md`
-(its phases table; phases 1 to 5 are done: see Progress there).
+the 68000 and the custom chips together. Plan and decisions: `docs/architecture.md`
+(its phases table; phases 1 to 6 are done, 7, the A1200, under way: see
+Progress there).
 ESP-IDF
 v5.5.4, C.
 
@@ -35,8 +36,9 @@ bash -c '. $IDF_PATH/export.sh >/dev/null 2>&1; \
 - `flash` also writes the Kickstarts from `roms/` (not in git;
   `roms/README.md`, FS-UAE's file names) to partitions `kick_120`,
   `kick_130` (256K each),
-  `kick_204`, `kick_205_a600`, `kick_310_a600`, `kick_aros`, `kick_aros_ext`
-  (512K each); `app-flash` only the app. The Tab5 is shared with the other
+  `kick_204`, `kick_205_a600`, `kick_310_a600`, `kick_aros`, `kick_aros_ext`,
+  `kick_300_a1200`, `kick_310_a1200` (512K each; the last two taken from
+  the unused `storage` partition, 2026-10-21); `app-flash` only the app. The Tab5 is shared with the other
   projects: after another one, a full `flash`. NVS (WiFi, BLE pairings) is
   shared; this project's settings are namespace `ami` (`model`, `kick`,
   `chip_kb`, `slow_kb`, `fast_kb`, `ntsc`, `rtc_ofs`: the clock's offset
@@ -71,10 +73,11 @@ dy btn` (the mouse; 1 left, 2 right, 4 middle; held until the next `m`;
 moves over 100 spread over 25 ms steps: one `m 0 0 1` then `m 0 0 0` is a
 click, two pairs a double-click), `j <hex>` the joystick (1 up, 2 down, 4
 left, 8 right, 10 fire, 20 second button), `R <model> <kick> [chip KB]
-[slow KB] [fast KB]`: restart as model 0 A500, 1 A2000, 2 A600 with Kickstart 0
-1.3, 1 2.04, 2 2.05, 3 3.1, 4 1.2 (the model's own: the A600 2.05 or 3.1,
-the others 1.2, 1.3, 2.04 or 3.1), chip RAM 512/1024 (2048 the A600), slow RAM
-0/512 (not the A600), fast RAM 0/1024/2048/4096/8192. Workbench 1.3 from the console: the pointer starts
+[slow KB] [fast KB]`: restart as model 0 A500, 1 A2000, 2 A600, 3 A1200 with Kickstart 0
+1.3, 1 2.04, 2 2.05, 3 3.1, 4 1.2, 5 AROS, 6 3.0 (A1200), 7 3.1 (A1200) (the
+model's own: the A600 2.05, 3.1 or AROS, the A1200 6, 7 or AROS, the others 1.2,
+1.3, 2.04, 3.1 or AROS), chip RAM 512/1024 (2048 the A600; the A1200 only 2048), slow RAM
+0/512 (not the A600 or A1200), fast RAM 0/1024/2048/4096/8192. Workbench 1.3 from the console: the pointer starts
 top left; `m 300 100 0` then `m 291 0 0` reaches the disk icon (counts
 are hires pixels across, half lines down), the Shell icon in its window
 is `m -523 136 0` from there.
@@ -86,7 +89,8 @@ esp32emu's touchpad (move, tap left click, tap then touch again to drag, hold st
 0.5 s for the right button: the menus).
 
 Setup screen on the Tab5: Start `t 1065 637`; the six rows scroll (the
-shared setup screen's box): Model (y 227), Kickstart (298), Chip RAM
+shared setup screen's box): Model (y 227: A500, A2000, A600, A1200 at x 337,
+514, 692, 870), Kickstart (298), Chip RAM
 (369), Slow RAM (440), Fast RAM and Video below (`t 425 440 800 425 240`
 drags them up: then Chip RAM 258, Slow RAM 329, Fast RAM 400, Video 470);
 three-button rows at x 367, 604, 841, four-button ones 337, 514, 692,
@@ -112,7 +116,7 @@ images.
 | `main/web/amifiles.js` | The web page's converters (served as /machine.js): DMS archives, gzipped images |
 | `tools/amifiles_test.js` | Its test: `node tools/amifiles_test.js [folder of DMS+ADF pairs]` |
 | `roms/` | The Kickstarts (copyrighted, not distributed) |
-| `partitions.csv` | nvs, phy, factory 8 MB, the six ROMs (type 0x40), storage |
+| `partitions.csv` | nvs, phy, factory 8 MB, the eight ROMs (type 0x40), storage |
 
 ## The core (`components/amiga`)
 
@@ -122,8 +126,11 @@ images.
   (`ami.ntsc`: VPOSR's Agnus ID, Paula's clock), on ECS BEAMCON0's PAL bit
   instead, written by programs at any time (graphics.library sets it from
   GfxBase's DisplayFlags; Kickstart 3.1's Early Startup Control toggles it
-  with a key, for its own screen only). NTSC's lines are all 227 colour
-  clocks (a real one alternates 227 and 228).
+  with a key, for its own screen only). NTSC's lines alternate 227 and
+  228 colour clocks (227.5 on average, 59.83 frames a second), the turns
+  running on across frames (`ami_long_line()`, `ami_line_start()`,
+  `ami_beam_at()`; VPOSR's LOL on ECS; decided at the frame's start);
+  PAL's arithmetic is the old one (Kick Off 2's pictures bit for bit).
   At a frame's end every kept time moves back by the frame's length
   (`amiga_run_frame()`); the E clock (CIA timers, CPU / 10) keeps its phase
   in `ami.e_phase`.
@@ -146,6 +153,17 @@ images.
   there to chip RAM aren't counted). SysInfo 4.4: 1.00 times a real A600
   (chip and slow RAM), 1.00 times a B2000 (fast RAM); xSysInfo 0.12: 1.09
   and 1.00 (bare Musashi was 1.46 times an A600).
+- **The A1200's 68EC020**: Musashi's type chosen at run time
+  (`CONFIG_M68K_RUNTIME`, esp32emu; `-DM68K_RUNTIME` in the host build: no
+  slower for the 68000, host and Tab5), set before the tables' copies (they
+  take its cycles). 14.19 MHz: two of its clocks a time unit
+  (`ami.cpu_shift`, the odd one kept in `ami.cpu_rem`; `ami_now()`), no
+  4-clock rounding. It waits for the chip bus (`mem.c`): `WAIT_CHIP` (5) of
+  its clocks an access to chip RAM (32 bits at once), `WAIT_CUSTOM` (8) the
+  chips, `WAIT_CIA` (20) a CIA; ROM and fast RAM none (`ami_cpu_wait()`:
+  the slice ends sooner, the time counts). SysInfo 4.4: 1.03 times an
+  A1200 (1256 Dhrystones; without the waits 3630, 2.98 times, and the Tab5
+  at 55% in a game), "AGA ALICE - 2Meg", "AGA LISA CHIP".
 - **Memory** (`mem.c`): 64 KB banks to host pointers for reads and writes
   (chip RAM mirrored by its size over $000000-$1FFFFF, the ROM over it for
   reads while OVL is set, slow RAM at $C00000, fast RAM where autoconfig
@@ -158,11 +176,11 @@ images.
   read the last word the 68000 put on the chip bus (`ami.bus`: Dr. Mario
   counts in $DFF0FA). No bus errors; empty space reads 0. Words in host
   order, byte n at n ^ 1 (the ST's convention).
-- **Gayle** (`gayle.c`, the A600's; on the other models while a hard disk
+- **Gayle** (`gayle.c`, the A600's and A1200's; on the other models while a hard disk
   is in): its IDE port at $DA0000 (register (address >> 2) & 7, the
   control block with bit 12: $DA2000-$DA201C and $DA3018 are what
   scsi.device uses), interrupt status/enable at $DA9000/$DAA000 (level 2,
-  sticky like the CIAs'), the ID at $DE1000 ($D0, a bit a read). Two ATA
+  sticky like the CIAs'), the ID at $DE1000 ($D0, the A1200's $D1, a bit a read). Two ATA
   drives on HDF images (read and written in place, `read()`/`write()` past
   stdio from a buffer aligned to the cache line): CHS through a geometry
   that divides the image exactly (Hannibal's 14336 blocks: 16/16/56) or
@@ -261,7 +279,10 @@ images.
 - **The clock** (`rtc.c`): an MSM6242B at $DC0000 on every model (register
   n at $DC0000 + 4n, the low nibble), the host's local time plus an offset
   that setting it changes (the board keeps it in NVS). HOLD freezes the
-  digits for setting. Kickstart 1.x gets years from 2000 as 100 and more
+  digits for setting; releasing it sets the time only if a digit was
+  written meanwhile (battclock reads under HOLD: a read across a second
+  used to set the clock back a second and write NVS). The host build
+  prints each new offset (`clock offset now`). Kickstart 1.x gets years from 2000 as 100 and more
   (see the lessons). The host build's clock counts frames.
 - **Copper** (`copper.c`): restarted from COP1LC at line 0; MOVE 4 colour
   clocks (8 cycles), WAIT's end found ahead (`wait_until()`: the masks, the
@@ -317,6 +338,26 @@ images.
   4 pixels a lores one. graphics.library fetches from DDFSTRT $38 with
   the pointers 3 words early for DIWSTRT $81: the +5 delay puts the
   bitmap's first pixel on the window's (any other would shift it 16).
+  **AGA** (the A1200: `ami.aga`; VPOSR's Alice ID $23/$33, DENISEID $00F8):
+  colours kept as 24 bits for every chipset (OCS/ECS: their nibbles
+  doubled, the same RGB565 as before: their pictures bit for bit), 256 of
+  them (BPLCON3's bank for a register write, LOCT its low nibbles, without
+  it both); the record holds the palette's hash (each colour's, XORed,
+  kept up as they change) instead of the colours' hash. Up to 8 planes
+  (BPU3) in any resolution, fetched in FMODE's 16/32/64 bits: in blocks
+  of max(fw, r) words a plane in 8 x that / r colour clocks (fw the words
+  a fetch, r 1, 2, 4 for lores, hires, super-hires: OCS's 8-clock units),
+  whole blocks plus the one DDFSTOP falls in; the first pixel 16 x fw /
+  that + 1 lores pixels after DDFSTRT x 2 (OCS's 17, 9, 5). Found from
+  Workbench 3.1's hires FMODE 3 screen ($38-$D8: 44 words, modulo 72 with
+  two interleaved planes, on its window at 17) and Deluxe Pacman's lores
+  one ($38-$D0: 24 words, modulo -8). BPLCON1's 8-bit delays in super-hires pixels,
+  HAM8 (the low two planes say what the top six do), EHB unless KILLEHB,
+  BPLCON4's XOR and the sprites' colour banks, dual playfield's second
+  colours from BPLCON3's offset, BRDRBLNK; super-hires in its own colours;
+  sprites 16/32/64 pixels (FMODE: the control words the first of each
+  fetch) in lores, hires or super-hires pixels (SPRES), drawn on a grid
+  of super-hires pixels. No bitplane stall counted for AGA.
 - **The picture**: 720 x 568 (lores pixels 108-467 doubled, lines 29-312
   doubled), 4:3 at 960 x 720 on the Tab5 (`view_width` 800). NTSC:
   720 x 484 (lines 21-262, `amiga_screen_height()`), scaled to the same
@@ -394,6 +435,18 @@ images.
   the ROM's scsi.device searches the IDE port (status 0, never ready; 3.x
   ROMs on real machines wait like this, an A4000 ~30 s), then the
   insert-disk screen, or Early Startup Control. It looked like a hang.
+- **A changed CFLAGS in the host Makefile doesn't rebuild the objects**:
+  Musashi's objects depend on its headers, not on the Makefile, so adding
+  `-DM68K_RUNTIME` left a fixed 68000 behind, and the A1200's Kickstart
+  rebooted in a loop on its 68020 code (MOVEC, DIVU.L "illegal"). `make
+  clean` after changing the flags.
+- **Lisa's ID carries the chip RAM's bus width**: graphics.library's
+  SetChipRev takes GfxBase's MemType from DENISEID's bits 9-8, inverted
+  (`(~id & $300) >> 8`). $FFF8 there made it a 16-bit bus: Workbench's
+  ScreenMode offered hires with 16 colours at most, and no FMODE. $00F8
+  gives 32 bits, double CAS (3), as on an A1200: 256-colour hires in
+  FMODE 3. (SysInfo read the IDs right all along; the host's `AMI_DUMP` of
+  chip RAM and GfxBase's bytes at $EC/$ED showed it.)
 
 ## Testing
 
@@ -534,6 +587,20 @@ images.
   pointer opened Workbench3.1, a tap and a drag moved its window by the
   finger's move, the long press showed the menu bar while held; the setup
   corner still opens the setup screen.
+- **The A1200** (2026-10-21): the host (`AMI_MODEL=3 AMI_CHIP_KB=2048
+  AMI_SLOW_KB=0` with `amiga-os-310-a1200.rom`): Kickstart 3.1 to its
+  insert-disk screen, Workbench 3.1 from the A600's HDF ("Kickstart 40.68,
+  Workbench 40.42"); the collection's 25 A1200 RP9s (floppy ones in DF0:,
+  hard disk ones with `workbench-311.hdf` beside them; Starbase 13 and
+  Tactical Manager 2 want `workbench-135.hdf`): all show their pictures at
+  1500-4500 frames except Christmas Breakdown (a 1.76 MB high-density
+  floppy). SysInfo 4.4 from its floppy (the SPEED button `m:295:394`):
+  1.03 times an A1200. The OCS/ECS pictures (Kick Off 2, Workbench 1.3
+  and 3.1, super-hires) bit for bit as before the AGA rework. The Tab5:
+  the setup row's A1200, Workbench 3.1 from the user's HDF (100%, cores
+  ~20%), Aerial Racers' AGA title (100-102%, core 1 93-98%: real time with
+  little to spare); the game waits there for its next disk, which the
+  package inserted again didn't give it (not looked into).
 
 ## Open items
 
@@ -547,8 +614,7 @@ images.
   panel's picture), `tab5-setup.png` (status lines cut), `web.png` (a
   local mock with example data, halved).
 - Phases 4-7 (`docs/architecture.md`): games (the rest of phase 4:
-  blitter timing per slot), NTSC's 227/228 colour clock lines, the A1200
-  (phase 7: AGA, the 68020; the 25 A1200 RP9s). The chip bus model is an average (`SLOT_WAIT`), not
+  blitter timing per slot), the A1200's rest (phase 7, below). The chip bus model is an average (`SLOT_WAIT`), not
   per access: a slot-exact one (the 68000's accesses against the line's
   DMA slots) would bring SysInfo and xSysInfo to 1.0; the Tab5 has the
   room (core 1 ~25% in SysInfo).
@@ -589,10 +655,19 @@ images.
   them. Sprites show (and collide) outside the vertical window too:
   whether OCS Denise hides them there isn't settled.
 - **Clock** (the clock audit, 2026-10-21: `../esp32emu/CLAUDE.md`, To do):
-  releasing HOLD always applies the held digits (`rtc.c`), even after a
-  plain read: a read across a second boundary sets the clock back a second
-  and writes NVS (`rtc_ofs`). The saved offset would also keep a clock set
-  while the board's time was wrong (unlikely with the Tab5's RTC).
+  the saved offset would keep a clock set while the board's time was
+  wrong (unlikely with the Tab5's RTC). (HOLD's release: fixed.)
+- **The A1200's rest** (phase 7): Workbench in 256 colours is checked on
+  the host only (640 x 256, FMODE 3); HAM8, 64-pixel sprites, super-hires
+  in AGA's colours and FMODE 1/2 (the block rule's other cases) aren't
+  checked; sprites' 35 ns positions, CLXCON2 (planes 7-8)
+  and wide sprites' collisions aren't there; high-density floppies (1.76
+  MB, Christmas Breakdown) aren't read; the 68EC020's waits are an average
+  (no instruction cache); the A1200's 32-bit trapdoor fast RAM is the
+  Zorro II board at $200000. Core 1 is ~95% busy in Aerial Racers: profile
+  (the 68020's dispatch, memory reads) before more goes in. Deleting an RP9
+  from the web page leaves its unpacked hidden ADFs (`.name.rp9.N.adf`),
+  which the page can't delete (names starting with a dot).
 
 ## Working with the user
 

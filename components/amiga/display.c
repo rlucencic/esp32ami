@@ -4,7 +4,7 @@
  * The line's bitplanes are fetched at DDFSTRT's position (an event of the
  * frame loop) with the registers as they are then. At the line's end what
  * Denise needs to draw it goes into the line's record: the fetched words,
- * BPLCON0-2, the window, the colours as the line began and each colour
+ * BPLCON0-4, the window, the colours as the line began and each colour
  * write with the beam's position. Three frames of records (the
  * presenter's, the last one finished, the next); a record that would be
  * the same as the one already there isn't written again.
@@ -34,7 +34,20 @@
  * graphics.library sets them up: register 4a + b holds colour a's upper 2
  * bits in the lower half and b's in the upper one); the sprites' are
  * 16, 21, 26 and 31, at their lores positions.
+ *
+ * AGA (the A1200's Alice and Lisa): 256 colours of 24 bits (BPLCON3's
+ * bank picks the 32 a register write reaches, LOCT the low nibbles: a
+ * write without it sets both), up to 8 planes in any resolution (BPU3),
+ * fetched 16, 32 or 64 bits at a time (FMODE), HAM8, BPLCON4's XOR of the
+ * pixels and the sprites' colour banks, dual playfield's second colours
+ * from BPLCON3's offset, EHB unless BPLCON2 kills it, scroll delays in
+ * super-hires pixels, sprites 16, 32 or 64 pixels wide in lores, hires or
+ * super-hires pixels, the border blanked. Super-hires pixels have their
+ * own colours there. Colours are kept as 24 bits for every chipset; OCS
+ * and ECS ones are their 12 bits with each nibble doubled (the same
+ * RGB565 as before).
  */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "amiga_internal.h"
@@ -45,66 +58,87 @@
 #define FIRST_LINE_PAL  29
 #define FIRST_LINE_NTSC 21
 #define MAX_CHANGES     160
-#define MAX_WORDS       200             /* planes x words: 6 x 25 lores, 4 x 50 hires, 2 x 100 super-hires */
+#define MAX_PLANES      8
+/* a plane's words: up to 112 (super-hires fetched 64 bits at a time from
+ * DDFSTRT $18 to DDFSTOP $D8)
+ */
+#define MAX_PLANE_WORDS 112
+#define MAX_WORDS       (MAX_PLANES * MAX_PLANE_WORDS)
+#define NCOLORS         256             /* AGA's (OCS and ECS use 32) */
+#define SPR_WORDS       4               /* a sprite's words a line: 64 pixels (AGA) */
 #define WIDE_W          (2 * PIC_W)     /* a frame with super-hires lines */
-/* The first fetched pixel after DDFSTRT, in lores pixels */
-#define DELAY_LORES     17
-#define DELAY_HIRES     9
-#define DELAY_SHRES     5
 
 #define BPLCON0_HIRES   0x8000
 #define BPLCON0_SHRES   0x0040          /* ECS (masked off with OCS) */
+#define BPLCON0_BPU3    0x0010          /* AGA: 8 planes */
 #define BPLCON0_HAM     0x0800
 #define BPLCON0_DPF     0x0400
 #define BPLCON2_PF2PRI  0x0040
+#define BPLCON2_KILLEHB 0x0200          /* AGA: 6 planes are 64 colours */
+#define BPLCON3_LOCT    0x0200
+#define BPLCON3_BRDRBLNK 0x0020
+
+/* A colour write: from this pixel of the picture on, colour reg (AGA: of
+ * the 256) is rgb
+ */
+typedef struct {
+    uint16_t x;
+    uint8_t reg;
+    uint32_t rgb;
+} change_t;
 
 /* A line's record: what Denise draws it from */
 typedef struct {
     uint32_t key;                   /* a hash of the rest (0: nothing yet) */
-    uint16_t con0, con1, con2;
+    uint16_t con0, con1, con2, con3, con4, fmode;
     int16_t first;                  /* the first fetched pixel, lores */
     int16_t x0, x1;                 /* the window, in the picture's pixels */
-    uint8_t planes, words;          /* planes 0: no bitplanes on this line */
+    uint8_t planes, ncolors;        /* planes 0: no bitplanes on this line */
+    uint16_t words;
     uint16_t changes;
     uint8_t sprites;                /* shown on this line */
+    uint8_t spr_words;              /* each one's words (16 pixels each) */
     uint8_t spr_num[8];             /* the sprite (bit 7: attached to the one before) */
     int16_t spr_x[8];               /* lores pixels from the picture's left edge */
-    uint16_t spr_a[8], spr_b[8];    /* DATA, DATB */
-    uint16_t color[32];             /* as the line began */
-    uint32_t change[MAX_CHANGES];   /* x << 20 | colour << 12 | value */
+    uint16_t spr_a[8][SPR_WORDS], spr_b[8][SPR_WORDS];      /* DATA, DATB */
+    uint32_t color[NCOLORS];        /* as the line began (ncolors of them) */
+    change_t change[MAX_CHANGES];
     uint16_t data[MAX_WORDS];       /* plane after plane */
 } row_t;
 
 typedef struct {
     uint32_t pt;
-    uint16_t pos, ctl, data, datb;
+    uint16_t pos, ctl;
+    uint16_t data[SPR_WORDS], datb[SPR_WORDS];
     bool armed;                     /* its data words show on this line */
     uint8_t dma;                    /* 0 idle, 1 waiting for VSTART, 2 showing */
 } sprite_t;
 
 static struct {
     /* registers */
-    uint16_t bplcon0, bplcon1, bplcon2, bplcon3;
+    uint16_t bplcon0, bplcon1, bplcon2, bplcon3, bplcon4, fmode;
     sprite_t spr[8];
     uint16_t diwstrt, diwstop, ddfstrt, ddfstop;
     uint16_t diwhigh;               /* ECS: the window's high bits, if written since DIWSTRT/DIWSTOP */
     bool diwhigh_set;
     int16_t mod[2];
-    uint32_t pt[6];
+    uint32_t pt[MAX_PLANES];
     bool vwin;
 
     /* this line */
     int fetch_at;
     bool fetched;
-    uint16_t con0, con1, con2;
+    uint16_t con0, con1, con2, con3, con4, fmode_line;
     int first, planes, words;
     uint32_t data_key;
     uint16_t data[MAX_WORDS];
     int changes;
-    uint32_t change[MAX_CHANGES];
-    uint32_t late;                  /* colours changed after the log filled */
-    uint16_t late_value[32];
-    uint16_t color[32] __attribute__((aligned(4)));     /* 12-bit, as the line began */
+    change_t change[MAX_CHANGES];
+    uint32_t late[NCOLORS / 32];    /* colours changed after the log filled */
+    uint32_t late_value[NCOLORS];
+    int ncolors;                    /* 32, AGA 256 */
+    uint32_t color[NCOLORS];        /* 24-bit, as the line began */
+    uint32_t pal_hash;              /* their hash (each colour's, XORed) */
 
     /* collisions */
     uint16_t clxcon, clxdat;
@@ -127,9 +161,9 @@ static struct {
     int first_line;
 } s;
 
-static uint16_t s_rgb565[4096];
+static uint8_t s_r5[256], s_g6[256];    /* 8-bit guns to RGB565's 5 and 6 bits */
 static uint64_t s_p2c[256];
-static uint8_t s_pf1[64], s_pf2[64];
+static uint8_t s_pf1[256], s_pf2[256];
 static uint8_t s_shres_gun[16];     /* super-hires: a nibble's two halves' mean, 4 bits */
 
 #define LATEST(st)      ((st) & 3u)
@@ -147,11 +181,31 @@ static row_t *buffer(int field, int b)
     return s.rows + (field * 3 + b) * PIC_LINES;
 }
 
+/* 12-bit colours as 24 bits, each nibble twice */
+static inline uint32_t expand12(uint16_t v)
+{
+    return ((uint32_t)(v & 0xF00) << 12 | (uint32_t)(v & 0xF00) << 8) | ((v & 0xF0) << 8 | (v & 0xF0) << 4) |
+           ((v & 0xF) << 4 | (v & 0xF));
+}
+
+static inline uint16_t to565(uint32_t c)
+{
+    return (uint16_t)(s_r5[(c >> 16) & 0xFF] << 11 | s_g6[(c >> 8) & 0xFF] << 5 | s_r5[c & 0xFF]);
+}
+
+/* A colour's part of the palette's hash */
+static inline uint32_t color_hash(int i, uint32_t c)
+{
+    uint32_t h = (c ^ ((uint32_t)i << 24)) * 0x9E3779B1u;
+    h ^= h >> 15;
+    return h * 0x85EBCA77u;
+}
+
 void display_init(void *picture)
 {
-    for (int c = 0; c < 4096; c++) {
-        int r = (c >> 8) & 15, g = (c >> 4) & 15, b = c & 15;
-        s_rgb565[c] = (uint16_t)(((r * 31 / 15) << 11) | ((g * 63 / 15) << 5) | (b * 31 / 15));
+    for (int c = 0; c < 256; c++) {
+        s_r5[c] = (uint8_t)(c * 31 / 255);
+        s_g6[c] = (uint8_t)(c * 63 / 255);
     }
     for (int b = 0; b < 256; b++) {
         uint64_t v = 0;
@@ -163,9 +217,10 @@ void display_init(void *picture)
     for (int n = 0; n < 16; n++) {
         s_shres_gun[n] = (uint8_t)(((n >> 2) + (n & 3)) * 5 / 2);
     }
-    for (int v = 0; v < 64; v++) {
-        s_pf1[v] = (uint8_t)((v & 1) | ((v >> 1) & 2) | ((v >> 2) & 4));
-        s_pf2[v] = (uint8_t)(((v >> 1) & 1) | ((v >> 2) & 2) | ((v >> 3) & 4));
+    /* dual playfield: the odd planes (bits 0, 2, 4, 6) and the even ones */
+    for (int v = 0; v < 256; v++) {
+        s_pf1[v] = (uint8_t)((v & 1) | ((v >> 1) & 2) | ((v >> 2) & 4) | ((v >> 3) & 8));
+        s_pf2[v] = (uint8_t)(((v >> 1) & 1) | ((v >> 2) & 2) | ((v >> 3) & 4) | ((v >> 4) & 8));
     }
     if (picture == NULL) {
         picture = calloc(1, amiga_picture_size());
@@ -183,6 +238,13 @@ void display_reset(void)
     s.writing[0] = s.writing[1] = 1;
     s.first_line = ami.ntsc ? FIRST_LINE_NTSC : FIRST_LINE_PAL;
     s.hash = 0x811C9DC5u;
+    s.ncolors = ami.aga ? NCOLORS : 32;
+    for (int i = 0; i < s.ncolors; i++) {
+        s.pal_hash ^= color_hash(i, 0);
+    }
+    /* (AGA's: dual playfield's second colours from 8, the sprites' from 16) */
+    s.bplcon3 = 0x0C00;
+    s.bplcon4 = 0x0011;
 }
 
 /* ---- Bitplane DMA ---- */
@@ -195,6 +257,10 @@ static bool dma_on(void)
 static int planes_of(uint16_t con0)
 {
     int n = (con0 >> 12) & 7;
+    if (ami.aga) {
+        n |= (con0 & BPLCON0_BPU3) ? 8 : 0;
+        return n > 8 ? 8 : n;
+    }
     if (n > 6) {
         n = 4;
     }
@@ -204,6 +270,13 @@ static int planes_of(uint16_t con0)
         n = 4;
     }
     return n;
+}
+
+/* Words a bitplane fetch takes: 1, AGA's FMODE 2 or 4 (32 or 64 bits) */
+static int fetch_width(uint16_t fmode)
+{
+    static const uint8_t w[4] = { 1, 2, 2, 4 };
+    return ami.aga ? w[fmode & 3] : 1;
 }
 
 static void ddf(int *start, int *stop)
@@ -272,11 +345,19 @@ static int spr_vstop(const sprite_t *sp)
     return (sp->ctl >> 8) | ((sp->ctl & 2) << 7);
 }
 
-static void spr_fetch_control(sprite_t *sp)
+/* A sprite's words a line: 1, AGA's FMODE 2 or 4 (32 or 64 pixels) */
+static int spr_words(void)
 {
+    static const uint8_t w[4] = { 1, 2, 2, 4 };
+    return ami.aga ? w[(s.fmode >> 2) & 3] : 1;
+}
+
+static void spr_fetch_control(sprite_t *sp, int n)
+{
+    /* (wide: the control words are the first of each of the two fetches) */
     sp->pos = chip_read16(sp->pt);
-    sp->ctl = chip_read16(sp->pt + 2);
-    sp->pt += 4;
+    sp->ctl = chip_read16(sp->pt + 2 * n);
+    sp->pt += 4 * n;
     sp->armed = false;
 }
 
@@ -285,6 +366,7 @@ static void sprite_dma(void)
 {
     int first = (ami_ntsc_beam() ? VBLANK_END_NTSC : VBLANK_END_PAL) - 1;
     bool dma = (ami.dmacon & (DMA_EN | DMA_SPR)) == (DMA_EN | DMA_SPR);
+    int n = spr_words();
     for (int i = 0; i < 8; i++) {
         sprite_t *sp = &s.spr[i];
         if (ami.line == 0) {
@@ -294,7 +376,7 @@ static void sprite_dma(void)
             continue;
         }
         if (ami.line == first) {
-            spr_fetch_control(sp);
+            spr_fetch_control(sp, n);
             sp->dma = 1;
             continue;
         }
@@ -307,12 +389,14 @@ static void sprite_dma(void)
         }
         if (sp->dma == 2) {
             if (ami.line == spr_vstop(sp)) {
-                spr_fetch_control(sp);
+                spr_fetch_control(sp, n);
                 sp->dma = 1;
             } else {
-                sp->data = chip_read16(sp->pt);
-                sp->datb = chip_read16(sp->pt + 2);
-                sp->pt += 4;
+                for (int w = 0; w < n; w++) {
+                    sp->data[w] = chip_read16(sp->pt + 2 * w);
+                    sp->datb[w] = chip_read16(sp->pt + 2 * (n + w));
+                }
+                sp->pt += 4 * n;
                 sp->armed = true;
             }
         }
@@ -345,23 +429,38 @@ AMI_HOT void display_fetch(void)
     s.con0 = s.bplcon0;
     s.con1 = s.bplcon1;
     s.con2 = s.bplcon2;
+    s.con3 = s.bplcon3;
+    s.con4 = s.bplcon4;
+    s.fmode_line = s.fmode;
     bool shres = s.con0 & BPLCON0_SHRES;
     bool hires = !shres && (s.con0 & BPLCON0_HIRES);
     int planes = planes_of(s.con0);
     int start, stop;
     ddf(&start, &stop);
-    /* whole fetch units of 8 colour clocks, the one DDFSTOP falls in too
-     * (Kickstart 1.3's hires screens: $3C-$D0 is 40 words; 3.1's $40-$D0 38)
+    /* Fetched in blocks: each plane max(fw, r) words in 8 * that / r colour
+     * clocks (fw the words a fetch, r 1, 2, 4 for lores, hires, super-
+     * hires: OCS's 8-clock units), whole blocks, the one DDFSTOP falls in
+     * too (Kickstart 1.3's hires screens: $3C-$D0 is 40 words; 3.1's
+     * $40-$D0 38). AGA in FMODE 3: Workbench 3.1's hires $38-$D8 44 words
+     * (its modulo 72, two planes interleaved), Deluxe Pacman's lores
+     * $38-$D0 24 (modulo -8). The first pixel after DDFSTRT: 16 * fw / that
+     * + 1 lores pixels (OCS's 17, 9, 5; FMODE 3's 17).
      */
-    int words = ((stop - start + 7) / 8 + 1) * (shres ? 4 : hires ? 2 : 1);
-    s.first = start * 2 + (shres ? DELAY_SHRES : hires ? DELAY_HIRES : DELAY_LORES);
+    int fw = fetch_width(s.fmode), r = shres ? 4 : hires ? 2 : 1;
+    int wb = fw > r ? fw : r, block = 8 * wb / r;
+    int words = ((stop - start + block - 1) / block + 1) * wb;
+    if (words > MAX_PLANE_WORDS) {
+        words = MAX_PLANE_WORDS;
+    }
+    s.first = start * 2 + 16 * fw / wb + 1;
     s.planes = planes;
     s.words = words;
 
     uint32_t key = 0x811C9DC5u;
     uint16_t *d = s.data;
+    uint32_t align = ~(uint32_t)(2 * fw - 1);
     for (int p = 0; p < planes; p++) {
-        uint32_t ptr = s.pt[p];
+        uint32_t ptr = s.pt[p] & align;
         for (int w = 0; w < words; w++) {
             uint16_t v = chip_read16(ptr);
             ptr += 2;
@@ -372,45 +471,60 @@ AMI_HOT void display_fetch(void)
     }
     s.data_key = key;
     /* lores planes 5-6, hires planes 3-4 and super-hires plane 2 fetch in
-     * the 68000's (even) slots: a slot a word
+     * the 68000's (even) slots: a slot a word (AGA: not counted)
      */
     int even = planes - (shres ? 1 : hires ? 2 : 4);
-    if (even > 0) {
+    if (even > 0 && !ami.aga) {
         ami.stall += even * words * SLOT_WAIT;
     }
 }
 
 /* ---- Registers ---- */
 
+/* A colour's value after a write of v (AGA: LOCT writes the low nibbles,
+ * otherwise both)
+ */
+static uint32_t written_color(uint32_t now, uint16_t v)
+{
+    if (ami.aga && (s.bplcon3 & BPLCON3_LOCT)) {
+        return (now & 0xF0F0F0) | ((uint32_t)(v & 0xF00) << 8) | ((v & 0xF0) << 4) | (v & 0xF);
+    }
+    return expand12(v);
+}
+
 static void log_color(int reg, uint16_t v, int at)
 {
-    int h = at / 2 - ami.line * CCK_LINE;
+    if (ami.aga) {
+        reg += ((s.bplcon3 >> 13) & 7) * 32;
+    }
+    int h = at / 2 - ami.line_start / 2;
     int x = 4 * h + 6 - 2 * FIRST_LORES;
     x = x < 0 ? 0 : x > PIC_W ? PIC_W : x;
-    v &= 0xFFF;
     if (s.changes == MAX_CHANGES) {
-        s.late |= 1u << reg;
-        s.late_value[reg] = v;
+        uint32_t now = (s.late[reg >> 5] & (1u << (reg & 31))) ? s.late_value[reg] : s.color[reg];
+        s.late[reg >> 5] |= 1u << (reg & 31);
+        s.late_value[reg] = written_color(now, v);
         return;
     }
     /* where it goes (the copper's writes can be ahead of the CPU's) */
     int i = s.changes;
-    while (i > 0 && (s.change[i - 1] >> 20) > (uint32_t)x) {
+    while (i > 0 && s.change[i - 1].x > x) {
         i--;
     }
     /* the same colour again changes nothing */
-    uint16_t now = s.color[reg];
+    uint32_t now = s.color[reg];
     for (int j = i - 1; j >= 0; j--) {
-        if (((s.change[j] >> 12) & 31) == (uint32_t)reg) {
-            now = s.change[j] & 0xFFF;
+        if (s.change[j].reg == reg) {
+            now = s.change[j].rgb;
             break;
         }
     }
-    if (now == v) {
+    uint32_t c = written_color(now, v);
+    if (now == c) {
         return;
     }
-    memmove(&s.change[i + 1], &s.change[i], (s.changes - i) * sizeof(uint32_t));
-    s.change[i] = (uint32_t)x << 20 | (uint32_t)reg << 12 | v;
+    memmove(&s.change[i + 1], &s.change[i], (s.changes - i) * sizeof(change_t));
+    s.change[i] = (change_t){ (uint16_t)x, (uint8_t)reg, c };
     s.changes++;
 }
 
@@ -434,12 +548,12 @@ void display_write(uint32_t reg, uint16_t v, int at)
         switch (reg & 6) {
         case 0: sp->pos = v; break;
         case 2: sp->ctl = v; sp->armed = false; break;
-        case 4: sp->data = v; sp->armed = true; break;
-        default: sp->datb = v; break;
+        case 4: sp->data[0] = v; sp->armed = true; break;
+        default: sp->datb[0] = v; break;
         }
         return;
     }
-    if (reg >= 0x0E0 && reg <= 0x0F6) {
+    if (reg >= 0x0E0 && reg <= 0x0FE) {
         int p = (reg - 0x0E0) >> 2;
         if (reg & 2) {
             s.pt[p] = (s.pt[p] & 0xFFFF0000) | (v & 0xFFFE);
@@ -490,9 +604,27 @@ void display_write(uint32_t reg, uint16_t v, int at)
     case 0x10A:
         s.mod[1] = (int16_t)(v & 0xFFFE);
         break;
+    case 0x10C:
+        if (ami.aga) {
+            s.bplcon4 = v;
+        }
+        break;
+    case 0x1FC:
+        if (ami.aga) {
+            s.fmode = v;
+        }
+        break;
     default:
         break;
     }
+}
+
+/* The display's registers, for logs */
+void amiga_display_regs(char *buf, size_t len)
+{
+    snprintf(buf, len, "BPLCON0-4 %04x %04x %04x %04x %04x FMODE %04x DDF %02x-%02x DIW %04x-%04x/%04x MOD %d %d COLOR0 %06lx",
+             s.bplcon0, s.bplcon1, s.bplcon2, s.bplcon3, s.bplcon4, s.fmode, s.ddfstrt, s.ddfstop, s.diwstrt,
+             s.diwstop, s.diwhigh_set ? s.diwhigh : 0, s.mod[0], s.mod[1], (unsigned long)s.color[0]);
 }
 
 /* ---- Collisions (CLXDAT) ----
@@ -504,7 +636,8 @@ void display_write(uint32_t reg, uint16_t v, int at)
  * where its planes that CLXCON enables (ENBP) have the values it asks for
  * (MVBP: a plane not fetched is 0); a sprite pair is its even sprite, the
  * odd one too with ENSP. Hires pixels count for the sprites' lores pixel
- * they're in.
+ * they're in. (AGA's planes 7 and 8, CLXCON2, and wide sprites' further
+ * pixels aren't looked at.)
  */
 #define CLX_FRAMES      4
 
@@ -633,7 +766,7 @@ static void collide(void)
             continue;
         }
         int g = i >> 1, L = ((sp->pos & 0xFF) << 1) | (sp->ctl & 1);
-        uint16_t m = (sp->data | sp->datb) & win16(L, hstart, hstop);
+        uint16_t m = (sp->data[0] | sp->datb[0]) & win16(L, hstart, hstop);
         if (m == 0) {
             continue;
         }
@@ -679,16 +812,25 @@ static void window(int *x0, int *x1)
     *x1 = b < 0 ? 0 : b > PIC_W ? PIC_W : b;
 }
 
+static inline void set_line_color(int i, uint32_t c)
+{
+    if (s.color[i] != c) {
+        s.pal_hash ^= color_hash(i, s.color[i]) ^ color_hash(i, c);
+        s.color[i] = c;
+    }
+}
+
 /* The colours as the next line begins: this line's changes applied */
 static void apply_changes(void)
 {
     for (int i = 0; i < s.changes; i++) {
-        s.color[(s.change[i] >> 12) & 31] = s.change[i] & 0xFFF;
+        set_line_color(s.change[i].reg, s.change[i].rgb);
     }
-    for (int i = 0; s.late && i < 32; i++) {
-        if (s.late & (1u << i)) {
-            s.color[i] = s.late_value[i];
-            s.late &= ~(1u << i);
+    for (int w = 0; w < NCOLORS / 32; w++) {
+        while (s.late[w]) {
+            int b = __builtin_ctz(s.late[w]);
+            set_line_color(w * 32 + b, s.late_value[w * 32 + b]);
+            s.late[w] &= s.late[w] - 1;
         }
     }
     s.changes = 0;
@@ -708,7 +850,7 @@ AMI_HOT void display_line_end(void)
     }
     bool bpl = s.fetched && x0 < x1;
     /* the sprites showing their data on this line */
-    int nspr = 0;
+    int nspr = 0, nw = spr_words();
     uint8_t num[8];
     for (int i = 0; i < 8 && x0 < x1; i++) {
         const sprite_t *sp = &s.spr[i];
@@ -725,20 +867,24 @@ AMI_HOT void display_line_end(void)
     if (bpl || nspr) {
         h = mix(h, (uint32_t)s.con2 << 16 | s.bplcon2);
         h = mix(h, (uint32_t)x0 << 16 | (uint32_t)x1);
-        const uint32_t *c = (const uint32_t *)s.color;
-        for (int i = 0; i < 16; i++) {
-            h = mix(h, c[i]);
-        }
+        h = mix(h, s.pal_hash);
     } else {
         h = mix(h, s.color[0]);
+    }
+    if (ami.aga) {
+        h = mix(h, (uint32_t)(bpl ? s.con3 : s.bplcon3) << 16 | (bpl ? s.con4 : s.bplcon4));
+        h = mix(h, (uint32_t)s.fmode << 16 | (bpl ? s.fmode_line : 0));
     }
     for (int i = 0; i < nspr; i++) {
         const sprite_t *sp = &s.spr[num[i] & 7];
         h = mix(h, (uint32_t)num[i] << 24 | (uint32_t)(sp->pos & 0xFF) << 8 | (sp->ctl & 1));
-        h = mix(h, (uint32_t)sp->data << 16 | sp->datb);
+        for (int w = 0; w < nw; w++) {
+            h = mix(h, (uint32_t)sp->data[w] << 16 | sp->datb[w]);
+        }
     }
     for (int i = 0; i < s.changes; i++) {
-        h = mix(h, s.change[i]);
+        h = mix(h, (uint32_t)s.change[i].x << 16 | s.change[i].reg);
+        h = mix(h, s.change[i].rgb);
     }
     uint32_t key = h | 1;
     s.hash = mix(s.hash, key);
@@ -750,25 +896,30 @@ AMI_HOT void display_line_end(void)
         r->con0 = s.con0;
         r->con1 = s.con1;
         r->con2 = s.con2;
+        r->con3 = bpl ? s.con3 : s.bplcon3;
+        r->con4 = bpl ? s.con4 : s.bplcon4;
+        r->fmode = bpl ? s.fmode_line : s.fmode;
         r->first = (int16_t)s.first;
         r->x0 = (int16_t)x0;
         r->x1 = (int16_t)x1;
         r->planes = bpl ? (uint8_t)s.planes : 0;
-        r->words = (uint8_t)s.words;
+        r->ncolors = (uint8_t)(s.ncolors - 1);
+        r->words = (uint16_t)s.words;
         r->changes = (uint16_t)s.changes;
         r->sprites = (uint8_t)nspr;
+        r->spr_words = (uint8_t)nw;
         for (int i = 0; i < nspr; i++) {
             const sprite_t *sp = &s.spr[num[i] & 7];
             r->spr_num[i] = num[i];
             r->spr_x[i] = (int16_t)((((sp->pos & 0xFF) << 1) | (sp->ctl & 1)) - FIRST_LORES);
-            r->spr_a[i] = sp->data;
-            r->spr_b[i] = sp->datb;
+            memcpy(r->spr_a[i], sp->data, nw * sizeof(uint16_t));
+            memcpy(r->spr_b[i], sp->datb, nw * sizeof(uint16_t));
         }
         if (!bpl) {
             r->con2 = s.bplcon2;
         }
-        memcpy(r->color, s.color, sizeof(r->color));
-        memcpy(r->change, s.change, s.changes * sizeof(uint32_t));
+        memcpy(r->color, s.color, s.ncolors * sizeof(uint32_t));
+        memcpy(r->change, s.change, s.changes * sizeof(change_t));
         if (bpl) {
             memcpy(r->data, s.data, s.planes * s.words * sizeof(uint16_t));
         }
@@ -823,19 +974,24 @@ void display_next_field(bool lace)
 /* ---- The presenter's side: drawing the records ---- */
 
 /* The pixels of a line's planes from MARGIN on; before it room for the
- * scroll (a super-hires fetch from DDFSTRT $D8: 4 x (108 - 437 - 15))
+ * scroll (a super-hires fetch from DDFSTRT $D8: 4 x (108 - 437 - 15), and
+ * AGA's delays up to 255 more)
  */
-#define MARGIN          1408
-#define BUF             (MARGIN + 1664 + 64)
+#define MARGIN          1664
+#define BUF             (MARGIN + MAX_PLANE_WORDS * 16 + 64)
 
 static struct {
     uint8_t odd[BUF] __attribute__((aligned(8)));
     uint8_t even[BUF] __attribute__((aligned(8)));
     int filled;
-    uint16_t color[32];
-    uint16_t rgb[64];               /* 32-63: half bright */
-    uint16_t srgb[8];               /* super-hires: the 4 colours, the sprites' 4 */
-    uint16_t ham;
+    bool aga;                       /* the row being drawn: AGA's */
+    bool ehb;                       /* 6 planes are 32 colours and their halves */
+    uint8_t bplam;                  /* AGA: XORed into the pixels */
+    uint32_t color[NCOLORS];        /* 24-bit */
+    uint16_t rgb[NCOLORS];          /* RGB565 */
+    uint16_t pix[NCOLORS];          /* a pixel's RGB565 (EHB's halves, BPLAM) */
+    uint16_t srgb[8];               /* ECS super-hires: the 4 colours, the sprites' 4 */
+    uint32_t ham;
     const row_t *row;               /* the row in line[] */
     uint32_t key;
     bool wide;                      /* line[] drawn WIDE_W wide */
@@ -843,11 +999,28 @@ static struct {
     uint16_t tmp[WIDE_W] __attribute__((aligned(4)));
 } d;
 
-static inline void set_color(int reg, uint16_t v)
+/* Half a colour (EHB): OCS's and ECS's halve the 4-bit guns */
+static inline uint32_t half(uint32_t c)
 {
-    d.color[reg] = v;
-    d.rgb[reg] = s_rgb565[v];
-    d.rgb[reg + 32] = s_rgb565[(v >> 1) & 0x777];
+    if (d.aga) {
+        return (c >> 1) & 0x7F7F7F;
+    }
+    uint16_t c12 = (uint16_t)(((c >> 12) & 0xF00) | ((c >> 8) & 0xF0) | ((c >> 4) & 0xF));
+    return expand12((c12 >> 1) & 0x777);
+}
+
+static inline void set_color(int reg, uint32_t c)
+{
+    d.color[reg] = c;
+    d.rgb[reg] = to565(c);
+    if (d.ehb) {
+        if (reg < 32) {
+            d.pix[reg] = d.rgb[reg];
+            d.pix[reg + 32] = to565(half(c));
+        }
+    } else {
+        d.pix[reg ^ d.bplam] = d.rgb[reg];
+    }
 }
 
 /* (a and b even) */
@@ -859,100 +1032,163 @@ static void fill(uint16_t *out, int a, int b, uint16_t c)
     }
 }
 
+/* The scroll delays of the odd and even planes, in super-hires pixels
+ * (AGA's eight bits each; OCS's four in lores pixels)
+ */
+static void delays(const row_t *r, int *d1, int *d2)
+{
+    uint16_t c = r->con1;
+    *d1 = (c & 15) << 2;
+    *d2 = ((c >> 4) & 15) << 2;
+    if (d.aga) {
+        *d1 |= ((c >> 8) & 3) | ((c >> 10) & 3) << 6;
+        *d2 |= ((c >> 12) & 3) | ((c >> 14) & 3) << 6;
+    }
+}
+
+/* Dual playfield's colour of a pixel (pf2 offset: AGA's BPLCON3, else 8) */
+static inline int dpf_index(const row_t *r, int v)
+{
+    static const uint8_t offset[8] = { 0, 2, 4, 8, 16, 32, 64, 128 };
+    int p1 = s_pf1[v], p2 = s_pf2[v];
+    int o2 = d.aga ? offset[(r->con3 >> 10) & 7] : 8;
+    bool pri2 = r->con2 & BPLCON2_PF2PRI;
+    return pri2 ? (p2 ? o2 + p2 : p1) : (p1 ? p1 : p2 ? o2 + p2 : 0);
+}
+
+/* HAM: 6 planes (the top two say what the low four do) or AGA's 8 (the
+ * low two say what the top six do)
+ */
+static inline uint32_t ham_pixel(int v, bool ham8)
+{
+    uint32_t c = d.ham;
+    if (ham8) {
+        int val = v >> 2;
+        switch (v & 3) {
+        case 0: c = d.color[val]; break;
+        case 1: c = (c & 0xFFFF00) | (uint32_t)(val << 2) | (c & 3); break;
+        case 2: c = (c & 0x00FFFF) | (uint32_t)(val << 2) << 16 | (c & 0x030000); break;
+        default: c = (c & 0xFF00FF) | (uint32_t)(val << 2) << 8 | (c & 0x0300); break;
+        }
+    } else {
+        int val = v & 15;
+        switch ((v >> 4) & 3) {
+        case 0: c = d.color[val]; break;
+        case 1: c = (c & 0xFFFF00) | (uint32_t)(val * 17); break;
+        case 2: c = (c & 0x00FFFF) | (uint32_t)(val * 17) << 16; break;
+        default: c = (c & 0xFF00FF) | (uint32_t)(val * 17) << 8; break;
+        }
+    }
+    d.ham = c;
+    return c;
+}
+
 static void compose(const row_t *r, uint16_t *out, int xa, int xb)
 {
     uint16_t con0 = r->con0;
-    int d1 = r->con1 & 15, d2 = (r->con1 >> 4) & 15;
+    int d1, d2;
+    delays(r, &d1, &d2);
+    bool ham = (con0 & BPLCON0_HAM) && r->planes >= 5, ham8 = ham && r->planes == 8;
     if (con0 & BPLCON0_HIRES) {
-        const uint8_t *po = d.odd + MARGIN + 2 * (FIRST_LORES - r->first - d1);
-        const uint8_t *pe = d.even + MARGIN + 2 * (FIRST_LORES - r->first - d2);
+        const uint8_t *po = d.odd + MARGIN + 2 * (FIRST_LORES - r->first) - d1 / 2;
+        const uint8_t *pe = d.even + MARGIN + 2 * (FIRST_LORES - r->first) - d2 / 2;
         if (con0 & BPLCON0_DPF) {
-            bool pri2 = r->con2 & BPLCON2_PF2PRI;
             for (int x = xa; x < xb; x++) {
-                int v = po[x] | pe[x];
-                int p1 = s_pf1[v], p2 = s_pf2[v];
-                int i = pri2 ? (p2 ? 8 + p2 : p1) : (p1 ? p1 : p2 ? 8 + p2 : 0);
-                out[x] = d.rgb[i];
+                out[x] = d.rgb[dpf_index(r, po[x] | pe[x])];
+            }
+            return;
+        }
+        if (ham) {
+            for (int x = xa; x < xb; x++) {
+                out[x] = to565(ham_pixel(po[x] | pe[x], ham8));
             }
             return;
         }
         for (int x = xa; x < xb; x++) {
-            out[x] = d.rgb[po[x] | pe[x]];
+            out[x] = d.pix[po[x] | pe[x]];
         }
         return;
     }
-    const uint8_t *po = d.odd + MARGIN + FIRST_LORES - r->first - d1;
-    const uint8_t *pe = d.even + MARGIN + FIRST_LORES - r->first - d2;
+    const uint8_t *po = d.odd + MARGIN + FIRST_LORES - r->first - d1 / 4;
+    const uint8_t *pe = d.even + MARGIN + FIRST_LORES - r->first - d2 / 4;
     uint32_t *o32 = (uint32_t *)out;
     int pa = xa / 2, pb = xb / 2;
     if (con0 & BPLCON0_DPF) {
-        bool pri2 = r->con2 & BPLCON2_PF2PRI;
         for (int p = pa; p < pb; p++) {
-            int v = po[p] | pe[p];
-            int p1 = s_pf1[v], p2 = s_pf2[v];
-            int i = pri2 ? (p2 ? 8 + p2 : p1) : (p1 ? p1 : p2 ? 8 + p2 : 0);
-            o32[p] = d.rgb[i] * 0x10001u;
+            o32[p] = d.rgb[dpf_index(r, po[p] | pe[p])] * 0x10001u;
         }
         return;
     }
-    if ((con0 & BPLCON0_HAM) && r->planes >= 5) {
-        uint16_t ham = d.ham;
+    if (ham) {
         for (int p = pa; p < pb; p++) {
-            int v = po[p] | pe[p], val = v & 15;
-            switch (v >> 4) {
-            case 0: ham = d.color[val]; break;
-            case 1: ham = (uint16_t)((ham & 0xFF0) | val); break;
-            case 2: ham = (uint16_t)((ham & 0x0FF) | (val << 8)); break;
-            default: ham = (uint16_t)((ham & 0xF0F) | (val << 4)); break;
-            }
-            o32[p] = s_rgb565[ham] * 0x10001u;
+            o32[p] = to565(ham_pixel(po[p] | pe[p], ham8)) * 0x10001u;
         }
-        d.ham = ham;
         return;
     }
     for (int p = pa; p < pb; p++) {
-        o32[p] = d.rgb[po[p] | pe[p]] * 0x10001u;
+        o32[p] = d.pix[po[p] | pe[p]] * 0x10001u;
     }
 }
 
-/* Super-hires colours from the registers (see the top) */
+/* ECS super-hires colours from the registers (see the top) */
 static void shres_colors(void)
 {
     for (int v = 0; v < 8; v++) {
-        uint16_t c = d.color[(v & 4) * 4 + 5 * (v & 3)];
-        d.srgb[v] = s_rgb565[s_shres_gun[c >> 8] << 8 | s_shres_gun[(c >> 4) & 15] << 4 | s_shres_gun[c & 15]];
+        uint32_t c = d.color[(v & 4) * 4 + 5 * (v & 3)];
+        uint16_t c12 = (uint16_t)(s_shres_gun[(c >> 20) & 15] << 8 | s_shres_gun[(c >> 12) & 15] << 4 |
+                                  s_shres_gun[(c >> 4) & 15]);
+        d.srgb[v] = to565(expand12(c12));
     }
+}
+
+/* The border's colour: colour 0, or black (AGA's BRDRBLNK) */
+static inline uint16_t border(const row_t *r)
+{
+    return d.aga && (r->con3 & BPLCON3_BRDRBLNK) ? 0 : d.rgb[0];
 }
 
 static void span(const row_t *r, uint16_t *out, int a, int b)
 {
     int ws = a > r->x0 ? a : r->x0, we = b < r->x1 ? b : r->x1;
-    if (r->planes == 0 || ws >= we) {
-        fill(out, a, b, d.rgb[0]);
+    uint16_t bc = border(r);
+    if (ws >= we) {
+        fill(out, a, b, bc);
         return;
     }
-    fill(out, a, ws, d.rgb[0]);
-    compose(r, out, ws, we);
-    fill(out, we, b, d.rgb[0]);
+    fill(out, a, ws, bc);
+    if (r->planes == 0) {
+        fill(out, ws, we, d.rgb[0]);
+    } else {
+        compose(r, out, ws, we);
+    }
+    fill(out, we, b, bc);
 }
 
 /* The playfield's priority code at a picture pixel (BPLCON2: a sprite pair
  * shows in front of a playfield whose code is above the pair's number), or
- * 8 where the playfields are transparent
+ * 8 where the playfields are transparent; scale: the picture's pixels a
+ * hires one (2 in a super-hires frame)
  */
-static int pf_code(const row_t *r, int x)
+static int pf_code(const row_t *r, int x, int scale)
 {
-    if (r->planes == 0 || x < r->x0 || x >= r->x1) {
+    int x0 = r->x0 * scale, x1 = r->x1 * scale;
+    if (r->planes == 0 || x < x0 || x >= x1) {
         return 8;
     }
     uint16_t con0 = r->con0;
-    int d1 = r->con1 & 15, d2 = (r->con1 >> 4) & 15;
+    int d1, d2;
+    delays(r, &d1, &d2);
     int v;
-    if (con0 & BPLCON0_HIRES) {
-        v = d.odd[MARGIN + 2 * (FIRST_LORES - r->first - d1) + x] | d.even[MARGIN + 2 * (FIRST_LORES - r->first - d2) + x];
+    if (con0 & BPLCON0_SHRES) {
+        int sx = scale == 2 ? x : 2 * x;
+        v = d.odd[MARGIN + 4 * (FIRST_LORES - r->first) - d1 + sx] | d.even[MARGIN + 4 * (FIRST_LORES - r->first) - d2 + sx];
+    } else if (con0 & BPLCON0_HIRES) {
+        int hx = x / scale;
+        v = d.odd[MARGIN + 2 * (FIRST_LORES - r->first) - d1 / 2 + hx] |
+            d.even[MARGIN + 2 * (FIRST_LORES - r->first) - d2 / 2 + hx];
     } else {
-        int p = x / 2;
-        v = d.odd[MARGIN + FIRST_LORES - r->first - d1 + p] | d.even[MARGIN + FIRST_LORES - r->first - d2 + p];
+        int p = x / (2 * scale);
+        v = d.odd[MARGIN + FIRST_LORES - r->first - d1 / 4 + p] | d.even[MARGIN + FIRST_LORES - r->first - d2 / 4 + p];
     }
     int pf1p = r->con2 & 7, pf2p = (r->con2 >> 3) & 7;
     if (con0 & BPLCON0_DPF) {
@@ -966,111 +1202,129 @@ static int pf_code(const row_t *r, int x)
     return v ? pf2p : 8;
 }
 
-/* A super-hires line's playfield priority code at a pixel (as pf_code()) */
-static int pf_code_shres(const row_t *r, int x)
-{
-    if (r->planes == 0 || x < 2 * r->x0 || x >= 2 * r->x1) {
-        return 8;
-    }
-    int d1 = r->con1 & 15, d2 = (r->con1 >> 4) & 15;
-    int v = d.odd[MARGIN + 4 * (FIRST_LORES - r->first - d1) + x] | d.even[MARGIN + 4 * (FIRST_LORES - r->first - d2) + x];
-    return v ? (r->con2 >> 3) & 7 : 8;
-}
-
 /* The sprites over the line: lower numbers in front, then the playfields'
- * priorities; shres: a super-hires line (4 pixels a lores one)
+ * priorities. Worked out in super-hires pixels (4 a lores one); a sprite
+ * pixel is 4 of them, AGA's hires and super-hires ones (BPLCON3's SPRES)
+ * 2 and 1. wide: a super-hires frame (the picture's pixels are those).
  */
-static void draw_sprites(const row_t *r, uint16_t *out, bool shres)
+#define SPR_UNITS       (4 * 360)
+
+static void draw_sprites(const row_t *r, uint16_t *out, bool wide)
 {
-    static uint8_t col[360];            /* colour (16-31) or 0, per lores pixel */
-    static uint8_t pair[360];
-    int lo = 360, hi = 0;
+    static uint8_t col[SPR_UNITS];      /* colour or 0, per super-hires pixel */
+    static uint8_t pair[SPR_UNITS];
+    int lo = SPR_UNITS, hi = 0;
+    int nw = r->spr_words, width = 16 * nw;
+    int spres = d.aga ? (r->con3 >> 6) & 3 : 0;
+    int unit = spres == 2 ? 2 : spres == 3 ? 1 : 4;
+    int ebank = d.aga ? ((r->con4 >> 4) & 15) * 16 : 16, obank = d.aga ? (r->con4 & 15) * 16 : 16;
     for (int k = r->sprites - 1; k >= 0; k--) {
         int n = r->spr_num[k] & 7;
         bool attached = r->spr_num[k] & 0x80;
-        int x = r->spr_x[k];
-        uint16_t a = r->spr_a[k], b = r->spr_b[k];
+        int x = 4 * r->spr_x[k];
+        const uint16_t *a = r->spr_a[k], *b = r->spr_b[k];
         /* an attached odd sprite: its bits over its partner's (k - 1) */
-        uint16_t pa = 0, pb = 0;
+        const uint16_t *pa = NULL, *pb = NULL;
         if (attached && k > 0 && (r->spr_num[k - 1] & 7) == n - 1) {
             pa = r->spr_a[k - 1];
             pb = r->spr_b[k - 1];
         }
-        for (int i = 0; i < 16; i++) {
-            int p = x + i;
-            if (p < 0 || p >= 360) {
-                continue;
-            }
-            int bit = 15 - i;
-            int v = ((a >> bit) & 1) | (((b >> bit) & 1) << 1);
+        for (int i = 0; i < width; i++) {
+            int bit = 15 - (i & 15), w = i >> 4;
+            int v = ((a[w] >> bit) & 1) | (((b[w] >> bit) & 1) << 1);
             int c;
             if (attached) {
-                v = (v << 2) | ((pa >> bit) & 1) | (((pb >> bit) & 1) << 1);
-                c = 16 + v;
+                v <<= 2;
+                if (pa) {
+                    v |= ((pa[w] >> bit) & 1) | (((pb[w] >> bit) & 1) << 1);
+                }
+                c = obank + v;
             } else {
-                c = 16 + (n >> 1) * 4 + v;
+                c = ((n & 1) ? obank : ebank) + (n >> 1) * 4 + v;
             }
-            if (v) {
-                col[p] = (uint8_t)c;
-                pair[p] = (uint8_t)(n >> 1);
-                lo = p < lo ? p : lo;
-                hi = p > hi ? p : hi;
+            if (!v) {
+                continue;
+            }
+            for (int u = x + i * unit; u < x + (i + 1) * unit; u++) {
+                if (u >= 0 && u < SPR_UNITS) {
+                    col[u] = (uint8_t)c;
+                    pair[u] = (uint8_t)(n >> 1);
+                    lo = u < lo ? u : lo;
+                    hi = u > hi ? u : hi;
+                }
             }
         }
-        if (attached && k > 0 && (r->spr_num[k - 1] & 7) == n - 1) {
+        if (pa) {
             k--;                        /* (its partner drawn with it) */
         }
     }
-    for (int p = lo; p <= hi; p++) {
-        if (!col[p]) {
+    bool ecs_shres = wide && !d.aga && (r->con0 & BPLCON0_SHRES) && r->planes;
+    int step = wide ? 1 : 2, scale = wide ? 2 : 1;
+    int x0 = r->x0 * scale, x1 = r->x1 * scale;
+    for (int u = lo; u <= hi; u++) {
+        if (!col[u]) {
             continue;
         }
-        if (shres) {
-            for (int x = 4 * p; x < 4 * p + 4; x++) {
-                if (x >= 2 * r->x0 && x < 2 * r->x1 && pair[p] < pf_code_shres(r, x)) {
-                    out[x] = d.srgb[4 + ((col[p] - 16) & 3)];
-                }
-            }
-        } else {
-            for (int x = 2 * p; x < 2 * p + 2; x++) {
-                if (x >= r->x0 && x < r->x1 && pair[p] < pf_code(r, x)) {
-                    out[x] = d.rgb[col[p]];
-                }
+        if (u % step == 0) {
+            int x = u / step;
+            if (x >= x0 && x < x1 && pair[u] < pf_code(r, x, scale)) {
+                out[x] = ecs_shres ? d.srgb[4 + ((col[u] - 16) & 3)] : d.rgb[col[u]];
             }
         }
-        col[p] = 0;
+        col[u] = 0;
     }
 }
 
-/* A super-hires line, WIDE_W pixels (the planes already in odd[], even[]) */
+/* A super-hires line, WIDE_W pixels (the planes already in odd[], even[]):
+ * ECS's 4 colours, AGA's own
+ */
 static void draw_shres(const row_t *r, uint16_t *out)
 {
-    int d1 = r->con1 & 15, d2 = (r->con1 >> 4) & 15;
-    const uint8_t *po = d.odd + MARGIN + 4 * (FIRST_LORES - r->first - d1);
-    const uint8_t *pe = d.even + MARGIN + 4 * (FIRST_LORES - r->first - d2);
+    int d1, d2;
+    delays(r, &d1, &d2);
+    const uint8_t *po = d.odd + MARGIN + 4 * (FIRST_LORES - r->first) - d1;
+    const uint8_t *pe = d.even + MARGIN + 4 * (FIRST_LORES - r->first) - d2;
     int x0 = 2 * r->x0, x1 = 2 * r->x1;
-    shres_colors();
+    bool ham = (r->con0 & BPLCON0_HAM) && r->planes >= 5, ham8 = ham && r->planes == 8;
+    if (!d.aga) {
+        shres_colors();
+    }
     int ci = 0, x = 0, n = r->changes;
     while (x < WIDE_W) {
         bool changed = false;
-        while (ci < n && 2 * (int)(r->change[ci] >> 20) <= x) {
-            set_color((r->change[ci] >> 12) & 31, r->change[ci] & 0xFFF);
+        while (ci < n && 2 * (int)r->change[ci].x <= x) {
+            set_color(r->change[ci].reg, r->change[ci].rgb);
             ci++;
             changed = true;
         }
-        if (changed) {
+        if (changed && !d.aga) {
             shres_colors();
         }
-        int end = ci < n ? 2 * (int)(r->change[ci] >> 20) : WIDE_W;
+        uint16_t bc = d.aga ? border(r) : d.srgb[0];
+        int end = ci < n ? 2 * (int)r->change[ci].x : WIDE_W;
         int ws = x > x0 ? x : x0, we = end < x1 ? end : x1;
         if (ws >= we) {
-            fill(out, x, end, d.srgb[0]);
+            fill(out, x, end, bc);
         } else {
-            fill(out, x, ws, d.srgb[0]);
-            for (int i = ws; i < we; i++) {
-                out[i] = d.srgb[po[i] | pe[i]];
+            fill(out, x, ws, bc);
+            if (!d.aga) {
+                for (int i = ws; i < we; i++) {
+                    out[i] = d.srgb[po[i] | pe[i]];
+                }
+            } else if (r->con0 & BPLCON0_DPF) {
+                for (int i = ws; i < we; i++) {
+                    out[i] = d.rgb[dpf_index(r, po[i] | pe[i])];
+                }
+            } else if (ham) {
+                for (int i = ws; i < we; i++) {
+                    out[i] = to565(ham_pixel(po[i] | pe[i], ham8));
+                }
+            } else {
+                for (int i = ws; i < we; i++) {
+                    out[i] = d.pix[po[i] | pe[i]];
+                }
             }
-            fill(out, we, end, d.srgb[0]);
+            fill(out, we, end, bc);
         }
         x = end;
     }
@@ -1086,7 +1340,11 @@ static void draw(const row_t *r, uint16_t *out, bool wide)
         memset(out, 0, (wide ? WIDE_W : PIC_W) * sizeof(uint16_t));
         return;
     }
-    for (int i = 0; i < 32; i++) {
+    int ncolors = r->ncolors + 1;
+    d.aga = ncolors > 32;
+    d.ehb = !d.aga || (r->planes == 6 && !(r->con0 & (BPLCON0_HAM | BPLCON0_DPF)) && !(r->con2 & BPLCON2_KILLEHB));
+    d.bplam = d.aga && !d.ehb ? (uint8_t)(r->con4 >> 8) : 0;
+    for (int i = 0; i < ncolors; i++) {
         set_color(i, r->color[i]);
     }
     if (r->planes) {
@@ -1104,6 +1362,7 @@ static void draw(const row_t *r, uint16_t *out, bool wide)
             }
         }
     }
+    d.ham = d.color[0];
     if (r->planes && (r->con0 & BPLCON0_SHRES)) {
         if (wide) {
             draw_shres(r, out);
@@ -1116,14 +1375,13 @@ static void draw(const row_t *r, uint16_t *out, bool wide)
         }
         return;
     }
-    d.ham = d.color[0];
     int ci = 0, x = 0, n = r->changes;
     while (x < PIC_W) {
-        while (ci < n && (int)(r->change[ci] >> 20) <= x) {
-            set_color((r->change[ci] >> 12) & 31, r->change[ci] & 0xFFF);
+        while (ci < n && (int)r->change[ci].x <= x) {
+            set_color(r->change[ci].reg, r->change[ci].rgb);
             ci++;
         }
-        int end = ci < n ? (int)(r->change[ci] >> 20) : PIC_W;
+        int end = ci < n ? (int)r->change[ci].x : PIC_W;
         span(r, out, x, end);
         x = end;
     }

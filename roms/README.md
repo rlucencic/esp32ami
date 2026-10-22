@@ -11,6 +11,8 @@ names are the ones in those sets:
 | `amiga-os-204.rom` | 2.04 (37.175): A500+ | 512 KB | `kick_204` |
 | `amiga-os-205-a600.rom` | 2.05 (37.350): A600 | 512 KB | `kick_205_a600` |
 | `amiga-os-310-a600.rom` | 3.1 (40.63): A500, A600, A2000 | 512 KB | `kick_310_a600` |
+| `amiga-os-300-a1200.rom` | 3.0 (39.106): A1200 | 512 KB | `kick_300_a1200` |
+| `amiga-os-310-a1200.rom` | 3.1 (40.68): A1200 | 512 KB | `kick_310_a1200` |
 | `aros-20250422.rom`, `aros-20250422-ext.rom` | AROS (free; the setup screen's Kickstart "AROS", with its extension ROM at $E00000) | 512 KB each | `kick_aros`, `kick_aros_ext` |
 
 `idf.py flash` writes them to their partitions. Without flashing, the

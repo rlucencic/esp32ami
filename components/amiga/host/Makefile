@@ -4,7 +4,7 @@ MUSASHI   := ../../../../esp32emu/components/musashi
 EMUDBG    := ../../../../esp32emu/components/emudbg
 AMI       := ..
 BUILD     := build
-CFLAGS    := -O2 -g -Wall -Wextra -Wno-unused-parameter -DM68K_INSTRUCTION_HOOK=2 -I$(AMI)/include -I$(AMI) -I$(MUSASHI) -I$(MUSASHI)/musashi -I$(MUSASHI)/generated -I$(EMUDBG)/include
+CFLAGS    := -O2 -g -Wall -Wextra -Wno-unused-parameter -DM68K_INSTRUCTION_HOOK=2 -DM68K_RUNTIME -I$(AMI)/include -I$(AMI) -I$(MUSASHI) -I$(MUSASHI)/musashi -I$(MUSASHI)/generated -I$(EMUDBG)/include
 KICK      ?= $(ROOT)/roms/amiga-os-130.rom
 FRAMES    ?= 500
 

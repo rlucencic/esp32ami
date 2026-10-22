@@ -106,15 +106,16 @@ static bool reached(uint16_t ir1, uint16_t ir2, int line, int h)
  */
 static int wait_until(uint16_t ir1, uint16_t ir2, int t)
 {
-    int cck = (t + 1) / 2;
-    int line = cck / CCK_LINE, h = cck % CCK_LINE;
+    int line, h;
+    ami_beam_at((t + 1) / 2, &line, &h);
     int vm = 0x80 | ((ir2 >> 8) & 0x7F), hm = ir2 & 0xFE;
     int tv = (ir1 >> 8) & vm, th = ir1 & 0xFE & hm;
     h = (h + 1) & ~1;
     for (; line < ami.lines; line++, h = 0) {
         int v = line & 0xFF & vm;
+        int start = ami_line_start(line), cck = ami_line_cck(line);
         if (v > tv) {
-            return (line * CCK_LINE + h) * 2;
+            return start + h * 2;
         }
         if (v < tv) {
             continue;
@@ -123,14 +124,14 @@ static int wait_until(uint16_t ir1, uint16_t ir2, int t)
             if (h < th) {
                 h = th;
             }
-            if (h < CCK_LINE) {
-                return (line * CCK_LINE + h) * 2;
+            if (h < cck) {
+                return start + h * 2;
             }
             continue;
         }
-        for (; h < CCK_LINE; h += 2) {
+        for (; h < cck; h += 2) {
             if ((h & hm) >= th) {
-                return (line * CCK_LINE + h) * 2;
+                return start + h * 2;
             }
         }
     }
@@ -196,8 +197,9 @@ void copper_run(int now, int limit)
         int t = cop.at + 8;
         if (ir2 & 1) {
             /* SKIP the next instruction once the beam is there */
-            int cck = t / 2;
-            if (reached(ir1, ir2, cck / CCK_LINE, cck % CCK_LINE)) {
+            int line, h;
+            ami_beam_at(t / 2, &line, &h);
+            if (reached(ir1, ir2, line, h)) {
                 cop.pc += 4;
             }
             cop.at = t;
