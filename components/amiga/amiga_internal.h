@@ -88,7 +88,6 @@ typedef struct {
     bool aga;                       /* the A1200's Alice and Lisa */
     int cpu_shift;                  /* the CPU's clocks a time unit: 1 << shift (the A1200's 68EC020: 2) */
     int cpu_rem;                    /* (cpu_shift) its clocks not yet a whole unit */
-    int cpu_waited;                 /* the 68EC020's clocks waiting for the chip bus in this slice */
 
     /* Memory, each 16-bit word in host order (byte n at index n ^ 1); the
      * 68000's view through 64 KB banks (NULL: the slow path)
@@ -183,7 +182,6 @@ static inline void ami_beam_at(int cck, int *line, int *h)
 
 /* amiga.c */
 void ami_update_irq(void);
-void ami_cpu_wait(int clocks);      /* the 68EC020 waits for the chip bus (its clocks) */
 void ami_set_intreq(uint16_t bits);
 void ami_cpu_wake(void);            /* an earlier event was scheduled: end the CPU's slice */
 
@@ -243,8 +241,19 @@ uint8_t autoconf_read8(uint32_t a);
 uint16_t autoconf_read16(uint32_t a);
 void autoconf_write8(uint32_t a, uint8_t v);
 void autoconf_write16(uint32_t a, uint16_t v);
-uint16_t chip_read16(uint32_t address);
-void chip_write16(uint32_t address, uint16_t value);
+/* Agnus's DMA in chip RAM (its address lines: chip_mask), a word in host
+ * order. Inline: every DMA word (planes, sprites, copper, blitter, sound,
+ * disk) comes this way.
+ */
+static inline uint16_t chip_read16(uint32_t a)
+{
+    return *(const uint16_t *)(ami.chip + (a & ami.chip_mask & ~1u));
+}
+
+static inline void chip_write16(uint32_t a, uint16_t v)
+{
+    *(uint16_t *)(ami.chip + (a & ami.chip_mask & ~1u)) = v;
+}
 
 /* custom.c: $DFF000-$DFF1FE (register offsets) */
 uint16_t custom_read(uint32_t reg);
@@ -346,13 +355,26 @@ uint8_t floppy_status(void);    /* CIA-A PRA bits 5-2: /RDY /TK0 /WPRO /CHNG */
 void floppy_line(int cycles);   /* the disks turn */
 void floppy_write(uint32_t reg, uint16_t value);
 uint16_t floppy_dskbytr(void);
-const uint8_t *floppy_image(int drive);     /* its ADF (NULL: none, extended) */
+const uint8_t *floppy_image(int drive, uint32_t *blocks);  /* its ADF (NULL: none, extended) */
 
 /* space.c: the disks' free space for the web page */
 void space_frame(void);                     /* once a frame, from the frame loop */
 
+/* (Musashi's m68k_cycles_run(), inline: VPOSR polls ask often) */
 static inline int ami_now(void)
 {
-    extern int m68k_cycles_run(void);
-    return ami.cycle + (ami.cpu_running ? (m68k_cycles_run() + ami.cpu_waited + ami.cpu_rem) >> ami.cpu_shift : 0);
+    extern int m68ki_initial_cycles, m68ki_remaining_cycles;
+    return ami.cycle + (ami.cpu_running ? (m68ki_initial_cycles - m68ki_remaining_cycles + ami.cpu_rem) >> ami.cpu_shift
+                                        : 0);
+}
+
+/* The 68EC020 waits for the chip bus (its clocks): taken from the slice's
+ * remaining cycles, it ends that much sooner and m68k_execute() counts
+ * them as run (outside a slice, the next one starts its count afresh).
+ * Inline: a call on each access to chip RAM was 18% of core 1.
+ */
+static inline void ami_cpu_wait(int clocks)
+{
+    extern int m68ki_remaining_cycles;
+    m68ki_remaining_cycles -= clocks;
 }

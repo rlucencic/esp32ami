@@ -12,9 +12,16 @@ static uint16_t agnus_id(void)
     return (ami.aga ? 0x23 : ami.ecs ? 0x20 : 0x00) | (ami.ntsc ? 0x10 : 0x00);
 }
 
+/* (polled: within the current line, where the CPU runs, without dividing) */
 static void beam(int *line, int *h)
 {
-    ami_beam_at(ami_now() / 2, line, h);
+    int t = ami_now(), d = t - ami.line_start;
+    if (d >= 0 && d < ami_line_cck(ami.line) * 2) {
+        *line = ami.line;
+        *h = d / 2;
+    } else {
+        ami_beam_at(t / 2, line, h);
+    }
     if (*line >= ami.lines) {
         *line -= ami.lines;
     }

@@ -80,16 +80,6 @@ void mem_update_map(void)
     }
 }
 
-uint16_t chip_read16(uint32_t a)
-{
-    return rd16(ami.chip, a & ami.chip_mask & ~1u);
-}
-
-void chip_write16(uint32_t a, uint16_t v)
-{
-    wr16(ami.chip, a & ami.chip_mask & ~1u, v);
-}
-
 /* ---- The CIAs: CIA-A on the data bus's low byte, CIA-B on the high one.
  * A byte write reaches both halves of the bus (the 68000 puts it on both),
  * so it goes to whichever chip is selected.

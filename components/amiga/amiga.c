@@ -44,15 +44,6 @@ void ami_set_intreq(uint16_t bits)
     ami_update_irq();
 }
 
-/* The slice ends that much sooner; the time counts all the same */
-void ami_cpu_wait(int clocks)
-{
-    if (ami.cpu_running) {
-        m68k_modify_timeslice(-clocks);
-        ami.cpu_waited += clocks;
-    }
-}
-
 void ami_cpu_wake(void)
 {
     if (ami.cpu_running) {
@@ -334,11 +325,9 @@ static void run_cpu(int until)
         }
     }
     /* (the 68EC020 runs two of its clocks a 68000 one: the remainder kept) */
-    ami.cpu_waited = 0;
     ami.cpu_running = true;
-    int used = m68k_execute((until - ami.cycle) << ami.cpu_shift) + ami.cpu_waited + ami.cpu_rem;
+    int used = m68k_execute((until - ami.cycle) << ami.cpu_shift) + ami.cpu_rem;
     ami.cpu_running = false;
-    ami.cpu_waited = 0;
     ami.cycle += used >> ami.cpu_shift;
     ami.cpu_rem = used & ((1 << ami.cpu_shift) - 1);
 }

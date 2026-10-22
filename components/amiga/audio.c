@@ -6,6 +6,8 @@
  * and the interrupt raised (the program can set up the next buffer); at
  * the buffer's end they're copied again and the interrupt raised again.
  * Without DMA, a word written to AUDxDAT plays and raises the interrupt.
+ * When a channel's DMA goes off, the word playing finishes, then the
+ * interrupt (replay routines stop a channel and wait for it).
  *
  * Mixed channels 0 and 3 left, 1 and 2 right, averaged over each sample's
  * time at AMIGA_AUDIO_HZ, through the A500's fixed low-pass filter (and the
@@ -26,6 +28,7 @@ typedef struct {
     int byte;                           /* 0 its high byte, 1 the low */
     int32_t cnt;                        /* 1/256 colour clocks of the byte left */
     bool dma;                           /* playing from memory */
+    bool drain;                         /* its DMA went off: the word finishing */
     bool playing;
     int out;                            /* the sample x the volume */
 } chan_t;
@@ -89,6 +92,7 @@ static void start_dma(int c)
 {
     chan_t *ch = &au.ch[c];
     ch->dma = true;
+    ch->drain = false;
     ch->playing = true;
     ch->left = 0;
     fetch(c);
@@ -107,8 +111,13 @@ static void next_byte(int c)
         fetch(c);
         ch->byte = 0;
     } else {
-        /* a written word played: its interrupt, then the last sample holds */
+        /* a written word played: its interrupt, then the last sample holds;
+         * the last word of a DMA turned off: its interrupt, then silence */
         ch->playing = false;
+        if (ch->drain) {
+            ch->drain = false;
+            ch->out = 0;
+        }
         ami_set_intreq((uint16_t)(INT_AUD0 << c));
         return;
     }
@@ -125,8 +134,7 @@ void audio_dma_changed(void)
             start_dma(c);
         } else if (!on && ch->dma) {
             ch->dma = false;
-            ch->playing = false;
-            ch->out = 0;
+            ch->drain = true;
         }
     }
 }
@@ -157,6 +165,7 @@ void audio_write(uint32_t reg, uint16_t v)
     case 0xA:
         if (!ch->dma) {
             ch->dat = v;
+            ch->drain = false;
             ch->byte = 0;
             ch->cnt = period_of(ch) * 256;
             ch->playing = true;

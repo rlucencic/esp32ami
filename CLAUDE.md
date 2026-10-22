@@ -5,7 +5,8 @@ a 68EC020 at 14.19 MHz) on the M5Stack
 Tab5 (ESP32-P4) only: the user's call, the MaTouch's S3 hasn't the speed for
 the 68000 and the custom chips together. Plan and decisions: `docs/architecture.md`
 (its phases table; phases 1 to 6 are done, 7, the A1200, under way: see
-Progress there).
+Progress there). **What's next: `TODO.md`**, the remaining work sketched
+and in order; asked "what's next", name its first item.
 ESP-IDF
 v5.5.4, C.
 
@@ -113,6 +114,7 @@ images.
 | `tools/laceboot.py` | A boot disk that tests interlace (white long frames, black short ones) |
 | `tools/mkinstall.py` | A Workbench floppy that formats DH0: and copies itself onto it (the hard disk test) |
 | `tools/hdrom.py` | Assembles the hard disk board's boot ROM into `components/amiga/hdrom.h` |
+| `tools/collection.py` | Runs a folder of RP9 games on two host builds and compares their pictures (see Testing) |
 | `main/web/amifiles.js` | The web page's converters (served as /machine.js): DMS archives, gzipped images |
 | `tools/amifiles_test.js` | Its test: `node tools/amifiles_test.js [folder of DMS+ADF pairs]` |
 | `roms/` | The Kickstarts (copyrighted, not distributed) |
@@ -161,7 +163,11 @@ images.
   4-clock rounding. It waits for the chip bus (`mem.c`): `WAIT_CHIP` (5) of
   its clocks an access to chip RAM (32 bits at once), `WAIT_CUSTOM` (8) the
   chips, `WAIT_CIA` (20) a CIA; ROM and fast RAM none (`ami_cpu_wait()`:
-  the slice ends sooner, the time counts). SysInfo 4.4: 1.03 times an
+  the slice ends sooner, the time counts: inline, taken from Musashi's
+  remaining cycles). No bus errors on the Amiga: `CONFIG_M68K_NO_BUS_ERRORS`
+  (`-DM68K_NO_BUS_ERRORS` in the host build) spares the 68EC020 Musashi's
+  copy of its 16 registers before every instruction (the host's Aerial
+  Racers run 37% faster, the pictures the same). SysInfo 4.4: 1.03 times an
   A1200 (1256 Dhrystones; without the waits 3630, 2.98 times, and the Tab5
   at 55% in a game), "AGA ALICE - 2Meg", "AGA LISA CHIP".
 - **Memory** (`mem.c`): 64 KB banks to host pointers for reads and writes
@@ -257,7 +263,13 @@ images.
   and checksum) and an RP9 marked `turbo-floppy`, else real (300 rpm: a
   custom loader may time the disk). Workbench 1.3 reaches its desktop in
   ~40 s (~65 s at real speed, as an A500).
-  **Extended ADFs** (UAE-1ADF: raw MFM tracks, any length up to 8192 words)
+  **High-density ADFs** (1802240 bytes, 22 sectors a track): the drive
+  turns at 150 rpm (12668 words a turn, the same bit rate) and its ID says
+  $AAAAAAAA while one is in (else all ones); Kickstart 3.1's trackdisk
+  reads and writes them (Christmas Breakdown; a file written by a patched
+  startup-sequence read back from the image, host and Tab5); their root
+  block is 1760 (`dos_filesystem()`, `space.c`, `tools/adf.py`).
+  **Extended ADFs** (UAE-1ADF: raw MFM tracks, any length up to 12668 words)
   are read-only, at real speed. **RP9** (`rp9.c`, Amiga Forever's
   packages: a ZIP with `rp9-manifest.xml`): the floppies unpacked (stored
   or deflated: miniz's `tinfl` on the board, its 10 KB state on the heap,
@@ -272,7 +284,8 @@ images.
   and POTGO's pins (a button pulls a pin low even driven high as an
   output); the joystick in JOY1DAT, fire on PRA bit 7.
 - **Sound** (`audio.c`): Paula's four channels per line (DMA with the
-  buffer reload and the interrupt at each, or AUDxDAT written), each
+  buffer reload and the interrupt at each, or AUDxDAT written; a channel
+  whose DMA goes off finishes its word, then the interrupt), each
   sample's time averaged into 44.1 kHz stereo (0+3 left, 1+2 right), the
   A500's fixed low-pass and the LED's filter (CIA-A PRA bit 1 low), into a
   ring the runtime's speaker task drains (and paces the emulation by).
@@ -321,7 +334,8 @@ images.
   matches where CLXCON's enabled planes have its values; a plane not
   fetched is 0), odd planes against even, inside the window. Sprite DMA:
   control words on the line before the first bitplane line (25 PAL) and
-  at each VSTOP, data words from VSTART. **Interlace**: a frame with
+  at each VSTOP, data words from VSTART (also a VSTART written while the
+  DMA was off at line 25: Aerial Racers' cars). **Interlace**: a frame with
   BPLCON0's LACE on at any time toggles LOF; each field (long: even
   picture lines, short: odd) has its own three frames of line records, and
   the presenter weaves them once both have been drawn (frames without
@@ -351,7 +365,9 @@ images.
   that + 1 lores pixels after DDFSTRT x 2 (OCS's 17, 9, 5). Found from
   Workbench 3.1's hires FMODE 3 screen ($38-$D8: 44 words, modulo 72 with
   two interleaved planes, on its window at 17) and Deluxe Pacman's lores
-  one ($38-$D0: 24 words, modulo -8). BPLCON1's 8-bit delays in super-hires pixels,
+  one ($38-$D0: 24 words, modulo -8). BPLCON1's 8-bit delays in super-hires pixels
+(as far as a fetch reaches, at least OCS's 16 lores pixels: in FMODE 0
+the top two bits do nothing, Aerial Racers' race sets them),
   HAM8 (the low two planes say what the top six do), EHB unless KILLEHB,
   BPLCON4's XOR and the sprites' colour banks, dual playfield's second
   colours from BPLCON3's offset, BRDRBLNK; super-hires in its own colours;
@@ -447,6 +463,21 @@ images.
   gives 32 bits, double CAS (3), as on an A1200: 256-colour hires in
   FMODE 3. (SysInfo read the IDs right all along; the host's `AMI_DUMP` of
   chip RAM and GfxBase's bytes at $EC/$ED showed it.)
+- **A drive's ID: the nth selection after its motor goes off shows bit
+  31 - n**, not bit 31 first as the HRM's loop reads: with $AAAAAAAA given
+  bit 31 first, Kickstart 3.1 read the HD drive as something it didn't
+  know and never touched the disk (no DMA at all, the insert-disk
+  screen). Double-density drives (all ones) can't tell. UAE has it so
+  (its comment: checked on a real A1200).
+- **A channel whose DMA goes off still raises its interrupt**: Aerial
+  Racers' replay stops channels the common way (period 1, INTREQ cleared,
+  DMA off, then INTREQR polled for each channel's interrupt). Paula
+  finishes the word playing, then requests it; ours stopped the channel
+  silently, and the game sat on its title for good, at interrupt level 2.
+  It looked like a wait for disk 2 (not one key or disk change got a
+  reaction), and the board's "core 1 ~95% in Aerial Racers' title" was the
+  68EC020 spinning in that loop. `AMI_STOP=<pc>` on the loop's PC showed
+  the routine.
 
 ## Testing
 
@@ -464,7 +495,9 @@ images.
   | <frame>:k:<code hex>:<1|0> | <frame>:j:<bits hex> | <frame>:t:<text>
   [;...]` (scripted mouse, keys, joystick, typed text up to the next `;`;
   mouse moves over 100 spread over frames),
-  `AMI_WAV=<file>` (the sound). macOS's `setjmp` saves the
+  `AMI_WAV=<file>` (the sound), `AMI_TIME=<seconds since 1970>` (the
+  clock's start: runs that must match; else the Mac's time, and games
+  seeded from the clock differ from run to run). macOS's `setjmp` saves the
   signal mask: Musashi's two per `m68k_execute()` show up as
   `sigprocmask` in host profiles (not on the ESP32).
 - **The debugger** (`amiga.c`'s `emudbg_machine_t`): the 68000, `where`,
@@ -573,6 +606,14 @@ images.
   no others): a .dms and an .adz unpacked, uploaded, downloaded back
   identical. Modes 2-5 (quick, medium, deep, heavy 1) are written after
   xDMS but no archive here uses them.
+- **The collection before and after a change**: copy the old
+  `ami_host` aside, build the new one, then `tools/collection.py <folder
+  of RP9s> <out> roms <folder with workbench-135/311.hdf> old=<old>
+  new=<new>`: every game on its manifest's machine, 7 pictures each,
+  8 at once (~1 minute for the 96); the games that differ are listed.
+  Its runs set `AMI_TIME`: one build against itself gives 96 of 96 the
+  same (Epsilon 9 and Maniac Ball differed under load before: seeded from
+  the clock, which then started at the Mac's time).
 - `say hello` in Workbench 1.3's Shell (narrator.device) as a sound test;
   `AMI_WAV` records it on the host.
 - **On the board**: status via the web API, pictures via the console's
@@ -593,17 +634,33 @@ images.
   Workbench 40.42"); the collection's 25 A1200 RP9s (floppy ones in DF0:,
   hard disk ones with `workbench-311.hdf` beside them; Starbase 13 and
   Tactical Manager 2 want `workbench-135.hdf`): all show their pictures at
-  1500-4500 frames except Christmas Breakdown (a 1.76 MB high-density
-  floppy). SysInfo 4.4 from its floppy (the SPEED button `m:295:394`):
+  1500-4500 frames (Christmas Breakdown, a 1.76 MB high-density floppy,
+  since 2026-10-22: its menu at ~5000). SysInfo 4.4 from its floppy (the SPEED button `m:295:394`):
   1.03 times an A1200. The OCS/ECS pictures (Kick Off 2, Workbench 1.3
   and 3.1, super-hires) bit for bit as before the AGA rework. The Tab5:
   the setup row's A1200, Workbench 3.1 from the user's HDF (100%, cores
-  ~20%), Aerial Racers' AGA title (100-102%, core 1 93-98%: real time with
-  little to spare); the game waits there for its next disk, which the
-  package inserted again didn't give it (not looked into).
+  ~20%), Aerial Racers' AGA title (100-102%, core 1 93-98%: the game
+  stuck there, see the lessons). **Aerial Racers** (2026-10-22, host):
+  title at ~3600 frames, its menu, fire at 6000 starts a race, the
+  package inserted again at 6800 and 8500 gives disks 2 and 3, the race
+  from ~9500 (the cars are sprites, the playfield lores FMODE 0 with
+  BPLCON1 $CC22). The Tab5 (the console's `j 10`/`j 0` for fire, the
+  package inserted again through the web API): its menu at 100% with core
+  1 79-81% busy (98% before the inline wait), the race at 98-100% with
+  core 1 90-99%. The race's profile: Musashi's dispatch 24%, the 68020's
+  reads 13% + `chip_read16` 4%, Lisa's fetch (`display_fetch`) 9%, Paula
+  7%, memcpy (line records) 6%. Without bus errors (and the DMA reads,
+  `beam()`, `ami_now()` inline): the menu core 1 60-66%, the race 100-102%
+  speed with core 1 73-81%; its profile: the 68020's reads 13%, the
+  dispatch 12% (the register copy was half of it), Lisa's fetch 9% (chip
+  RAM in PSRAM: its misses, not the calls), Paula 6%, memcpy 3%.
 
 ## Open items
 
+- The work still to do, sketched and in order: `TODO.md` (RP9s setting
+  the machine, the blitter's and the 68000's slots, attach modes,
+  super-hires, extended ADF writes, AGA's rest, the 68EC020's cache). The
+  items below are the state of things; `TODO.md` says what to do next.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
   (`docs/images`, 2026-10-21): `workbench31.png` (A600, 3.1 from an HDF,
@@ -614,10 +671,9 @@ images.
   panel's picture), `tab5-setup.png` (status lines cut), `web.png` (a
   local mock with example data, halved).
 - Phases 4-7 (`docs/architecture.md`): games (the rest of phase 4:
-  blitter timing per slot), the A1200's rest (phase 7, below). The chip bus model is an average (`SLOT_WAIT`), not
-  per access: a slot-exact one (the 68000's accesses against the line's
-  DMA slots) would bring SysInfo and xSysInfo to 1.0; the Tab5 has the
-  room (core 1 ~25% in SysInfo).
+  blitter timing per slot, `TODO.md` 2), the A1200's rest (phase 7, below). The chip bus model is an average (`SLOT_WAIT`), not
+  per access: a slot-exact one (`TODO.md` 3) would bring SysInfo and
+  xSysInfo to 1.0; the Tab5 has the room (core 1 ~25% in SysInfo).
 - AROS (the setup screen's Kickstart "AROS", every model): its ROM at
   $F80000 and its extension ROM at $E00000 (`amiga_config_t.extension`,
   partitions `kick_aros`/`kick_aros_ext` or files in the card's roms/
@@ -631,23 +687,25 @@ images.
   100% with core 1 56% busy (68000 memory reads 13%, Denise's fetch 7%,
   memcpy of line records 6%, blitter 2.4%) and core 0 ~65% (the
   presenter's scaling 35%, Denise's drawing 14%).
-- Extended ADFs can't be written. DMS modes 2-5 untested (no archives).
-- Later (the user's "nice to have"): an RP9 inserted in the boot drive
-  could set the machine its manifest names (model, Kickstart, memory:
-  Ants wants an A500+ with 1 MB chip RAM).
+- Extended ADFs can't be written (`TODO.md` 6). DMS modes 2-5 untested
+  (no archives).
+- The user's "nice to have", next (`TODO.md` 1): an RP9 inserted in the
+  boot drive sets the machine its manifest names (model, Kickstart,
+  memory: Ants wants an A500+ with 1 MB chip RAM).
 - The RP9 games with a hard disk: joined with their system disk (above).
   The six for 1.3 run through our board (host, KS 1.3 with 1 MB fast
   RAM: Hannibal's menu, also on the Tab5; Epsilon 9's intro, Flight of the
   Amazon Queen in a scene, Starbase 13 and Tactical Manager their title
   screens; Ants its menu once set up as its manifest's A500+: ECS, 1 MB
   chip RAM; the machine isn't set from the manifest yet); the ten for
-  3.1 are A1200 games (Football Glory loads and runs, picture black: AGA,
-  phase 7); three name no system disk.
-- Super-hires: dual playfield in it isn't drawn as such (2 planes as
-  one), BPLCON1's scroll is taken as lores pixels (4 super-hires ones),
-  the sprites' 70 ns positions aren't there; a lores or hires screen
-  dragged over a super-hires one wasn't tried.
-- The attach modes of Paula's channels are not done. Absolute touch
+  3.1 are A1200 games (all show their AGA pictures now, Football Glory
+  too); three name no system disk.
+- Super-hires (`TODO.md` 5): dual playfield in it isn't drawn as such (2
+  planes as one), BPLCON1's scroll is taken as lores pixels (4
+  super-hires ones), the sprites' 70 ns positions aren't there; a lores
+  or hires screen dragged over a super-hires one wasn't tried.
+- The attach modes of Paula's channels are not done (`TODO.md` 4;
+  Datastorm sets them). Absolute touch
   positioning (the pointer under the finger) is not wanted: the user
   finds the touchpad better (the pointer's tip in sight, a tap anywhere
   clicks). Collisions are checked by the test disks only:
@@ -658,20 +716,32 @@ images.
   the saved offset would keep a clock set while the board's time was
   wrong (unlikely with the Tab5's RTC). (HOLD's release: fixed.)
 - **The A1200's rest** (phase 7): Workbench in 256 colours is checked on
-  the host only (640 x 256, FMODE 3); HAM8, 64-pixel sprites, super-hires
-  in AGA's colours and FMODE 1/2 (the block rule's other cases) aren't
-  checked; sprites' 35 ns positions, CLXCON2 (planes 7-8)
-  and wide sprites' collisions aren't there; high-density floppies (1.76
-  MB, Christmas Breakdown) aren't read; the 68EC020's waits are an average
+  the host only (640 x 256, FMODE 3). Checked by eye on the host in the
+  collection's games that use them (found with a log of each mode's first
+  use, 2026-10-22): HAM8 (Deluxe Pacman's Hall of Fame, frame ~6200),
+  64-pixel sprites (its score table, Soccer Kid), FMODE 1 (Football Glory
+  and Indoors from ~900, Leading Lap ~4300, Soccer Kid), the scroll's top
+  bits (Deluxe Galaga in FMODE 3, Soccer Kid in FMODE 1). No game there
+  uses FMODE 2, 32-pixel sprites or AGA super-hires: not checked.
+  Sprites' 35 ns positions, CLXCON2 (planes 7-8)
+  and wide sprites' collisions aren't there; the 68EC020's waits are an average
   (no instruction cache); the A1200's 32-bit trapdoor fast RAM is the
-  Zorro II board at $200000. Core 1 is ~95% busy in Aerial Racers: profile
-  (the 68020's dispatch, memory reads) before more goes in. Deleting an RP9
-  from the web page leaves its unpacked hidden ADFs (`.name.rp9.N.adf`),
-  which the page can't delete (names starting with a dot).
+  Zorro II board at $200000. Core 1 is 73-81% busy in Aerial Racers' race
+  (100%; profile in Testing; 90-99% before the changes here). Done: `chip_read16()` inline
+  (every DMA word) and read directly in `display_fetch()`, `beam()` (VPOSR
+  polls) from the current line without a division, `ami_now()` without a
+  call, no bus errors in Musashi (see the 68EC020 above).
+  Deleting an RP9
+  from the web page removes its unpacked disks too (`disk_removed()`:
+  checked 2026-10-22 by the SD card's free space, 917504 bytes back; the
+  web server refuses names starting with a dot, so it can't show them).
 
 ## Working with the user
 
 - Expects changes built, flashed and checked on the board, then a short
   report of what was verified and what wasn't.
+- Asks "what's next": answer with `TODO.md`'s first item (its sketch).
+  Keep the list in order: a finished item goes to `docs/architecture.md`'s
+  Progress and leaves `TODO.md`; new work goes in where it belongs.
 - Keep their private data (WiFi name, IP, SD card contents) out of anything
   meant for publishing.

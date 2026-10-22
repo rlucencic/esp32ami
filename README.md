@@ -333,9 +333,11 @@ lessons learned along the way.
   checked. Not tried by hand yet: sound on the speaker, USB keyboards and
   mice.
 - The A1200 is new: Workbench 3.1 runs, its games show their AGA pictures
-  (host and Tab5: Aerial Racers at 100%, core 1 ~95% busy); AGA's screen
-  modes in Workbench, HAM8, 64-pixel sprites and super-hires in AGA's
-  colours aren't checked yet. High-density floppies (1.76 MB) aren't read.
+  (Aerial Racers' race on the Tab5 at 100%, core 1 73-81% busy); HAM8,
+  64-pixel sprites and 32-bit fetches checked in the games that use them;
+  AGA's screen modes in Workbench, 32-pixel sprites and super-hires in
+  AGA's colours aren't checked yet. High-density floppies (1.76 MB) are read and
+  written (Kickstart 3.1).
   No 68010/68020 for the A500/A2000, no accelerator boards, no Zorro III,
   no CD32/CDTV.
 - The chip bus is modelled on average (3 clocks for each slot the DMA
@@ -344,8 +346,8 @@ lessons learned along the way.
 - Extended ADFs are read-only; no IPF (SPS) images. DMS archives in the
   "quick", "medium", "deep" and "heavy 1" modes are written but untested
   (no such archives at hand).
-- NTSC lines are all 227 colour clocks (a real one alternates 227 and 228).
 - No serial or parallel devices, MIDI, or a second mouse.
+- What's planned, in order: [TODO.md](TODO.md).
 
 ## Credits
 

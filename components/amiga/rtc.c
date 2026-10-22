@@ -19,6 +19,7 @@
  * plus the year, the tens digit past 9 (2026: 12 and 6), which it counts
  * right (the registers are 4 bits). Later Kickstarts get plain digits.
  */
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include "amiga_internal.h"
@@ -45,7 +46,15 @@ void rtc_init(int64_t offset, void (*changed)(int64_t offset), bool past_99)
     memset(&s_rtc, 0, sizeof(s_rtc));
     s_rtc.past_99 = past_99;
     s_rtc.offset = offset;
+#ifdef ESP_PLATFORM
     s_rtc.start = (int64_t)time(NULL);
+#else
+    /* the host: AMI_TIME (seconds since 1970) makes runs repeatable (games
+     * seeded from the clock: Epsilon 9, Maniac Ball)
+     */
+    const char *at = getenv("AMI_TIME");
+    s_rtc.start = at ? atoll(at) : (int64_t)time(NULL);
+#endif
     s_rtc.cf = CF_24H;
     s_rtc.changed = changed;
 }

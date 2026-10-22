@@ -16,7 +16,8 @@
  *
  * Sprites: their DMA fetches the control words (SPRxPOS, SPRxCTL) on the
  * first line after vertical blank and at each sprite's VSTOP, the data
- * words on the lines from VSTART; written directly, writing DATA arms a
+ * words on the lines from VSTART (also when VSTART was written instead,
+ * the DMA off at the first line); written directly, writing DATA arms a
  * sprite and CTL disarms it. Lores pixels, the display window's
  * horizontal coordinates; an odd sprite with ATT set adds its two bits to
  * its even partner's (15 colours).
@@ -381,7 +382,14 @@ static void sprite_dma(void)
             continue;
         }
         if (sp->dma == 0) {
-            continue;
+            /* no control words at the first line (the DMA was off then):
+             * VSTART as written since starts it all the same (Aerial
+             * Racers' cars: the DMA on from line 44, the positions written)
+             */
+            if (ami.line != spr_vstart(sp)) {
+                continue;
+            }
+            sp->dma = 1;
         }
         sp->armed = false;
         if (sp->dma == 1 && ami.line == spr_vstart(sp)) {
@@ -459,10 +467,12 @@ AMI_HOT void display_fetch(void)
     uint32_t key = 0x811C9DC5u;
     uint16_t *d = s.data;
     uint32_t align = ~(uint32_t)(2 * fw - 1);
+    const uint8_t *chip = ami.chip;
+    uint32_t mask = ami.chip_mask & ~1u;
     for (int p = 0; p < planes; p++) {
         uint32_t ptr = s.pt[p] & align;
         for (int w = 0; w < words; w++) {
-            uint16_t v = chip_read16(ptr);
+            uint16_t v = *(const uint16_t *)(chip + (ptr & mask));
             ptr += 2;
             key = (key ^ v) * 0x01000193u;
             *d++ = v;
@@ -1033,7 +1043,9 @@ static void fill(uint16_t *out, int a, int b, uint16_t c)
 }
 
 /* The scroll delays of the odd and even planes, in super-hires pixels
- * (AGA's eight bits each; OCS's four in lores pixels)
+ * (OCS's four bits in lores pixels; AGA's eight, as far as a fetch
+ * reaches, at least OCS's 16 lores pixels: Aerial Racers' race sets the
+ * top two with 16-bit fetches, and they don't move it)
  */
 static void delays(const row_t *r, int *d1, int *d2)
 {
@@ -1041,8 +1053,11 @@ static void delays(const row_t *r, int *d1, int *d2)
     *d1 = (c & 15) << 2;
     *d2 = ((c >> 4) & 15) << 2;
     if (d.aga) {
-        *d1 |= ((c >> 8) & 3) | ((c >> 10) & 3) << 6;
-        *d2 |= ((c >> 12) & 3) | ((c >> 14) & 3) << 6;
+        int res = (r->con0 & BPLCON0_SHRES) ? 4 : (r->con0 & BPLCON0_HIRES) ? 2 : 1;
+        int reach = 64 * fetch_width(r->fmode) / res;
+        int mask = (reach > 64 ? reach : 64) - 1;
+        *d1 = (*d1 | ((c >> 8) & 3) | ((c >> 10) & 3) << 6) & mask;
+        *d2 = (*d2 | ((c >> 12) & 3) | ((c >> 14) & 3) << 6) & mask;
     }
 }
 

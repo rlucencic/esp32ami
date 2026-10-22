@@ -17,6 +17,7 @@ class ADF:
         self.path = path
         self.d = bytearray(open(path, 'rb').read())
         self.ffs = self.d[3] & 1
+        self.root = len(self.d) // BS // 2     # 880, a high-density disk's 1760
 
     def blk(self, n):
         return self.d[n * BS:(n + 1) * BS]
@@ -46,7 +47,7 @@ class ADF:
         return bytes(b[BS - 79:BS - 79 + ln]).decode('latin-1')
 
     def lookup(self, path):
-        n = 880
+        n = self.root
         for part in path.split('/'):
             h = self.hash(part)
             e = self.l(n, 6 + h)
@@ -59,7 +60,8 @@ class ADF:
             n = e
         return n
 
-    def entries(self, n=880):
+    def entries(self, n=None):
+        n = self.root if n is None else n
         out = []
         for h in range(72):
             e = self.l(n, 6 + h)

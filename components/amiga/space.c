@@ -19,7 +19,6 @@
 
 #define BLOCK           512
 #define DRIVES          (AMIGA_FLOPPIES + AMIGA_HARD_DISKS)
-#define ADF_BLOCKS      1760
 
 typedef bool (*read_fn)(void *ctx, uint32_t block, uint8_t *buf);
 
@@ -84,12 +83,18 @@ static bool volume_free(read_fn rd, void *ctx, uint32_t first, uint32_t blocks, 
     return done >= bits;
 }
 
+typedef struct {
+    const uint8_t *adf;
+    uint32_t blocks;                /* 1760, high density 3520 */
+} adf_t;
+
 static bool adf_read(void *ctx, uint32_t block, uint8_t *buf)
 {
-    if (block >= ADF_BLOCKS) {
+    const adf_t *a = ctx;
+    if (block >= a->blocks) {
         return false;
     }
-    memcpy(buf, (const uint8_t *)ctx + (size_t)block * BLOCK, BLOCK);
+    memcpy(buf, a->adf + (size_t)block * BLOCK, BLOCK);
     return true;
 }
 
@@ -100,13 +105,14 @@ static bool hdf_read(void *ctx, uint32_t block, uint8_t *buf)
 
 static bool floppy_space(int d, uint64_t *free_bytes, uint64_t *size)
 {
-    const uint8_t *adf = floppy_image(d);
+    adf_t a = { 0 };
     uint32_t f;
-    if (adf == NULL || memcmp(adf, "DOS", 3) != 0 || !volume_free(adf_read, (void *)adf, 0, ADF_BLOCKS, 2, &f)) {
+    a.adf = floppy_image(d, &a.blocks);
+    if (a.adf == NULL || memcmp(a.adf, "DOS", 3) != 0 || !volume_free(adf_read, &a, 0, a.blocks, 2, &f)) {
         return false;
     }
     *free_bytes = (uint64_t)f * BLOCK;
-    *size = (uint64_t)ADF_BLOCKS * BLOCK;
+    *size = (uint64_t)a.blocks * BLOCK;
     return true;
 }
 

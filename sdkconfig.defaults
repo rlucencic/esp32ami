@@ -102,5 +102,7 @@ CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
 CONFIG_EMU_HOSTNAME="amiga"
 
 # The 68000 core (Musashi): the 68000 or the A1200's 68EC020, chosen at
-# run time by the model
+# run time by the model; no bus errors on the Amiga (the 68EC020 then
+# doesn't copy its registers before each instruction)
 CONFIG_M68K_RUNTIME=y
+CONFIG_M68K_NO_BUS_ERRORS=y

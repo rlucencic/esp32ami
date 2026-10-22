@@ -7,9 +7,12 @@
  *              2 /SIDE, 1 DIR (0: inwards), 0 /STEP
  *   CIA-A PRA: 5 /RDY, 4 /TK0, 3 /WPRO, 2 /CHNG (the selected drives')
  * The disk turns at 300 rpm: a track is TRACK_WORDS MFM words (2 us a bit
- * cell), an index pulse on CIA-B's FLAG each turn.
+ * cell), an index pulse on CIA-B's FLAG each turn. A high-density disk
+ * (22 sectors a track, 1.76 MB) turns at 150 rpm in an Amiga HD drive:
+ * the same bits a second, twice the words a turn; the drive then says
+ * $AAAAAAAA in its ID (Kickstart 3.1's trackdisk reads 22 sectors then).
  *
- * The images: ADF (80 cylinders, 2 sides, 11 sectors of 512), kept in
+ * The images: ADF (80 cylinders, 2 sides, 11 sectors of 512, or 22), kept in
  * memory, written tracks back to the file at amiga_floppy_flush(). The
  * track under the head is made from the image's sectors in AmigaDOS's own
  * format (sync words, header, checksums, odd/even MFM), so trackdisk and
@@ -33,10 +36,12 @@
 #define DRIVES          4
 #define CYLINDERS       80
 #define HEAD_STOPS      84
-#define SECTORS         11
-#define ADF_SIZE        (CYLINDERS * 2 * SECTORS * 512)
-#define TRACK_WORDS     6334            /* a turn: 12668 bytes of MFM */
-#define MFM_MAX         8192            /* (an extended ADF's longest track) */
+#define SECTORS_DD      11
+#define SECTORS_HD      22
+#define ADF_SIZE        (CYLINDERS * 2 * SECTORS_DD * 512)
+#define HD_SIZE         (CYLINDERS * 2 * SECTORS_HD * 512)
+#define TRACK_WORDS     6334            /* a turn: 12668 bytes of MFM (HD twice) */
+#define MFM_MAX         (2 * TRACK_WORDS)   /* (an HD track; an extended ADF's longest) */
 #define EXT_MAX         (2560 * 1024)
 #define EXT_TRACKS      168
 #define WORD_CYCLES     224             /* 16 bit cells of 2 us, in 68000 clocks */
@@ -56,6 +61,7 @@ typedef struct {
 
     uint8_t *data;                  /* the image (NULL: no disk) */
     uint32_t size;
+    int sectors;                    /* a track's: 11, a high-density disk 22 */
     bool ext;                       /* an extended ADF */
     int ext_tracks;
     uint32_t ext_off[EXT_TRACKS];   /* where each track's data is */
@@ -147,15 +153,22 @@ static uint32_t be32(const uint8_t *p)
     return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
 }
 
+/* A turn of the disk in the drive, in MFM words (high density: twice) */
+static int turn_words(const drive_t *d)
+{
+    return d->sectors == SECTORS_HD ? 2 * TRACK_WORDS : TRACK_WORDS;
+}
+
 static void make_track(drive_t *d, int track, const uint8_t *sectors)
 {
     track_writer_t t = { .w = d->mfm, .n = 0, .last = 0 };
-    for (int s = 0; s < SECTORS; s++) {
+    int n = d->sectors;
+    for (int s = 0; s < n; s++) {
         put_word(&t, (t.last & 1) ? 0x2AAA : 0xAAAA);
         put_word(&t, 0xAAAA);
         put_word(&t, SYNC);
         put_word(&t, SYNC);
-        uint32_t info = 0xFF000000u | (uint32_t)track << 16 | (uint32_t)s << 8 | (uint32_t)(SECTORS - s);
+        uint32_t info = 0xFF000000u | (uint32_t)track << 16 | (uint32_t)s << 8 | (uint32_t)(n - s);
         uint32_t label[4] = { 0 };
         uint32_t hsum = put_odd_even(&t, &info, 1);
         hsum ^= put_odd_even(&t, label, 4);
@@ -172,18 +185,18 @@ static void make_track(drive_t *d, int track, const uint8_t *sectors)
         put_odd_even(&t, &dsum, 1);
         put_odd_even(&t, data, 128);
     }
-    while (t.n < TRACK_WORDS) {
+    while (t.n < turn_words(d)) {
         put_word(&t, (t.last & 1) ? 0x2AAA : 0xAAAA);
     }
-    d->track_words = TRACK_WORDS;
+    d->track_words = turn_words(d);
 }
 
 static void blank_track(drive_t *d)
 {
-    for (int i = 0; i < TRACK_WORDS; i++) {
+    for (int i = 0; i < turn_words(d); i++) {
         d->mfm[i] = 0xAAAA;
     }
-    d->track_words = TRACK_WORDS;
+    d->track_words = turn_words(d);
 }
 
 /* The track under the head from the image */
@@ -192,7 +205,7 @@ static void load_track(drive_t *d, int track)
     d->mfm_track = track;
     if (!d->ext) {
         if (track < CYLINDERS * 2) {
-            make_track(d, track, d->data + (size_t)track * SECTORS * 512);
+            make_track(d, track, d->data + (size_t)track * d->sectors * 512);
         } else {
             blank_track(d);
         }
@@ -201,7 +214,7 @@ static void load_track(drive_t *d, int track)
         int type = (e[2] << 8) | e[3];
         uint32_t bits = ((uint32_t)e[8] << 24) | (e[9] << 16) | (e[10] << 8) | e[11];
         const uint8_t *src = d->data + d->ext_off[track];
-        if (type == 0 && bits >= SECTORS * 512 * 8) {
+        if (type == 0 && bits >= SECTORS_DD * 512 * 8) {
             make_track(d, track, src);
         } else if (type == 1 && bits >= 16 * 1024) {
             int words = (int)(bits / 16);
@@ -221,35 +234,36 @@ static void load_track(drive_t *d, int track)
     }
 }
 
-/* (a written track: a standard one, TRACK_WORDS) */
-static uint32_t get_long(const uint16_t *w, int i)
+/* (a written track: a standard one, n words, turn_words()) */
+static uint32_t get_long(const uint16_t *w, int i, int n)
 {
-    return ((uint32_t)w[i % TRACK_WORDS] << 16) | w[(i + 1) % TRACK_WORDS];
+    return ((uint32_t)w[i % n] << 16) | w[(i + 1) % n];
 }
 
-static uint32_t decode(const uint16_t *w, int odd_at, int even_at)
+static uint32_t decode(const uint16_t *w, int odd_at, int even_at, int n)
 {
-    return ((get_long(w, odd_at) & 0x55555555) << 1) | (get_long(w, even_at) & 0x55555555);
+    return ((get_long(w, odd_at, n) & 0x55555555) << 1) | (get_long(w, even_at, n) & 0x55555555);
 }
 
 /* A written track back into the image's sectors */
 static void decode_track(drive_t *d, int track)
 {
     const uint16_t *w = d->mfm;
-    for (int i = 0; i < TRACK_WORDS; i++) {
-        if (w[i] != SYNC || w[(i + 1) % TRACK_WORDS] == SYNC) {
+    int n = turn_words(d);
+    for (int i = 0; i < n; i++) {
+        if (w[i] != SYNC || w[(i + 1) % n] == SYNC) {
             continue;
         }
         int h = i + 1;
-        uint32_t info = decode(w, h, h + 2);
+        uint32_t info = decode(w, h, h + 2, n);
         int sector = (info >> 8) & 0xFF;
-        if ((info >> 24) != 0xFF || (int)((info >> 16) & 0xFF) != track || sector >= SECTORS) {
+        if ((info >> 24) != 0xFF || (int)((info >> 16) & 0xFF) != track || sector >= d->sectors) {
             continue;
         }
-        uint8_t *dst = d->data + ((size_t)track * SECTORS + sector) * 512;
+        uint8_t *dst = d->data + ((size_t)track * d->sectors + sector) * 512;
         int data_at = h + 4 + 16 + 4 + 4;
         for (int k = 0; k < 128; k++) {
-            uint32_t v = decode(w, data_at + 2 * k, data_at + 256 + 2 * k);
+            uint32_t v = decode(w, data_at + 2 * k, data_at + 256 + 2 * k, n);
             dst[4 * k] = (uint8_t)(v >> 24);
             dst[4 * k + 1] = (uint8_t)(v >> 16);
             dst[4 * k + 2] = (uint8_t)(v >> 8);
@@ -331,10 +345,14 @@ uint8_t floppy_status(void)
         if (!d->selected || !d->present) {
             continue;
         }
-        /* a 3.5" double density drive: ID all ones (/RDY low while the
-         * motor is off); ready once its motor is up to speed
+        /* a 3.5" drive: its ID through /RDY while the motor is off, all
+         * ones (double density), $AAAAAAAA with a high-density disk in it;
+         * the nth selection after the motor went off gives bit 31 - n (as
+         * UAE has it: with bit 31 first, Kickstart 3.1 took the drive for
+         * none it knew and never read it); ready once up to speed
          */
-        if (!d->motor || d->spinup <= 0) {
+        bool id = d->data && d->sectors == SECTORS_HD ? (d->id_bit & 1) == 0 : true;
+        if (d->motor ? d->spinup <= 0 : id) {
             v &= ~0x20;
         }
         if (d->cylinder == 0) {
@@ -372,7 +390,7 @@ static void end_dma(void)
     if (dk.writing) {
         drive_t *d = &s_drive[dk.drive];
         if (d->data && !d->ext && d->mfm_track >= 0 && d->mfm_track < CYLINDERS * 2 && !d->protect &&
-            d->track_words == TRACK_WORDS) {
+            d->track_words == turn_words(d)) {
             decode_track(d, d->mfm_track);
         }
         d->writes++;
@@ -550,9 +568,9 @@ static void flush_drive(drive_t *d)
     if (f) {
         for (int t = 0; t < CYLINDERS * 2; t++) {
             if (d->dirty[t / 8] & (1u << (t & 7))) {
-                long off = (long)t * SECTORS * 512;
+                long off = (long)t * d->sectors * 512;
                 fseek(f, off, SEEK_SET);
-                fwrite(d->data + off, 1, SECTORS * 512, f);
+                fwrite(d->data + off, 1, (size_t)d->sectors * 512, f);
             }
         }
         fclose(f);
@@ -584,11 +602,12 @@ static bool buffers(int drive, uint32_t size)
 }
 
 /* An AmigaDOS disk with a filesystem (a bootblock saying DOS, a root block
- * in the middle), which loads through trackdisk: fine turning fast
+ * in the middle: 880, high density 1760), which loads through trackdisk:
+ * fine turning fast
  */
-static bool dos_filesystem(const uint8_t *adf)
+static bool dos_filesystem(const uint8_t *adf, int sectors)
 {
-    const uint8_t *root = adf + 880 * 512;
+    const uint8_t *root = adf + (size_t)CYLINDERS * sectors * 512;
     return adf[0] == 'D' && adf[1] == 'O' && adf[2] == 'S' && root[0] == 0 && root[1] == 0 && root[2] == 0 &&
            root[3] == 2 && root[508] == 0 && root[509] == 0 && root[510] == 0 && root[511] == 1;
 }
@@ -618,7 +637,8 @@ static bool ext_tracks(drive_t *d)
 static bool take(int drive, const char *file, bool ro)
 {
     drive_t *d = &s_drive[drive];
-    d->ext = d->size != ADF_SIZE;
+    d->ext = d->size != ADF_SIZE && d->size != HD_SIZE;
+    d->sectors = d->size == HD_SIZE ? SECTORS_HD : SECTORS_DD;
     if (d->ext && !ext_tracks(d)) {
         AMI_LOGW("DF%d: %s: %lu bytes is not an ADF", drive, file, (unsigned long)d->size);
         d->data = NULL;
@@ -632,7 +652,7 @@ static bool take(int drive, const char *file, bool ro)
     snprintf(d->path, sizeof(d->path), "%s", file);
     snprintf(d->shown, sizeof(d->shown), "%s", file);
     d->rp9_disks = 0;
-    d->fast = !d->ext && dos_filesystem(d->data);
+    d->fast = !d->ext && dos_filesystem(d->data, d->sectors);
     return true;
 }
 
@@ -772,11 +792,17 @@ const char *amiga_floppy_path(int drive)
     return drive >= 0 && drive < AMIGA_FLOPPIES && s_drive[drive].data ? s_drive[drive].shown : NULL;
 }
 
-/* A drive's ADF (an ordinary one; NULL: none, or an extended ADF) */
-const uint8_t *floppy_image(int drive)
+/* A drive's ADF and its blocks (an ordinary one, double or high density;
+ * NULL: none, or an extended ADF)
+ */
+const uint8_t *floppy_image(int drive, uint32_t *blocks)
 {
     const drive_t *d = drive >= 0 && drive < AMIGA_FLOPPIES ? &s_drive[drive] : NULL;
-    return d && d->data && !d->ext && d->size == ADF_SIZE ? d->data : NULL;
+    if (!d || !d->data || d->ext) {
+        return NULL;
+    }
+    *blocks = (uint32_t)CYLINDERS * 2 * d->sectors;
+    return d->data;
 }
 
 bool amiga_floppy_write_protected(int drive)

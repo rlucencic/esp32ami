@@ -630,5 +630,42 @@ measurements written down.
   16 x fw / that + 1 lores pixels after DDFSTRT x 2: Workbench's hires
   screen and the games' lores ones on their windows, OCS's counts as
   before. Workbench in 256 colours (8 planes, hires, FMODE 3) on the host.
-- Not yet: HAM8, 64-pixel sprites and FMODE 1/2 checked; high-density
-  floppies; headroom on core 1 for the heaviest AGA games (profile first).
+- **Aerial Racers** (2026-10-22): "waiting for its next disk" on its
+  title was a hang: its replay stops a channel and waits for the
+  interrupt Paula raises once the word playing is done; ours stopped the
+  channel silently (fixed in `audio.c`). Past it: the menu, disks 2 and 3,
+  the race, which showed two more things: AGA's top two scroll bits set in
+  a 16-bit fetch (they reach no further than a fetch: the playfield had
+  started 34 pixels late) and the cars, sprites whose VSTART is written
+  after the DMA was off at line 25 (they never showed). The collection on
+  the host before and after (`tools/collection.py`, 7 pictures each): 92
+  of 96 the same; X-Balls (its audio interrupt handler now runs, a level's
+  colours differ), Maniac Ball (one frame's ball), Epsilon 9 (differs
+  from run to run anyway).
+- **The 68EC020's waits inline**: its 5 clocks an access to chip RAM went
+  through two calls (`ami_cpu_wait()`, `m68k_modify_timeslice()`: 17.6% of
+  core 1 at Aerial Racers' menu); now one subtraction from Musashi's
+  remaining cycles, the same arithmetic (the collection's pictures the
+  same). The host's race 10% faster; the Tab5's menu core 1 98% -> 80%,
+  the race 98-100% speed with core 1 90-99%.
+- **No bus errors in Musashi** (`CONFIG_M68K_NO_BUS_ERRORS`, new in
+  esp32emu, the Amiga's alone): the 68EC020 copied its 16 registers before
+  every instruction to restart it after a bus error the Amiga never
+  raises. With the DMA reads, `beam()` and `ami_now()` inline: the Tab5's
+  menu core 1 80% -> 60-66%, the race 100-102% with core 1 73-81%
+  (Musashi's dispatch 24% -> 12%); the collection's pictures the same.
+- **Repeatable host runs**: `AMI_TIME` starts the clock at a given time
+  (the collection tool sets it); Epsilon 9 and Maniac Ball were seeded
+  from the clock and differed from run to run under load.
+- **High-density floppies** (1.76 MB ADFs, 22 sectors a track): the drive
+  turns at 150 rpm with one (twice the words a turn) and says $AAAAAAAA
+  in its ID; Kickstart 3.1's trackdisk reads and writes them. Christmas
+  Breakdown (the collection's last A1200 game without a picture) boots to
+  its menu (host and Tab5); a file written onto the disk by its own
+  startup-sequence reads back from the image (host and Tab5).
+- **The AGA features in use**: a log of each mode's first use over the 26
+  A1200 games found HAM8 and 64-pixel sprites (Deluxe Pacman, Soccer Kid),
+  FMODE 1 (Football Glory, Leading Lap, Soccer Kid) and the scroll's top
+  bits (Deluxe Galaga, Soccer Kid); their pictures look right on the host.
+- Not yet: FMODE 2, 32-pixel sprites, AGA super-hires (no game here uses
+  them).
