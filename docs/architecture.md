@@ -700,3 +700,18 @@ measurements written down.
   moments, all still at their screens (looked at side by side); Flight of
   the Amazon Queen reaches its scene ~1000 frames later, Lethal Xcess its
   next screen sooner. Tab5: Aerial Racers' race 98-100%, core 1 74-82%.
+- **3. The 68000 on the chip bus, slot by slot** (2026-10-22): each line
+  has a map of the even colour clocks the DMA takes (lores planes 5-6,
+  hires 3-4, super-hires 2 at their places in each fetch unit, the
+  copper's two an instruction); each 68000 access to chip RAM, slow RAM or
+  the chips waits past the taken ones from its time (the instruction's
+  start plus 4 clocks a bus cycle before it), a blit 6 clocks (or its
+  rest with BLTPRI). SysInfo 4.4 1.03 times an A600 (was 1.00), xSysInfo
+  0.12 1.06 (was 1.09): no closer to 1.00 on average, but the two agree
+  and the waits fall where the DMA is. Charging a 68000 on an odd colour
+  clock its 2 clocks brought both to 1.03 but broke Hyperion's and Lethal
+  Xcess's loaders: left out. The collection: 43 games (all 68000 ones)
+  show other moments, none stuck or dark (a screen for that, which caught
+  the two loaders). Host ~23% slower; Tab5: SysInfo the same, core 1 25%;
+  Kick Off 2 at 100%. A `ctz(0)` in the first version's slot scan hung the
+  board (undefined: the Mac's gave 32): a table now.

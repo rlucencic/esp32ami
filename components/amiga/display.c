@@ -511,11 +511,23 @@ AMI_HOT void display_fetch(void)
     }
     s.data_key = key;
     /* lores planes 5-6, hires planes 3-4 and super-hires plane 2 fetch in
-     * the 68000's (even) slots: a slot a word (AGA: not counted)
+     * the 68000's (even) slots (mem.c), in each 8-clock unit from DDFSTRT
+     * (the HRM's order: lores - 4 6 2 - 3 5 1, hires 4 2 3 1 4 2 3 1); AGA's
+     * 68EC020 doesn't wait for them
      */
-    int even = planes - (shres ? 1 : hires ? 2 : 4);
-    if (even > 0 && !ami.aga) {
-        ami.stall += even * words * SLOT_WAIT;
+    if (!ami.aga && planes > (shres ? 1 : hires ? 2 : 4)) {
+        int r = shres ? 4 : hires ? 2 : 1, units = words / r;
+        int at = ami.line_start + 2 * (start & ~1);
+        for (int u = 0; u < units; u++, at += 16) {
+            for (int pos = 0; pos < 8; pos += 2) {
+                bool taken = shres ? true
+                             : hires ? (pos == 2 || pos == 6 || planes >= 4)
+                                     : (pos == 6 || (pos == 2 && planes >= 6));
+                if (taken) {
+                    bus_take(at + 2 * pos);
+                }
+            }
+        }
     }
 }
 

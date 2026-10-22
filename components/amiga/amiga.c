@@ -407,6 +407,7 @@ void amiga_run_frame(void)
             s_vertb_at = VERTB_DELAY;
             cia_tod_tick(&cia[0]);
         }
+        bus_line_start();
         display_line_start();
         blitter_line_start();
         ami.stall += blitter_steal_line();

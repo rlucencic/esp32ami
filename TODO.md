@@ -4,29 +4,8 @@ In order: "what's next" is the first item here. Each one says why, where,
 how, how it's checked, and roughly how big it is. Done items move to
 `docs/architecture.md` (Progress, "The to-do list") and leave this list;
 the others keep their numbers (done: 1, an RP9 setting up its machine;
-2, the blitter's timing slot by slot).
-
-## 3. The 68000 on the chip bus, slot by slot
-
-- **Why**: the DMA's even slots cost the 68000 an average (`SLOT_WAIT`, 3
-  clocks a slot, owed as `ami.stall`, at most 4 lines). SysInfo 4.4 gives
-  1.00 times an A600 in chip RAM, xSysInfo 0.12 1.09: a slot-exact bus
-  brings both to 1.00 and timing-sensitive code closer.
-- **How**: each line's slot map (item 2 counts the slots a line, in
-  `blitter.c`'s `line_free()` and `display_dma_slots()`; this needs where
-  they fall: a 228-bit mask of refresh, disk, audio, sprites, the fetch,
-  the copper's as it runs, the blitter's), and each 68000 access to chip RAM or the chips at its time
-  (`ami_now()` plus 4 clocks a bus cycle into the instruction: a counter
-  reset by the instruction hook) waits for the next free even slot (a
-  count of trailing zeros over the mask), the wait taken from Musashi's
-  remaining cycles as the 68EC020's are. Fast RAM and the ROM: no wait
-  (as now).
-- **Where**: `mem.c` (the 68000's chip and custom banks), `amiga.c`
-  (`ami.stall` goes), `display.c`, `copper.c`, `blitter.c`.
-- **Check**: SysInfo and xSysInfo on an A500 with 1.3 and an A600 (the
-  recipe in CLAUDE.md, Testing): 1.00 and 1.00; Test Kit's CIA timers;
-  the collection; the Tab5's core 1 in Kick Off 2 (56% now) with room.
-- **Size**: large (~250 lines). After item 2.
+2, the blitter's timing slot by slot; 3, the 68000 on the chip bus slot by
+slot).
 
 ## 4. Paula's attach modes
 
@@ -106,5 +85,11 @@ the others keep their numbers (done: 1, an RP9 setting up its machine;
 - DMS modes 2-5: written after xDMS, untested (no archive uses them).
 - The clock's saved offset keeps a clock set while the board's time was
   wrong (unlikely with the Tab5's RTC).
+- The 68000's bus cycles where a real one has them: the slot model takes
+  an instruction's back to back from its start (SysInfo 1.03, xSysInfo
+  1.06 times an A600); 1.00 needs each bus cycle's place in the
+  instruction (a bus-cycle 68000 core, not Musashi). Then the 2 clocks a
+  68000 on an odd colour clock waits could come back (`mem.c`: they made
+  two loaders fail with the back-to-back cycles).
 - Assembler (RISC-V, PIE) for hot paths: only if a game falls behind
   (Aerial Racers' race: core 1 73-81%).

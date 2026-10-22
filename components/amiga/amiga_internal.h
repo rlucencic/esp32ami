@@ -187,6 +187,11 @@ void ami_cpu_wake(void);            /* an earlier event was scheduled: end the C
 
 /* mem.c */
 void mem_update_map(void);
+/* The 68000 on the chip bus: a line's even slots the DMA takes (`at` in
+ * clocks into the frame), cleared as a line begins
+ */
+void bus_line_start(void);
+void bus_take(int at);
 /* Bytes between the host and the 68000's memory (words there in host order) */
 void mem_copy_to(uint32_t a, const uint8_t *src, uint32_t len);
 void mem_copy_from(uint8_t *dst, uint32_t a, uint32_t len);

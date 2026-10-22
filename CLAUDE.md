@@ -144,18 +144,25 @@ images.
   level ends the CPU's slice (`ami_cpu_wake()`: Musashi samples the IRQ
   lines only as a slice starts). At the line's end the display records the
   line; CIA-B's TOD counts lines, CIA-A's frames.
-- **The 68000 and the chip bus**: its instructions take a multiple of 4
-  clocks (the cycle table rounded up at init: a bus cycle starts on a
-  2-colour-clock slot), and DMA in its even slots costs it time in
-  `ami.stall`, taken before it runs again: lores planes 5-6 and hires
-  planes 3-4 a slot per word fetched, the copper two per instruction, the
-  blitter its channels' slots (3/4 of them without BLTPRI), spread over
-  its lines; `SLOT_WAIT` (3) clocks a slot (it wants the bus about 3/4 of
-  the time); at most 4 lines owed, dropped when a slice begins with the
-  PC in fast RAM or the ROM (the 68000's own bus; data accesses from
-  there to chip RAM aren't counted). SysInfo 4.4: 1.00 times a real A600
-  (chip and slow RAM), 1.00 times a B2000 (fast RAM); xSysInfo 0.12: 1.09
-  and 1.00 (bare Musashi was 1.46 times an A600).
+- **The 68000 and the chip bus, slot by slot** (`mem.c`): its
+  instructions take a multiple of 4 clocks (the cycle table rounded up at
+  init: a bus cycle starts on a 2-colour-clock slot). Each line has a map
+  of the even colour clocks the DMA takes from it (`bus_take()`):
+  `display_fetch()` marks lores planes 5-6, hires 3-4 and super-hires 2 at
+  their places in each 8-clock unit from DDFSTRT (the HRM's order), the
+  copper its two a instruction; refresh, disk, audio, sprites and up to 4
+  lores planes use odd ones. Each access of the 68000's to chip RAM, slow
+  RAM or the chips (and their mirrors) is at its instruction's start plus
+  4 clocks a bus cycle before it in that instruction (Musashi's remaining
+  cycles changing marks a new one) and waits past the taken slots from
+  there (`s_wait_at[]`, worked out when the map changed); a blit under way
+  costs an access 6 clocks (BLTPRI off) or the rest of the blit (on).
+  Fast RAM and the ROM: no wait. The 68EC020 keeps its averages
+  (`ami.stall`: `SLOT_WAIT` a slot for the copper and the blitter).
+  SysInfo 4.4: 1.03 times a real A600 (chip and slow RAM), its chip speed
+  1.12; xSysInfo 0.12: 1.06, chip RAM 2.19 MB/s (the averages before:
+  1.00 and 1.09, chip speed 1.16 and 2.26 MB/s; bare Musashi was 1.46).
+  The same on the Tab5 (core 1 25% in SysInfo); the host ~23% slower.
 - **The A1200's 68EC020**: Musashi's type chosen at run time
   (`CONFIG_M68K_RUNTIME`, esp32emu; `-DM68K_RUNTIME` in the host build: no
   slower for the 68000, host and Tab5), set before the tables' copies (they
@@ -484,6 +491,20 @@ the top two bits do nothing, Aerial Racers' race sets them),
   gives 32 bits, double CAS (3), as on an A1200: 256-colour hires in
   FMODE 3. (SysInfo read the IDs right all along; the host's `AMI_DUMP` of
   chip RAM and GfxBase's bytes at $EC/$ED showed it.)
+- **`__builtin_ctz(0)` hung the board, not the host**: the slot map's
+  scan stepped over a run of taken slots with `ctz(~word)`; with a whole
+  word taken (4 hires planes take every even slot in the fetch window)
+  that is ctz(0), undefined: the Mac's gives 32, the P4's moved nothing,
+  and core 1 spun in `slot_wait()` (0 frames a second, Kick Off 2's
+  loading screen). A table of waits a colour clock replaced the scan.
+- **The 68000's phase on odd colour clocks made two loaders fail**: a
+  PAL line has 227 colour clocks, so the 68000's even slots fall on the
+  other parity from line to line; charging the 2 clocks a real one waits
+  then brought SysInfo and xSysInfo both to 1.03, but Hyperion's loader
+  stepped its drive 21359 times (a track read gone wrong) and Lethal
+  Xcess stayed on a logo: without it (the cycle table's rounding keeps the
+  phase) both run. Musashi knows an instruction's bus cycles, not where
+  in it they fall; the slot model takes them back to back from its start.
 - **Kickstart 1.2 with our hard disk board crashes in a loop**: its
   expansion.library copies a word-wide DiagArea with exec's CopyMem, then
   calls AllocMem through what it takes for its own base at $24 but is
@@ -705,9 +726,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
   panel's picture), `tab5-setup.png` (status lines cut), `web.png` (a
   local mock with example data, halved).
 - Phases 4-7 (`docs/architecture.md`): games (phase 4's blitter timing
-  per slot: done, `TODO.md` 2), the A1200's rest (phase 7, below). The chip bus model is an average (`SLOT_WAIT`), not
-  per access: a slot-exact one (`TODO.md` 3) would bring SysInfo and
-  xSysInfo to 1.0; the Tab5 has the room (core 1 ~25% in SysInfo).
+  per slot: done, `TODO.md` 2), the A1200's rest (phase 7, below). The
+  68000's bus is slot by slot now (`TODO.md` 3: SysInfo 1.03, xSysInfo
+  1.06); the rest would need where an instruction's bus cycles fall.
 - AROS (the setup screen's Kickstart "AROS", every model): its ROM at
   $F80000 and its extension ROM at $E00000 (`amiga_config_t.extension`,
   partitions `kick_aros`/`kick_aros_ext` or files in the card's roms/

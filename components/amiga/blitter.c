@@ -279,9 +279,9 @@ static void start(int at)
     blit.busy = true;
     blit.left = cck;
     plan_end(at + 8);
-    /* The 68000's slots it takes: those its channels use (a line: C and
-     * D), all of them with BLTPRI ("nasty"), else the 68000 gets one in
-     * four it waits for
+    /* The 68EC020's slots it takes on average: those its channels use (a
+     * line: C and D), all of them with BLTPRI ("nasty"), else it gets one
+     * in four it waits for (the 68000 waits access by access: mem.c)
      */
     int used = (blit.con1 & LINE) ? 2 * (int)blit.height
                                   : (int)(blit.width * blit.height) * __builtin_popcount((blit.con0 >> 8) & 0xF);
@@ -289,7 +289,7 @@ static void start(int at)
     if (!(ami.dmacon & DMA_BLTPRI)) {
         steal = steal * 3 / 4;
     }
-    blit.steal = steal;
+    blit.steal = ami.cpu_shift ? steal : 0;
     blit.steal_line = cck > 0 ? (int)((int64_t)steal * CYCLES_LINE / (cck * 2)) : steal;
     ami_cpu_wake();
 }

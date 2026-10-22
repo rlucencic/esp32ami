@@ -155,6 +155,19 @@ int copper_next(void)
     return cop.state == COP_WAIT ? cop.at : cop.at + 4;
 }
 
+/* An instruction's two even slots: the 68000's lost slot by slot (mem.c),
+ * the 68EC020's on average
+ */
+static void take_slots(int at)
+{
+    if (ami.cpu_shift) {
+        ami.stall += 2 * SLOT_WAIT;
+    } else {
+        bus_take(at);
+        bus_take(at + 4);
+    }
+}
+
 void copper_run(int now, int limit)
 {
     while (copper_next() < limit) {
@@ -186,14 +199,14 @@ void copper_run(int now, int limit)
                 cop.at = NEVER;
                 return;
             }
+            take_slots(cop.at);
             cop.pc += 4;
             cop.at += 8;
-            ami.stall += 2 * SLOT_WAIT; /* (two even slots) */
             custom_write(reg, ir2, when, true);
             continue;
         }
+        take_slots(cop.at);
         cop.pc += 4;
-        ami.stall += 2 * SLOT_WAIT;
         int t = cop.at + 8;
         if (ir2 & 1) {
             /* SKIP the next instruction once the beam is there */
