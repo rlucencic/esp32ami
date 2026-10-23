@@ -816,8 +816,8 @@ the top two bits do nothing, Aerial Racers' race sets them),
 
 ## Open items
 
-- The work still to do, sketched and in order: `TODO.md` (the 68EC020's
-  instruction cache, then small things). The
+- The work still to do, sketched and in order: `TODO.md` (items 1-8
+  done; 9 is what waits on something). The
   items below are the state of things; `TODO.md` says what to do next.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
@@ -889,8 +889,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
   super-hires pixels further right since they count; the 68EC020's data
   waits are an average (8 clocks, no slots), its instruction cache times
   only (no stale code, FC2 not in the tags); the A1200's 32-bit trapdoor fast RAM is the
-  Zorro II board at $200000. Core 1 is 73-81% busy in Aerial Racers' race
-  (100%; profile in Testing; 90-99% before the changes here). Done: `chip_read16()` inline
+  Zorro II board at $200000. Core 1 is 71-78% busy in Aerial Racers' race
+  (100%, with the instruction cache and the poll skip; 90-99% before the
+  speed-ups here). Done: `chip_read16()` inline
   (every DMA word) and read directly in `display_fetch()`, `beam()` (VPOSR
   polls) from the current line without a division, `ami_now()` without a
   call, no bus errors in Musashi (see the 68EC020 above).
