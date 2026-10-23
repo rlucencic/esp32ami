@@ -416,16 +416,25 @@ static inline void ic_word(uint32_t a)
     }
 }
 
+/* An instruction word (its wait already taken) */
+static inline uint16_t program16(uint32_t a)
+{
+    const uint8_t *p = s_rmap[a >> 16];
+    return p ? rd16(p, a & 0xFFFF) : slow_read16(a);
+}
+
 unsigned int AMI_HOT m68k_read_immediate_16(unsigned int a)
 {
     if (!ami.cpu_shift) {
         return m68k_read_memory_16(a);
     }
     ic_word(a);
-    const uint8_t *p = s_rmap[a >> 16];
-    return p ? rd16(p, a & 0xFFFF) : slow_read16(a);
+    return program16(a);
 }
 
+/* (a long across a 64 KB bank: each word from its own; Darkage's Under
+ * Pressure crashed when they both came from the slow path's zeros)
+ */
 unsigned int AMI_HOT m68k_read_immediate_32(unsigned int a)
 {
     if (!ami.cpu_shift) {
@@ -437,7 +446,7 @@ unsigned int AMI_HOT m68k_read_immediate_32(unsigned int a)
     if (p && (a & 0xFFFF) <= 0xFFFC) {
         return ((uint32_t)rd16(p, a & 0xFFFF) << 16) | rd16(p, (a & 0xFFFF) + 2);
     }
-    return ((uint32_t)slow_read16(a) << 16) | slow_read16((a + 2) & 0xFFFFFF);
+    return ((uint32_t)program16(a) << 16) | program16((a + 2) & 0xFFFFFF);
 }
 
 /* The instruction at pc, then a conditional branch back to it: a loop of
