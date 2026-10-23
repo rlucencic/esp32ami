@@ -42,15 +42,26 @@ def picture(path):
     return Image.open(path).convert('RGB')
 
 def alert(im):
-    """A dead-end alert (Guru Meditation, Software Failure): a red (or
-    yellow) frame and text in the top rows over a dark screen"""
+    """A dead-end alert (Guru Meditation, Software Failure): its box's top
+    and bottom edges, red or yellow lines across most of the screen in the
+    top rows, the rest of them black (the box blinks: some pictures catch
+    it)"""
     w, h = im.size
-    top = im.crop((0, 0, w, min(h, 100)))
-    px = list(top.get_flattened_data())
-    red = sum(1 for r, g, b in px if r > 150 and g < 70 and b < 70)
-    yellow = sum(1 for r, g, b in px if r > 150 and g > 150 and b < 70)
-    dark = sum(1 for r, g, b in px if r < 40 and g < 40 and b < 40)
-    return (red > w or yellow > w) and dark > len(px) * 2 // 3
+    top = im.crop((0, 0, w, min(h, 120)))
+    px = top.load()
+    lines = dark = 0
+    for y in range(top.size[1]):
+        for x in range(0, w, 4):
+            r, g, b = px[x, y]
+            dark += r < 40 and g < 40 and b < 40
+        run = best = 0
+        for x in range(w):
+            r, g, b = px[x, y]
+            hot = r > 150 and b < 70 and (g < 70 or g > 150)
+            run = run + 1 if hot else 0
+            best = max(best, run)
+        lines += best > w // 2
+    return lines >= 2 and dark > top.size[1] * (w // 4) * 3 // 4
 
 def dark(im):
     small = im.resize((90, 71))
