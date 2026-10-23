@@ -383,6 +383,7 @@ static void run_line(void)
             continue;
         }
         /* the earliest event is due */
+        int ipl = ami.ipl;
         if (next == s_vertb_at) {
             s_vertb_at = NEVER;
             ami_update_irq();           /* (the request as the CPU left it) */
@@ -397,6 +398,13 @@ static void run_line(void)
             cia_sync(&cia[0], ami.cycle);
         } else {
             cia_sync(&cia[1], ami.cycle);
+        }
+        /* an interrupt raised while the 68000's last bus cycle waited for
+         * the DMA: one more instruction first (mem.c, bus_waited_over()) */
+        if (ami.ipl > ipl && !ami.cpu_shift && bus_waited_over(next)) {
+            m68k_set_irq(ipl);
+            run_cpu(ami.cycle + 1);
+            m68k_set_irq(ami.ipl);
         }
     }
 }

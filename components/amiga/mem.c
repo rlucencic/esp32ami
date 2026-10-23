@@ -55,6 +55,7 @@ static bool s_any_taken, s_stale;           /* (the table worked out when it's n
 static bool s_contended[256];               /* banks on the chip bus (the 68000's) */
 static int s_bus_cycle;                     /* this instruction's bus cycles so far */
 static int s_after = -1;                    /* Musashi's remaining cycles after the last access */
+static int s_last_at, s_last_wait;          /* the last access: when it began, its wait */
 #define BLIT_WAIT       6                   /* a blit leaves the 68000 one slot in four (BLTPRI off) */
 
 void bus_line_start(void)
@@ -120,13 +121,28 @@ static inline void bus_cycle(uint32_t a)
     if (m68ki_remaining_cycles != s_after) {
         s_bus_cycle = 0;                    /* (Musashi took an instruction's cycles: the next one) */
     }
+    s_last_wait = 0;
     if (s_contended[(a >> 16) & 0xFF] && ami.cpu_running) {
         /* (ami_now() for the 68000: no shift, no remainder) */
         int at = ami.cycle + m68ki_initial_cycles - m68ki_remaining_cycles + 4 * s_bus_cycle;
-        m68ki_remaining_cycles -= slot_wait(at);
+        s_last_at = at;
+        s_last_wait = slot_wait(at);
+        m68ki_remaining_cycles -= s_last_wait;
     }
     s_bus_cycle++;
     s_after = m68ki_remaining_cycles;
+}
+
+/* The 68000 decides on an interrupt as its instruction's last bus cycle
+ * begins (WinUAE: 2 clocks into it): one raised while that cycle waits for
+ * the DMA comes after the next instruction. (Musashi has no prefetch: the
+ * instruction's own last access stands for it.) Lionheart polls INTREQR for
+ * VERTB from slow RAM with exec's VERTB interrupt on; the copper's list at
+ * the top of the frame holds the loop's BEQ, and it never saw the bit.
+ */
+bool bus_waited_over(int t)
+{
+    return s_last_wait > 0 && s_last_at < t && s_last_at + s_last_wait >= t && s_last_at + s_last_wait <= ami.cycle;
 }
 
 static inline uint16_t rd16(const uint8_t *p, uint32_t off)

@@ -15,7 +15,8 @@
  * AMI_SHOTS=<n> (a picture every n frames, <out>-<frame>.ppm), AMI_LOG=<n>
  * (the machine's state every n frames), AMI_RING=<n> (the last n
  * instructions at the end), AMI_STOP=<pc>[:<frame>], AMI_TRACE=<pc>:<n>,
- * AMI_DIS=<addr hex>:<n> (disassemble and stop), AMI_EXC (exceptions other than interrupts; "all" with them), AMI_LOGREGS
+ * AMI_DIS=<addr hex>:<n> (disassemble and stop), AMI_EXC (exceptions other than interrupts; "all" with them),
+ * AMI_EXCSTOP=<vector>[:<frame>] (stop at that exception, as AMI_STOP), AMI_LOGREGS
  * (AMI_LOG's lines with the display's registers),
  * AMI_DEBUG=<port> (serve the debugger, in real time), AMI_MODEL (0 A500, 1
  * A2000, 2 A600), AMI_HD0, AMI_HD1 (HDF images, written: use copies),
@@ -65,6 +66,22 @@ static void show_ring(int n)
     }
 }
 
+/* The last instructions and the registers, then the end */
+static void stop_here(void)
+{
+    show_ring(60);
+    printf("D0-7:");
+    for (int r = M68K_REG_D0; r <= M68K_REG_D7; r++) {
+        printf(" %08x", m68k_get_reg(NULL, r));
+    }
+    printf("\nA0-7:");
+    for (int r = M68K_REG_A0; r <= M68K_REG_A7; r++) {
+        printf(" %08x", m68k_get_reg(NULL, r));
+    }
+    printf("\n");
+    exit(0);
+}
+
 void m68k_host_instruction(unsigned int pc)
 {
     s_insns++;
@@ -79,17 +96,7 @@ void m68k_host_instruction(unsigned int pc)
     }
     if (stop_pc && pc == stop_pc && s_frame >= stop_after) {
         printf("-- reached $%06x at frame %lu after:\n", pc, (unsigned long)s_frame);
-        show_ring(60);
-        printf("D0-7:");
-        for (int r = M68K_REG_D0; r <= M68K_REG_D7; r++) {
-            printf(" %08x", m68k_get_reg(NULL, r));
-        }
-        printf("\nA0-7:");
-        for (int r = M68K_REG_A0; r <= M68K_REG_A7; r++) {
-            printf(" %08x", m68k_get_reg(NULL, r));
-        }
-        printf("\n");
-        exit(0);
+        stop_here();
     }
 
     static uint32_t trace_pc = 1;
@@ -111,9 +118,20 @@ void m68k_host_instruction(unsigned int pc)
 static void exception(unsigned int vector)
 {
     static int mode = -1;
+    static unsigned stop_vector, stop_after;
     if (mode < 0) {
         const char *e = getenv("AMI_EXC");
         mode = e ? (strcmp(e, "all") == 0 ? 2 : 1) : 0;
+        e = getenv("AMI_EXCSTOP");
+        if (e) {
+            sscanf(e, "%u:%u", &stop_vector, &stop_after);
+        }
+    }
+    if (stop_vector && vector == stop_vector && s_frame >= stop_after) {
+        printf("-- exception %u at PC $%06x (frame %lu), SR %04x, after:\n", vector,
+               m68k_get_reg(NULL, M68K_REG_PPC) & 0xFFFFFF, (unsigned long)s_frame,
+               m68k_get_reg(NULL, M68K_REG_SR));
+        stop_here();
     }
     if (mode == 0 || (mode == 1 && vector >= 24 && vector < 32)) {
         return;

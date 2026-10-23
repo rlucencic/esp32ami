@@ -194,6 +194,7 @@ bool mem_poll_loop(uint32_t pc);
  */
 void bus_line_start(void);
 void bus_take(int at);
+bool bus_waited_over(int t);        /* the 68000's last access waited for DMA from before t to t or later */
 /* Bytes between the host and the 68000's memory (words there in host order) */
 void mem_copy_to(uint32_t a, const uint8_t *src, uint32_t len);
 void mem_copy_from(uint8_t *dst, uint32_t a, uint32_t len);
