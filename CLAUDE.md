@@ -389,7 +389,11 @@ images.
   EHB, HAM, colours changed at their pixels, then the sprites (the
   record holds those armed on the line: number, position, DATA/DATB;
   attached pairs, lower numbers in front, BPLCON2's PF1P/PF2P against
-  the playfield under each pixel, clipped to the window). **Collisions**
+  the playfield under each pixel, clipped to the window: none above or
+  below it either, as on Denise, which shows them only after a line's
+  BPL1DAT write (WinUAE's `sprites_hidden`; the Deniser project lists
+  showing them as its bug); BRDSPRT, ECS with ECSENA or AGA, shows them in
+  all the border). **Collisions**
   (CLXCON, CLXDAT): worked out at each line's end, but only while a
   program reads CLXDAT (for 4 frames after each read): the armed sprites'
   pixels against each other and against the playfields (a playfield
@@ -859,8 +863,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
   finds the touchpad better (the pointer's tip in sight, a tap anywhere
   clicks). Collisions are checked by the test disks only:
   the one game that reads CLXDAT (X-Balls) behaves the same without
-  them. Sprites show (and collide) outside the vertical window too:
-  whether OCS Denise hides them there isn't settled.
+  them. Sprites inside the window on lines without bitplanes still show:
+  Denise (WinUAE) would want a BPL1DAT write on the line first, which
+  wasn't settled for those lines (above and below the window it is).
 - **Clock** (the clock audit, 2026-10-21: `../esp32emu/CLAUDE.md`, To do):
   the saved offset would keep a clock set while the board's time was
   wrong (unlikely with the Tab5's RTC). (HOLD's release: fixed.)

@@ -20,6 +20,9 @@ cases:
   clxwide clxwide0
              sprite 0 64 pixels wide, its pixels 48-63 (or 0-15), plane 1
              under 48-63
+  sprborder sprborder2
+             sprite 0 written by hand, armed all frame: shown inside the
+             window only; with BRDSPRT above and below it too
 usage: agaboot.py <case> out.adf
        agaboot.py check <case> <picture.ppm | the CLXDAT dump>"""
 import struct, sys
@@ -96,6 +99,12 @@ def case(name):
         bands = [(40, [(0x100, 0x0210), (0x108, -40), (0x10A, -40)]),      # (planes before the window)
                  (50, [(0x140, 0x3200 | (H + 1) >> 1), (0x142, (H + 1) & 1), (0x146, 0), (0x144, 0xFFFF)]),
                  (60, [(0x142, 0)])]                                       # (sprite 0 written: lines 50-59)
+    elif name.startswith('sprborder'):
+        planes = [bytes(40)]
+        regs += [(0x140, 0x2C00 | H >> 1), (0x142, H & 1), (0x146, 0), (0x144, 0xFFFF)]
+        if name == 'sprborder2':
+            regs += [(0x106, 0x0C02)]                                  # BRDSPRT
+        bands = [(40, [(0x100, 0x1200), (0x108, -40), (0x10A, -40)])]
     elif name.startswith('clxwide'):
         planes = [bytes(10) + w(0xFFFF) + bytes(28)]
         regs[0] = (0x1FC, 0x000C)
@@ -216,6 +225,12 @@ def check(name, path):
             ok(row(50)[xs:xs + 64] == exp, 'FMODE $0004: 32 pixels at %d' % xs)
             ok(row(70)[xs:xs + 64] == exp, 'FMODE $0008: the same')
             ok(row(50)[xs + 64:xs + 72] == [c12(COLORS[0])] * 8, 'nothing after them')
+        elif name.startswith('sprborder'):
+            xs, brd = 2 * (H - 108), name == 'sprborder2'
+            for line, inside in ((40, False), (100, True), (305, False)):
+                shown = row(line - 2)[xs:xs + 32] == [c12(COLORS[17])] * 32
+                ok(shown == (inside or brd), 'line %d (%s the window): sprite %s' %
+                   (line, 'inside' if inside else 'outside', 'shown' if shown else 'hidden'))
         elif name == 'sprpos':
             ok(wd == 1440, 'a super-hires frame (%d wide)' % wd)
             xs = 4 * (H - 108)

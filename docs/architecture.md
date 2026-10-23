@@ -774,3 +774,12 @@ measurements written down.
   (Soccer Kid's and Aerial Racers' scripted presses land elsewhere, none
   stuck), all A500 ones the same; the poll skip then 19 others (11 on the
   68000), the same scenes a frame apart.
+- **9. Small things** (2026-10-23): sprites outside the vertical window
+  are hidden, and don't collide, unless BPLCON3's BRDSPRT (ECS with
+  ECSENA, AGA), which also shows them in the side borders: Denise shows
+  them only after the line's BPL1DAT write (WinUAE), and the Deniser
+  project lists showing them above and below as its bug. `agaboot.py`'s
+  sprborder cases (the old build failed the first); the collection 92 of
+  96 the same: Hyperion's loading screen and Kick Off 2's title lose
+  full-height stripes at the left, Satan's crack intro the junk below
+  its window, Deluxe Pacman 8 pixels in one picture.

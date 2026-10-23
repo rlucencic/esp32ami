@@ -11,11 +11,6 @@ cache).
 
 ## 9. Small things
 
-- Sprites outside the vertical window: shown (and colliding) here; does
-  OCS Denise hide them? Settle from the documentation and UAE. (It
-  matters for collisions: a sprite written by hand, armed on every line,
-  meets an all-zero playfield above and below the window; agaboot's clx7
-  arms it inside the window only.)
 - The Overscan editor's "Edit Text Size..." from a super-hires Workbench
   (A600, 3.1, host) never opens its screen; from a hires one it does.
   Find what its task waits for (it may be how AmigaOS is; a hires screen

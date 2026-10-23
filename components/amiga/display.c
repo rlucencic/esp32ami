@@ -20,7 +20,8 @@
  * the DMA off at the first line); written directly, writing DATA arms a
  * sprite and CTL disarms it. Lores pixels, the display window's
  * horizontal coordinates; an odd sprite with ATT set adds its two bits to
- * its even partner's (15 colours).
+ * its even partner's (15 colours). Shown inside the display window only,
+ * not above or below it either (BPLCON3's BRDSPRT: in all the border).
  *
  * The picture: lores pixels 108-467 (hires 216-935) of lines 29-312, in
  * hires pixels (lores ones doubled), its lines doubled. Interlaced (LACE
@@ -82,6 +83,8 @@
 #define BPLCON2_KILLEHB 0x0200          /* AGA: 6 planes are 64 colours */
 #define BPLCON3_LOCT    0x0200
 #define BPLCON3_BRDRBLNK 0x0020
+#define BPLCON3_BRDSPRT 0x0002
+#define BPLCON0_ECSENA  0x0001
 
 /* A colour write: from this pixel of the picture on, colour reg (AGA: of
  * the 256) is rgb
@@ -102,6 +105,7 @@ typedef struct {
     uint16_t words;
     uint16_t changes;
     uint8_t sprites;                /* shown on this line */
+    bool brdsprt;                   /* BPLCON3's BRDSPRT: they show in the border too */
     uint8_t spr_words;              /* each one's words (16 pixels each) */
     uint8_t spr_num[8];             /* the sprite (bit 7: attached to the one before) */
     int16_t spr_x[8];               /* super-hires pixels from the picture's left edge */
@@ -363,6 +367,24 @@ static int spr_hstart(const sprite_t *sp, bool shres)
         return x | ((sp->ctl >> 3) & 1);
     }
     return shres ? x : x & ~2;
+}
+
+/* BPLCON3's BRDSPRT, sprites in the border too (ECS with ECSENA, AGA);
+ * bpl: this line's planes were fetched (their latched BPLCONs)
+ */
+static bool border_sprites(bool bpl)
+{
+    uint16_t con0 = bpl ? s.con0 : s.bplcon0, con3 = bpl ? s.con3 : s.bplcon3;
+    return (con3 & BPLCON3_BRDSPRT) && (ami.aga || (ami.ecs && (con0 & BPLCON0_ECSENA)));
+}
+
+/* Denise shows sprites inside the display window: not above or below it
+ * (no bitplane data on those lines to enable them; WinUAE's
+ * sprites_hidden, the Deniser project's open issue) unless BRDSPRT
+ */
+static bool sprites_shown(bool bpl)
+{
+    return s.vwin || border_sprites(bpl);
 }
 
 static void spr_fetch_control(sprite_t *sp, int n)
@@ -833,12 +855,12 @@ static void collide(void)
      */
     uint16_t con3 = s.fetched ? s.con3 : s.bplcon3;
     int spres = ami.aga ? (con3 >> 6) & 3 : 0, nw = spr_words();
-    bool shres = s.fetched && (s.con0 & BPLCON0_SHRES);
+    bool shres = s.fetched && (s.con0 & BPLCON0_SHRES), shown = sprites_shown(s.fetched);
     int sx[4][8], spans[4] = { 0 };
     uint16_t sm[4][8];
     for (int i = 0; i < 8; i++) {
         const sprite_t *sp = &s.spr[i];
-        if (!sp->armed || ((i & 1) && !(s.clxcon & (0x1000 << (i >> 1))))) {
+        if (!sp->armed || ((i & 1) && !(s.clxcon & (0x1000 << (i >> 1)))) || !shown) {
             continue;
         }
         uint16_t w[4], m[4];
@@ -942,11 +964,11 @@ AMI_HOT void display_line_end(void)
         collide();
     }
     bool bpl = s.fetched && x0 < x1;
-    bool ecs_shres = bpl && !ami.aga && (s.con0 & BPLCON0_SHRES);
+    bool ecs_shres = bpl && !ami.aga && (s.con0 & BPLCON0_SHRES), brd = border_sprites(bpl);
     /* the sprites showing their data on this line */
     int nspr = 0, nw = spr_words();
     uint8_t num[8];
-    for (int i = 0; i < (ecs_shres ? 4 : 8) && x0 < x1; i++) {
+    for (int i = 0; i < (ecs_shres ? 4 : 8) && (x0 < x1 || brd) && sprites_shown(bpl); i++) {
         const sprite_t *sp = &s.spr[i];
         if (sp->armed) {
             num[nspr++] = (uint8_t)(i | ((i & 1) && (sp->ctl & 0x80) ? 0x80 : 0));
@@ -968,6 +990,9 @@ AMI_HOT void display_line_end(void)
     if (ami.aga) {
         h = mix(h, (uint32_t)(bpl ? s.con3 : s.bplcon3) << 16 | (bpl ? s.con4 : s.bplcon4));
         h = mix(h, (uint32_t)s.fmode << 16 | (bpl ? s.fmode_line : 0));
+    }
+    if (nspr) {
+        h = mix(h, brd);
     }
     for (int i = 0; i < nspr; i++) {
         const sprite_t *sp = &s.spr[num[i] & 7];
@@ -1001,6 +1026,7 @@ AMI_HOT void display_line_end(void)
         r->words = (uint16_t)s.words;
         r->changes = (uint16_t)s.changes;
         r->sprites = (uint8_t)nspr;
+        r->brdsprt = brd;
         r->spr_words = (uint8_t)nw;
         for (int i = 0; i < nspr; i++) {
             const sprite_t *sp = &s.spr[num[i] & 7];
@@ -1369,7 +1395,7 @@ static void draw_sprites(const row_t *r, uint16_t *out, bool wide)
     }
     bool ecs_shres = wide && !d.aga && (r->con0 & BPLCON0_SHRES) && r->planes;
     int step = wide ? 1 : 2, scale = wide ? 2 : 1;
-    int x0 = r->x0 * scale, x1 = r->x1 * scale;
+    int x0 = r->brdsprt ? 0 : r->x0 * scale, x1 = r->brdsprt ? (wide ? WIDE_W : PIC_W) : r->x1 * scale;
     for (int u = lo; u <= hi; u++) {
         if (!col[u] || u % step) {
             continue;
