@@ -733,9 +733,8 @@ measurements written down.
   one playfield and BPLCON1 4 super-hires pixels a step: both as WinUAE
   has them. `tools/shresboot.py`: 11 checks, all right on the host and
   the Tab5 (5 failed before); Workbench 3.1 in super-hires the same
-  picture as before; the collection 96 of 96 the same. Not done: a hires
-  screen dragged over a super-hires Workbench (the Overscan editor, the
-  one at hand, never opens from it: CLAUDE.md, Open items).
+  picture as before; the collection 96 of 96 the same. (A lores screen
+  dragged over the super-hires Workbench: done in item 9.)
 - **6. Writing extended ADFs** (2026-10-22): a written AmigaDOS track back
   into its sectors when all 11 decode with their checksums, anything else
   as the turn's raw MFM; an AmigaDOS track turning raw moves the tracks
@@ -782,4 +781,8 @@ measurements written down.
   sprborder cases (the old build failed the first); the collection 92 of
   96 the same: Hyperion's loading screen and Kick Off 2's title lose
   full-height stripes at the left, Satan's crack intro the junk below
-  its window, Deluxe Pacman 8 pixels in one picture.
+  its window, Deluxe Pacman 8 pixels in one picture. The Overscan editor
+  "hanging" from a super-hires Workbench was the test's input (the
+  command typed without its Return); a lores screen (MultiView's own,
+  dragged down with Left-Amiga) over the super-hires Workbench: both kinds
+  of line right in one 1440-wide frame (host).

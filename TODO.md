@@ -11,10 +11,6 @@ cache).
 
 ## 9. Small things
 
-- The Overscan editor's "Edit Text Size..." from a super-hires Workbench
-  (A600, 3.1, host) never opens its screen; from a hires one it does.
-  Find what its task waits for (it may be how AmigaOS is; a hires screen
-  over a super-hires one is then still to be tried by eye).
 - DMS modes 2-5: written after xDMS, untested (no archive uses them).
 - The clock's saved offset keeps a clock set while the board's time was
   wrong (unlikely with the Tab5's RTC).

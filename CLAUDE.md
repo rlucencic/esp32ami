@@ -714,7 +714,17 @@ the top two bits do nothing, Aerial Racers' race sets them),
   colours, BPLCON1 3 = 12 pixels, dual playfield, sprite 0's colours and
   70 ns step, sprite 4 hidden), all right on the host and the Tab5
   (2026-10-22; the code before failed 5). Workbench 3.1 in super-hires
-  (the recipe above, 4800 frames): the same picture as before.
+  (the recipe above, 4800 frames): the same picture as before. A lores
+  screen over it (2026-10-23): a 320 x 256 lores ILBM written over
+  `Prefs/Palette` on a copy of Extras 3.1 (`tools/adf.py`), Execute
+  `sys:utilities/multiview extras3.1:prefs/palette screen` (MultiView on a
+  screen of its own), then Left-Amiga held and the mouse dragged 120 down
+  with the button pressed: the frame 1440 wide, Workbench's super-hires
+  lines above, the picture's lores ones (4 pixels each) below, both at
+  columns 84-1363. (Typed commands need `\n` as the two characters:
+  `echo` turns it into a newline, which `$(cat ...)` drops at the end:
+  the command then never runs, which first looked like the Overscan
+  editor hanging.)
 - **NTSC**: `AMI_NTSC`: Workbench 1.3 (640 x 200) and 3.1 from HD at
   720 x 484, interlace too. Kickstart 3.1's **Early Startup Control**:
   both mouse buttons held from power-on (`AMI_INPUT=0:m:0:0:3`, the
@@ -850,12 +860,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
   too); three name no system disk.
 - ECS super-hires follows WinUAE where the HRM says nothing (the colour
   pairs, sprites 4-7 hidden, dual playfield as one playfield): not
-  compared with a real ECS Denise. A hires screen dragged over a
-  super-hires one wasn't tried in Workbench: the Overscan editor's "Edit
-  Text Size..." (the one hires screen at hand) never opens from a
-  super-hires Workbench (host, A600 3.1: its task waits, Workbench stays
-  usable; from a hires Workbench it opens). Not looked into; the boot
-  disk's bands (lores, hires, super-hires lines in a frame) draw right.
+  compared with a real ECS Denise. A lores screen dragged over the
+  super-hires Workbench is right on the host (Testing); not tried on the
+  Tab5.
 - Paula's attach modes are checked by the test disks only: Datastorm, the
   collection's one user, sets them while its sound is off (its recording
   the same with and without them). Absolute touch
