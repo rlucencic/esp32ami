@@ -459,20 +459,23 @@ bool mem_poll_loop(uint32_t pc)
     return (target & 0xFFFFFF) == pc;
 }
 
-/* PC-relative operands: data (the cache holds instructions only) */
+/* PC-relative operands: data (the cache holds instructions only). Musashi
+ * hands these over without its 24-bit mask (its data path masks inside):
+ * an index going round the top read past s_rmap (Desert Dream crashed)
+ */
 unsigned int m68k_read_pcrelative_8(unsigned int a)
 {
-    return m68k_read_memory_8(a);
+    return m68k_read_memory_8(a & 0xFFFFFF);
 }
 
 unsigned int m68k_read_pcrelative_16(unsigned int a)
 {
-    return m68k_read_memory_16(a);
+    return m68k_read_memory_16(a & 0xFFFFFF);
 }
 
 unsigned int m68k_read_pcrelative_32(unsigned int a)
 {
-    return m68k_read_memory_32(a);
+    return m68k_read_memory_32(a & 0xFFFFFF);
 }
 
 void AMI_HOT m68k_write_memory_8(unsigned int a, unsigned int v)
