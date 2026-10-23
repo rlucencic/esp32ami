@@ -402,9 +402,12 @@ void floppy_control(uint8_t old, uint8_t prb)
         bool now = !(prb & sel);
         if (now && (old & sel)) {
             /* selected: the motor line is latched; with the motor off,
-             * each selection shifts the ID out one bit
+             * each selection shifts the ID out one bit. /MTR low in the
+             * write before counts too (as WinUAE has it): Last Action
+             * Hero's loader writes $7d (motor on, DF0 not selected),
+             * then $f5 (DF0 selected, /MTR back high)
              */
-            bool motor = !(prb & 0x80);
+            bool motor = !(prb & 0x80) || !(old & 0x80);
             if (d->motor && !motor) {
                 d->id_bit = 0;
             } else if (!motor) {
