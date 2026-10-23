@@ -214,8 +214,12 @@ uint8_t cia_read(cia_t *c, int reg)
         return v;
     }
     case CRA:
+        /* (a one-shot's START clears as it underflows: polled, without
+         * its interrupt there's no event to bring it up to date) */
+        cia_sync(c, ami_now());
         return c->cra;
     case CRB:
+        cia_sync(c, ami_now());
         return c->crb;
     default:
         return 0xFF;
