@@ -9,6 +9,35 @@ slot; 4, Paula's attach modes; 5, ECS super-hires; 6, writing extended
 ADFs; 7, AGA's untested and missing parts; 8, the 68EC020's instruction
 cache).
 
+## 10. Titles that still fail (the smoke runs)
+
+Why: found running the user's demos and game ADFs with `tools/smoke.py`
+(CLAUDE.md, Testing and Open items); each could be a fault of ours.
+Check each with `smoke.py` on its folder (`ONLY=<name>`) and the
+collection for the rest. Roughly a session each, in this order:
+
+- Voyage (A500 demo): an address error at $0401EC. Its trace handler
+  (Copylock-style) changes the very next instruction with `eor.w
+  D5,(A2)`: a 68000 has that word in its prefetch already and runs the
+  old one, Musashi reads it again and runs the new one (`and.l
+  D4,$c347.w`, odd). Musashi's `M68K_EMULATE_PREFETCH` keeps the next
+  word fetched (off now, in esp32emu's `m68kconf.h`): a Kconfig option
+  for the Amiga (68000 only; the 68020 has its cache), its cost on the
+  board measured, all builds.
+- Under Pressure (A1200 demo): its line drawer writes past its buffer
+  into the custom registers at frame ~4600 with the chip waits at 7-8
+  clocks (fine at 5). Find what the loop races against (the blitter, a
+  copper or VBL flag) and which of our timings decides it.
+- All New World of Lemmings (AGA crack, no fast RAM): an OS hook at
+  $C6720 gets overwritten, then a jump through it every ~14 frames once
+  Space is pressed at the title. Find the writer: a host write watch
+  (`AMI_WATCH=<addr>`, to add) would show it; then whether a real A1200
+  without fast RAM would do the same.
+- Killer (A1200, marked for a JIT): quits at once. Check whether it
+  wants a 68030 or an FPU (out of scope then).
+- Pango Fun (a beta): a Guru on every machine; see whether the beta is
+  just broken (another dump, WinUAE's behaviour described anywhere).
+
 ## 9. Waiting on something
 
 Nothing here can be done as things are; each says what it waits for.

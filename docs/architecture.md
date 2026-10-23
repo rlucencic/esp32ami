@@ -786,3 +786,39 @@ measurements written down.
   command typed without its Return); a lores screen (MultiView's own,
   dragged down with Left-Amiga) over the super-hires Workbench: both kinds
   of line right in one 1440-wide frame (host).
+
+### The user's demos and games (2026-10-23)
+
+`tools/smoke.py` runs a folder of titles on one host build and flags the
+ones that look broken (CLAUDE.md, Testing). Faults found and fixed, each
+checked against the game collection:
+
+- **PC-relative reads unmasked**: Musashi hands their addresses over
+  without the 24-bit mask (with `CONFIG_M68K_PROGRAM_READS`); Desert
+  Dream crashed the host. Masked.
+- **VERTB's request before its interrupt**: Seeing Is Believing's loader
+  polls INTREQR with Kickstart's VERTB interrupt on; the request now shows
+  from line 0's start, the interrupt 40 clocks later.
+- **An instruction's long operand across a 64 KB bank** read zeros
+  (the 68EC020's immediate reads); each word from its own bank now.
+- **The drive's motor latch**: /MTR in the write before the selection
+  counts too (WinUAE); Last Action Hero's loader turned the motor on in
+  one write and selected the drive in the next (black screen).
+- **An interrupt during the last bus cycle's DMA wait** comes after the
+  next instruction (the 68000 decides as that cycle begins, WinUAE):
+  Lionheart's VERTB poll from slow RAM, held by the copper's list at the
+  top of the frame, never saw the bit. The Tab5: its intro at 100%, core
+  1 63%.
+- **CRA/CRB reads bring the CIA up to date**: a polled one-shot (no
+  interrupt) cleared START only when something else synced the CIA. It
+  Can't Be Done's loader waits 400 times for a 2 ms one-shot between
+  track reads (each took a frame: minutes of black, now it plays
+  through); Project-X's New Levels (its disk request instead of black),
+  Exile (loads in half the time).
+
+Aerial Racers' race on the Tab5 after all of them: 98-102%, core 1
+70-81%. The sample of 288 OCS game ADFs: 52 flagged instead of 95 (most
+of the difference the alert detector's false alarms, red titles; Last
+Action Hero, Lionheart, Project-X and Navy Seals now run; Summer Games,
+Cube-X and Neighbours fewer dark pictures; the rest the same scenes at
+other moments). Still failing: `TODO.md` 10.

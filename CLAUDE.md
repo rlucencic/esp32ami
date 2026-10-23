@@ -120,6 +120,7 @@ images.
 | `tools/mkinstall.py` | A Workbench floppy that formats DH0: and copies itself onto it (the hard disk test) |
 | `tools/hdrom.py` | Assembles the hard disk board's boot ROM into `components/amiga/hdrom.h` |
 | `tools/collection.py` | Runs a folder of RP9 games on two host builds and compares their pictures (see Testing) |
+| `tools/smoke.py` | Runs a folder of RP9s or ADFs on one host build and flags what looks broken, a contact sheet each (see Testing) |
 | `main/web/amifiles.js` | The web page's converters (served as /machine.js): DMS archives, gzipped images |
 | `tools/amifiles_test.js` | Its test: `node tools/amifiles_test.js [folder of DMS+ADF pairs]` |
 | `roms/` | The Kickstarts (copyrighted, not distributed) |
@@ -272,12 +273,17 @@ images.
   and later put it at $200000 and add it to the free memory. The board
   allocates 8 MB at power-on whatever the setting.
 - **Paula's interrupts** (`amiga.c`, `custom.c`): INTENA/INTREQ to levels
-  1-6, autovectored (VERTB 8 clocks into line 0: `VERTB_DELAY`); the CIAs' lines are levels (PORTS/EXTER set again
+  1-6, autovectored (VERTB: the request in INTREQR at line 0's start,
+  the interrupt 40 clocks later, `VERTB_DELAY`; an interrupt raised while
+  the 68000's last bus cycle waits for DMA comes after its next
+  instruction, `bus_waited_over()`); the CIAs' lines are levels (PORTS/EXTER set again
   while a CIA still asserts after INTREQ is cleared).
 - **CIAs** (`cia.c`): timers (one-shot: writing the high byte loads and
-  starts), TOD with latch and halt, alarm, ICR, SDR (output shifted at
+  starts; reading CRA/CRB brings them up to date, as reading a timer or
+  ICR does), TOD with latch and halt, alarm, ICR, SDR (output shifted at
   once), the ports: CIA-A PRA bit 0 OVL (`mem_update_map()`), CIA-B PRB the
-  drives' lines (`floppy.c`: select, motor latched at select, step,
+  drives' lines (`floppy.c`: select, motor latched at select from /MTR
+  in that write or the one before, step,
   direction, side; /CHNG low until a step with a disk in; the ID read
   through /RDY; DF0: and DF1: present). CIA-B's FLAG: the index pulse.
 - **Floppies** (`floppy.c`): ADF images kept in memory (PSRAM on the
@@ -504,6 +510,11 @@ the top two bits do nothing, Aerial Racers' race sets them),
   screen. 1.3 doesn't mind either way.
 - **VERTB at line 0's very first clock hung F1 GP Circuits**: it waits at
   line 0; raised 8 clocks in (the interrupt reaching the 68000), it runs.
+  Then Seeing Is Believing's loader (`btst #5,$dff01f` / `beq` with
+  Kickstart's VERTB interrupt on) sat on the white screen: the request and
+  the interrupt came together and the handler cleared the bit first. Now
+  the request is in INTREQR from the line's start and the interrupt 40
+  clocks later: room for a pass of such a loop.
 - **The copper wakes up a cycle after a WAIT**: without that cycle the
   instruction after `WAIT $FFDF` (line 255's last position) was compared
   still in line 255, where any later WAIT ($2C07, for line 300) passed at
@@ -582,6 +593,32 @@ the top two bits do nothing, Aerial Racers' race sets them),
   reaction), and the board's "core 1 ~95% in Aerial Racers' title" was the
   68EC020 spinning in that loop. `AMI_STOP=<pc>` on the loop's PC showed
   the routine.
+- **Musashi hands PC-relative addresses over unmasked** (with
+  `CONFIG_M68K_PROGRAM_READS`): an index going round the top of the
+  address space read past the bank table and Desert Dream crashed the
+  host. `m68k_read_pcrelative_*()` mask to 24 bits.
+- **An instruction's long operand across a 64 KB bank read zeros**:
+  `m68k_read_immediate_32()` fell back to the chips' path for it. Each
+  word now comes from its own bank.
+- **A drive latches its motor from /MTR in the write before too**: Last
+  Action Hero's loader writes $7D (motor on, DF0 not selected), then $F5
+  (DF0 selected, /MTR high). With the new value only the motor stayed off,
+  the DMA never ended and the screen stayed black. WinUAE turns it on if
+  either is low.
+- **The 68000 decides on an interrupt as its last bus cycle begins**:
+  Lionheart polls INTREQR for VERTB from slow RAM with exec's VERTB
+  interrupt on. The copper's list at the top of the frame held the loop's
+  BEQ for 124 clocks, the interrupt came due meanwhile and was taken
+  before the BTST could read the bit, every frame (the poll skip keeps the
+  loop's phase). As WinUAE has it, an interrupt raised during that wait
+  now comes after the next instruction (`bus_waited_over()`).
+- **Reading CRA/CRB must bring the timers up to date**: a one-shot's
+  START clears as it underflows, but only `cia_sync()` sees that, and
+  without its interrupt there's no event. It Can't Be Done's loader waits
+  400 times for a 2 ms one-shot on CIA-B; each wait took a frame (until
+  the music's timer synced the CIA), the next part 8 s late, minutes of
+  black. Project-X's New Levels searched the drives the same way (black
+  instead of its disk request).
 
 ## Testing
 
@@ -593,6 +630,7 @@ the top two bits do nothing, Aerial Racers' race sets them),
   every n frames), `AMI_RING=<n>` (the last instructions at the end),
   `AMI_STOP=<pc>[:<frame>]` (the 60 instructions before and the registers),
   `AMI_TRACE=<pc>:<n>`, `AMI_EXC` (exceptions; `all` with interrupts),
+  `AMI_EXCSTOP=<vector>[:<frame>]` (stop at that exception, as `AMI_STOP`),
   `AMI_DEBUG=<port>` (the debugger, real time), `AMI_DF0`/`AMI_DF1` (ADF
   images: they get written, use copies), `AMI_INSERT=<frame>:<drive>:<adf>
   [;...]` (an empty name ejects), `AMI_INPUT=<frame>:m:<dx>:<dy>:<buttons>
@@ -773,6 +811,20 @@ the top two bits do nothing, Aerial Racers' race sets them),
   Its runs set `AMI_TIME`: one build against itself gives 96 of 96 the
   same (Epsilon 9 and Maniac Ball differed under load before: seeded from
   the clock, which then started at the Mac's time).
+- **Many titles at once** (`tools/smoke.py <folder> <out> <roms | kick.rom>
+  <folder with the system HDFs> <ami_host>`): one build, each title for
+  `FRAMES` (15000) with a picture every `SHOTS` (250); flags a halted
+  CPU, an alert on screen, exceptions after the boot, all dark, still
+  pictures, and writes a contact sheet each (`<out>/<nnn>/sheet.png`:
+  look at them, the flags only point). RP9s on their manifest's machine
+  (the second floppy in DF1), ADFs on the machine `AMI_*` gives; `INPUT`
+  presses things for every title. Run so far (2026-10-23, the user's
+  own folders: ask for them): 111 demo RP9s (53 of them A4000 ones: Z3
+  RAM and the 68040, out of scope), the game RP9s (the collection), a
+  sample of 288 OCS game ADFs (A500, 1.3, 512 + 512 KB, 7000 frames, a
+  click, fire, Space and Help) and 12 AGA ones (A1200, 3.1). Rerun them
+  after a change of timing and compare the flags (`diff` of the lists),
+  then the sheets.
 - `say hello` in Workbench 1.3's Shell (narrator.device) as a sound test;
   `AMI_WAV` records it on the host.
 - **On the board**: status via the web API, pictures via the console's
@@ -817,7 +869,7 @@ the top two bits do nothing, Aerial Racers' race sets them),
 ## Open items
 
 - The work still to do, sketched and in order: `TODO.md` (items 1-8
-  done; 9 is what waits on something). The
+  done; 10, titles that still fail, first; 9 is what waits on something). The
   items below are the state of things; `TODO.md` says what to do next.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
@@ -873,6 +925,22 @@ the top two bits do nothing, Aerial Racers' race sets them),
   them. Sprites inside the window on lines without bitplanes still show:
   Denise (WinUAE) would want a BPL1DAT write on the line first, which
   wasn't settled for those lines (above and below the window it is).
+- **Titles still failing** (the smoke runs, Testing; 2026-10-23; what to
+  do about them: `TODO.md` 10): Voyage
+  (A500 demo) ends in an address error at $0401EC: its trace handler
+  changes the next instruction, which a 68000 has prefetched (Musashi
+  runs the changed one); Under Pressure (A1200) draws lines past its
+  buffer into the custom registers at frame ~4600 (BPLCON0 $FFFF, then a
+  crash) with the chip waits at 7-8 clocks, not at 5: timing; Killer
+  (A1200, marked for a JIT) quits at once (030 or FPU, likely); All New
+  World of Lemmings (AGA, a crack) without fast RAM jumps through an
+  overwritten OS hook every ~14 frames once Space is pressed at its title
+  (with 4 MB fast RAM it doesn't); Pango Fun (a beta) shows a Guru on
+  every machine. Not faults: The Magician fails only with slow RAM, ECO
+  wants 1.2, DarkSide and Primal Rage 2.04 with 1 MB; Hardwired wants its
+  disk 2 in DF0 and a right click; the Quartex cracks of Navy Seals and
+  Crime Does Not Pay load through a trace-vector decoder for ~160 s ("the
+  game takes a while to load"; not timed on a real one).
 - **Clock** (the clock audit, 2026-10-21: `../esp32emu/CLAUDE.md`, To do):
   the saved offset would keep a clock set while the board's time was
   wrong (unlikely with the Tab5's RTC). (HOLD's release: fixed.)
