@@ -341,11 +341,18 @@ static inline int min_int(int a, int b)
     return a < b ? a : b;
 }
 
-/* The vertical blank interrupt reaches the 68000 a few clocks into line 0
+/* The vertical blank interrupt reaches the 68000 a little into line 0
  * (Paula's interrupt lines, the instruction under way): a program waiting
- * in a loop for line 0 sees it (F1 GP Circuits does)
+ * in a loop for line 0 sees it (F1 GP Circuits does). Its request shows
+ * in INTREQR from the line's start: a program polling INTREQR with the
+ * interrupt on sees the bit before the handler clears it (Seeing Is
+ * Believing's loader, btst #5,$dff01f / beq, under Kickstart). On the real
+ * one an instruction under way as the interrupt comes still finishes with
+ * what it read; here whole instructions run between events, so the delay
+ * leaves room for a pass of such a loop (20 colour clocks) even after one
+ * that ran past the line's start
  */
-#define VERTB_DELAY     8
+#define VERTB_DELAY     40
 static int s_vertb_at = NEVER;
 
 static int next_event(void)
@@ -378,7 +385,7 @@ static void run_line(void)
         /* the earliest event is due */
         if (next == s_vertb_at) {
             s_vertb_at = NEVER;
-            ami_set_intreq(INT_VERTB);
+            ami_update_irq();           /* (the request as the CPU left it) */
         } else if (next == display_fetch_at()) {
             display_fetch();
         } else if (next == copper_next()) {
@@ -408,6 +415,7 @@ void amiga_run_frame(void)
         if (ami.line == 0) {
             /* the vertical blank */
             copper_vblank();
+            ami.intreq |= INT_VERTB;
             s_vertb_at = VERTB_DELAY;
             cia_tod_tick(&cia[0]);
         }
