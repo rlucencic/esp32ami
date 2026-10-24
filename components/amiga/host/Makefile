@@ -1,4 +1,7 @@
-# Host build of the Amiga core: make -C components/amiga/host run KICK=roms/amiga-os-130.rom
+# Host build of the Amiga core: make -C components/amiga/host run
+# KICK defaults to the repo root's roms/amiga-os-130.rom; because -C runs
+# make here, a relative KICK= (e.g. roms/x.rom) resolves under this
+# directory and must be given as an absolute path instead.
 ROOT      := ../../..
 MUSASHI   := ../../../../esp32emu/components/musashi
 EMUDBG    := ../../../../esp32emu/components/emudbg

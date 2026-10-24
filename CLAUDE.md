@@ -677,9 +677,13 @@ the top two bits do nothing, Aerial Racers' race sets them),
   the prefetch option off/on. The 2026-10-24 follow-up and completed
   hardware checks are in `docs/validation-2026-10-24.md`.
 
-- **Host build**: `make -C components/amiga/host run KICK=roms/amiga-os-130.rom`,
-  or `build/ami_host <kickstart.rom> [frames] [out.ppm]`, far faster than
-  real time. Environment: `AMI_CHIP_KB` (512), `AMI_SLOW_KB` (512; 0 none),
+- **Host build**: `make -C components/amiga/host run` (the ROM defaults to
+  `roms/amiga-os-130.rom` at the repo root; `-C` runs make inside the host
+  directory, so a relative `KICK=` such as `KICK=roms/amiga-os-130.rom`
+  resolves to `components/amiga/host/roms/...` and fails. Pass an absolute
+  `KICK=` for another ROM), or `build/ami_host <kickstart.rom> [frames]
+  [out.ppm]`, far faster than real time. Environment: `AMI_CHIP_KB` (512),
+  `AMI_SLOW_KB` (512; 0 none),
   `AMI_ECS`, `AMI_NTSC`, `AMI_SERIAL` (the serial port's output),
   `AMI_SHOTS=<n>` (a picture every n frames), `AMI_LOG=<n>` (the state
   every n frames), `AMI_RING=<n>` (the last instructions at the end),
