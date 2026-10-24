@@ -263,7 +263,7 @@ static inline void chip_write16(uint32_t a, uint16_t v)
     *(uint16_t *)(ami.chip + (a & ami.chip_mask & ~1u)) = v;
 }
 
-/* custom.c: $DFF000-$DFF1FE (register offsets) */
+/* The custom chip registers (custom.c: $DFF000-$DFF1FE, register offsets) */
 uint16_t custom_read(uint32_t reg);
 void custom_write(uint32_t reg, uint16_t value, int at, bool copper);
 void custom_reset(void);
