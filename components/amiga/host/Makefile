@@ -4,7 +4,7 @@ MUSASHI   := ../../../../esp32emu/components/musashi
 EMUDBG    := ../../../../esp32emu/components/emudbg
 AMI       := ..
 BUILD     := build
-CFLAGS    := -O2 -g -Wall -Wextra -Wno-unused-parameter -DM68K_INSTRUCTION_HOOK=2 -DM68K_RUNTIME -DM68K_NO_BUS_ERRORS -DM68K_PROGRAM_READS -I$(AMI)/include -I$(AMI) -I$(MUSASHI) -I$(MUSASHI)/musashi -I$(MUSASHI)/generated -I$(EMUDBG)/include
+CFLAGS    := -O2 -g -Wall -Wextra -Wno-unused-parameter -DM68K_INSTRUCTION_HOOK=2 -DM68K_RUNTIME -DM68K_NO_BUS_ERRORS -DM68K_PROGRAM_READS -DM68K_PREFETCH -I$(AMI)/include -I$(AMI) -I$(MUSASHI) -I$(MUSASHI)/musashi -I$(MUSASHI)/generated -I$(EMUDBG)/include
 KICK      ?= $(ROOT)/roms/amiga-os-130.rom
 FRAMES    ?= 500
 
@@ -23,6 +23,16 @@ run: $(BUILD)/ami_host
 $(BUILD)/ami_host: host_main.c $(AMI_OBJS) $(M68K_OBJS)
 	$(CC) $(CFLAGS) $^ -lm -lpthread -lz -o $@
 
+test: $(BUILD)/floppy_test $(BUILD)/mem_test
+	./$(BUILD)/floppy_test
+	./$(BUILD)/mem_test
+
+$(BUILD)/floppy_test: floppy_test.c $(AMI_OBJS) $(M68K_OBJS)
+	$(CC) $(CFLAGS) $^ -lm -lpthread -lz -o $@
+
+$(BUILD)/mem_test: mem_test.c $(AMI_OBJS) $(M68K_OBJS)
+	$(CC) $(CFLAGS) $^ -lm -lpthread -lz -o $@
+
 $(BUILD)/ami/%.o: $(AMI)/%.c $(wildcard $(AMI)/*.h $(AMI)/include/*.h)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -38,4 +48,4 @@ $(BUILD)/%.o: $(EMUDBG)/%.c $(EMUDBG)/include/emudbg.h
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: run clean
+.PHONY: run test clean

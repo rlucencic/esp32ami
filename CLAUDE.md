@@ -172,7 +172,9 @@ images.
   cycles changing marks a new one) and waits past the taken slots from
   there (`s_wait_at[]`, worked out when the map changed); a blit under way
   costs an access 6 clocks (BLTPRI off) or the rest of the blit (on).
-  Fast RAM and the ROM: no wait. The 68EC020 keeps its averages
+  Fast RAM and the ROM: no wait. The CIAs: by the E clock instead
+  (`ami_e_wait()`: 10-19 clocks an access, WinUAE's figures, the access
+  a bus cycle sooner than the slots take it). The 68EC020 keeps its averages
   (`ami.stall`: `SLOT_WAIT` a slot for the copper and the blitter).
   SysInfo 4.4: 1.03 times a real A600 (chip and slow RAM), its chip speed
   1.12; xSysInfo 0.12: 1.06, chip RAM 2.19 MB/s (the averages before:
@@ -195,7 +197,8 @@ images.
   always from memory: no stale code). Instruction reads come apart from
   data through `CONFIG_M68K_PROGRAM_READS` (esp32emu; `-DM68K_PROGRAM_READS`
   in the host build): `m68k_read_immediate_16/32()`, the 68000 straight to
-  its usual reads. SysInfo 4.4: 1.04 times an A1200 (1270 Dhrystones,
+  its usual reads; `CONFIG_M68K_PREFETCH` (`-DM68K_PREFETCH`) fetches the
+  next instruction word ahead (the 68000's prefetch: Voyage, the lessons). SysInfo 4.4: 1.04 times an A1200 (1270 Dhrystones,
   14.60 MHz; with the cache and the old wait of 5: 1.38; without the
   cache: 1.03, 11.30 MHz, the instruction waits making up for the cheap
   data ones). No bus errors on the Amiga: `CONFIG_M68K_NO_BUS_ERRORS`
@@ -213,7 +216,8 @@ images.
   even ones; a byte write goes to both halves of the bus), custom chips
   ($DFF000, and $C00000-$D7FFFF without slow RAM, above it with: the
   mirror Kickstart 1.x tests for). Write-only and missing custom registers
-  read the last word the 68000 put on the chip bus (`ami.bus`: Dr. Mario
+  read the last word the 68000 put on the chip bus (RAM reads and writes
+  included, instruction fetches too; `ami.bus`: Dr. Mario
   counts in $DFF0FA). No bus errors; empty space reads 0. Words in host
   order, byte n at n ^ 1 (the ST's convention).
 - **Gayle** (`gayle.c`, the A600's and A1200's; on the other models while a hard disk
@@ -290,9 +294,12 @@ images.
   board), written tracks back to the file at `amiga_floppy_flush()` (the
   board: every second once the disk was still for 2 s). The disk turns at
   300 rpm: 6334 MFM words a track, 224 clocks a word, moved on at each
-  line's end. The track under the head is made from the image in
+  line's end, and up to a DMA start/stop or enable change
+  (`floppy_sync()`, rebased with each frame). The track under the head is
+  made from the image in
   AmigaDOS's format (11 sectors: sync words, header, checksums, odd/even
-  MFM); Paula's disk DMA (DSKLEN written twice, WORDSYNC waits for DSKSYNC
+  MFM; the gap first, after the index, then sector 0, as WinUAE has it);
+  Paula's disk DMA (DSKLEN written twice, WORDSYNC waits for DSKSYNC
   and doesn't transfer it, DSKBLK at the end, DSKSYN as the sync word
   passes, DSKBYTR roughly) reads it or writes over it, and a written track
   is decoded back into the image's sectors when the write ends. Paula
@@ -619,8 +626,56 @@ the top two bits do nothing, Aerial Racers' race sets them),
   the music's timer synced the CIA), the next part 8 s late, minutes of
   black. Project-X's New Levels searched the drives the same way (black
   instead of its disk request).
+- **A Copylock-style key wants the 68000's prefetch and the E clock**:
+  Voyage (Razor 1911) fills 600 bytes while both CIAs' timer interrupts
+  shuffle the registers it writes, checksums them into the key of a
+  trace-vector decoder, and that decoder XORs the instruction right after
+  its own `eor.w` (the 68000 runs the prefetched old word, `not.b`
+  restores it). Musashi's opcode fetch skipped its prefetch emulation (an
+  AND to an odd address, Kickstart's alert); with it, the key still came
+  out wrong: the second CIA-B interrupt must come before the fill's write
+  489 or 490 of 600 (a window of 16 clocks after 5120), and only CIA
+  reads by the E clock (10-19 clocks each, two of them in the handlers)
+  put it there. A Python model of the fill, the checksum and the first
+  decoded bytes (from the bootblock) found the window from our dump of
+  the fill; the E clock's position: the access a bus cycle sooner than
+  our slot model takes it (the opcode came in the instruction before).
+  WinUAE's interrupt acknowledge is a plain read: an E clock wait there
+  overshot.
+- **Sector 0 right after the index broke 9 Fingers once the CIAs took E
+  clock time**: its loader waits for the index (CIA-B's FLAG) and then
+  starts the DMA; our tracks had sector 0's sync 2 words after the index,
+  and the slower CIA reads started the read past it (sector 1 first, the
+  decruncher then ran on garbage forever, a white then black screen).
+  WinUAE puts the gap (350 words) first: so do we now.
+
+- **A RAM probe must see opcode fetches on the floating chip bus**:
+  Steel Empire's cracked loader probes slow RAM every 1 KB, at an offset
+  that lands on write-only custom-register mirrors above $C80000. With
+  only custom writes in `ami.bus`, these read back the byte it just wrote:
+  it found RAM up to $D80000 and put its stack there. Chip/slow RAM reads
+  (including prefetch) and writes update the bus now; ROM and fast RAM
+  reads leave it alone. Its language menu appears again. OCS DENISEID
+  uses $FFFF as the undriven-bus fallback: individual DMA bus values are
+  not modeled, so a CPU opcode there could falsely report AGA (Rink a
+  Dink's 256 reads of bit 2). ECS and AGA retain their actual IDs.
+- **Disk DMA must not read backwards within a line**: moving the gap
+  first exposed Hyperion's read beginning on the second sync word. Its
+  6656-word buffer then held only part of the last sector, and the loader
+  sought track $FFFF after a checksum error. Advance the disk to DSKLEN,
+  DMACON and ADKCON writes, then to the line end. Pointer changes and
+  status reads retain the existing line model: advancing on each of
+  those too corrupted 9 Fingers' streaming pictures. The generated-disk
+  host test checks mid-line DMA start, repeated/backwards sync and frame
+  rebasing; it fails with the start synchronization removed.
 
 ## Testing
+
+- `make -C components/amiga/host test`: ROM-free regression checks of
+  mid-line floppy DMA and the 68000's floating chip bus. The shared core's
+  `make -C ../esp32emu/components/musashi/test run run-prefetch` checks
+  the prefetch option off/on. The 2026-10-24 follow-up and completed
+  hardware checks are in `docs/validation-2026-10-24.md`.
 
 - **Host build**: `make -C components/amiga/host run KICK=roms/amiga-os-130.rom`,
   or `build/ami_host <kickstart.rom> [frames] [out.ppm]`, far faster than
@@ -868,7 +923,7 @@ the top two bits do nothing, Aerial Racers' race sets them),
 
 ## Open items
 
-- The work still to do, sketched and in order: `TODO.md` (items 1-8
+- The work still to do, sketched and in order: `TODO.md` (items 1-8 and 11
   done; 10, titles that still fail, first; 9 is what waits on something). The
   items below are the state of things; `TODO.md` says what to do next.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
@@ -926,10 +981,7 @@ the top two bits do nothing, Aerial Racers' race sets them),
   Denise (WinUAE) would want a BPL1DAT write on the line first, which
   wasn't settled for those lines (above and below the window it is).
 - **Titles still failing** (the smoke runs, Testing; 2026-10-23; what to
-  do about them: `TODO.md` 10): Voyage
-  (A500 demo) ends in an address error at $0401EC: its trace handler
-  changes the next instruction, which a 68000 has prefetched (Musashi
-  runs the changed one); Under Pressure (A1200) draws lines past its
+  do about them: `TODO.md` 10): Under Pressure (A1200) draws lines past its
   buffer into the custom registers at frame ~4600 (BPLCON0 $FFFF, then a
   crash) with the chip waits at 7-8 clocks, not at 5: timing; Killer
   (A1200, marked for a JIT) quits at once (030 or FPU, likely); All New

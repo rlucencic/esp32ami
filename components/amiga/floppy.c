@@ -87,6 +87,7 @@ typedef struct {
 
 static drive_t s_drive[DRIVES];
 static int s_side;
+static int s_at;                    /* the disk's time, in clocks into this frame */
 
 void (*amiga_disk_hook)(uint16_t dsklen, uint16_t sync, uint16_t adkcon, int cylinder, int side, uint32_t pt);
 
@@ -175,6 +176,12 @@ static void make_track(drive_t *d, int track, const uint8_t *sectors)
 {
     track_writer_t t = { .w = d->mfm, .n = 0, .last = 0 };
     int n = d->sectors;
+    /* the gap first, then sector 0 (WinUAE's layout): a loader that waits
+     * for the index and then starts its DMA still finds sector 0's sync
+     * (9 Fingers' missed it once its CIA reads took E clock time) */
+    while (t.n < turn_words(d) - n * SECTOR_WORDS) {
+        put_word(&t, (t.last & 1) ? 0x2AAA : 0xAAAA);
+    }
     for (int s = 0; s < n; s++) {
         put_word(&t, (t.last & 1) ? 0x2AAA : 0xAAAA);
         put_word(&t, 0xAAAA);
@@ -379,6 +386,7 @@ static void write_ext_track(drive_t *d, int track)
 
 void floppy_reset(void)
 {
+    s_at = ami_now();
     for (int i = 0; i < DRIVES; i++) {
         drive_t *d = &s_drive[i];
         d->present = i < AMIGA_FLOPPIES;
@@ -574,8 +582,18 @@ static void word_passes(drive_t *d)
     }
 }
 
-void floppy_line(int cycles)
+/* Bring DMA up to its start/stop or enable change. A DSKLEN write
+ * partway through a line must not capture words that passed
+ * earlier in that line (Hyperion could lose a sync and decode a short
+ * final sector). The line's end advances whatever no access has reached.
+ */
+void floppy_sync(int at)
 {
+    int cycles = at - s_at;
+    if (cycles <= 0) {
+        return;
+    }
+    s_at = at;
     drive_t *r = reading();
     for (int i = 0; i < DRIVES; i++) {
         drive_t *d = &s_drive[i];
@@ -601,9 +619,14 @@ void floppy_line(int cycles)
     }
 }
 
+void floppy_rebase(int frame_cycles)
+{
+    s_at -= frame_cycles;
+}
+
 /* ---- Paula's disk registers ---- */
 
-void floppy_write(uint32_t reg, uint16_t v)
+void floppy_write(uint32_t reg, uint16_t v, int at)
 {
     switch (reg) {
     case 0x020:                     /* DSKPTH, DSKPTL */
@@ -613,6 +636,7 @@ void floppy_write(uint32_t reg, uint16_t v)
         dk.pt = (dk.pt & 0xFFFF0000) | (v & 0xFFFE);
         break;
     case 0x024:                     /* DSKLEN: written twice with bit 15 starts it */
+        floppy_sync(at);
         if (!(v & 0x8000)) {
             dk.active = false;
         } else if (dk.len & 0x8000) {

@@ -816,9 +816,38 @@ checked against the game collection:
   through); Project-X's New Levels (its disk request instead of black),
   Exile (loads in half the time).
 
+- **The 68000's prefetch and the CIAs' E clock**: Voyage's Copylock-style
+  key (CLAUDE.md, the lessons): the opcode fetch through Musashi's
+  prefetch (esp32emu's new `CONFIG_M68K_PREFETCH`), the 68000's CIA
+  accesses 10-19 clocks by the E clock's phase. SysInfo 1.00 times an
+  A600 (1.03 before: the word fetched ahead at each taken branch costs
+  its slot), xSysInfo 1.06 as before. The tracks now have their gap
+  first, after the index (WinUAE): 9 Fingers' loader, which starts its
+  DMA after the index, missed sector 0 with the slower CIA reads. Host
+  and Tab5 validation completed 2026-10-24 (see the follow-up below).
+
 Aerial Racers' race on the Tab5 after all of them: 98-102%, core 1
 70-81%. The sample of 288 OCS game ADFs: 52 flagged instead of 95 (most
 of the difference the alert detector's false alarms, red titles; Last
 Action Hero, Lionheart, Project-X and Navy Seals now run; Summer Games,
 Cube-X and Neighbours fewer dark pictures; the rest the same scenes at
 other moments). Still failing: `TODO.md` 10.
+
+
+### Voyage follow-up, 2026-10-24
+
+The host comparisons exposed two further issues. Hyperion's DMA could
+capture words from before its DSKLEN write within the same line; bringing
+DMA up to its start/stop and enable changes fixes its short final sector.
+Steel Empire's slow-RAM probe mistook write-only custom mirrors for RAM
+and chose a stack at $D80000; the 68000's RAM reads/writes now drive the
+floating chip-bus word too. OCS DENISEID uses the undriven-bus $FFFF
+fallback until individual DMA bus values are modeled (Rink a Dink's AGA
+check must not see a CPU opcode). Both have ROM-free host regression tests;
+the shared core also tests prefetch on/off. The write tests pass for plain,
+extended AmigaDOS and raw ADFs, including raw-track promotion. All 24
+firmware builds passed. The Tab5 was flashed and checked: Aerial Racers'
+race ran at 98-101% speed, core 1 68-89% busy across 21 samples over
+40 seconds; Hyperion loaded on an A500 with 512 KB chip + 512 KB slow
+RAM and Kickstart 1.2. The saved A1200 Workbench setup was restored. See
+`validation-2026-10-24.md` for the checks and their limits.

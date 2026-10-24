@@ -52,7 +52,9 @@ static uint8_t s_wait[256];           /* the 68EC020's waits, by bank (0: none) 
 static bool s_taken[EVEN_SLOTS + 1];        /* this line's even slots the DMA has (h / 2) */
 static uint16_t s_wait_at[LINE_CCK];        /* the clocks an access at colour clock h waits */
 static bool s_any_taken, s_stale;           /* (the table worked out when it's needed) */
-static bool s_contended[256];               /* banks on the chip bus (the 68000's) */
+static uint8_t s_contended[256];            /* the 68000's banks that wait: */
+#define ON_CHIP_BUS     1                   /* on the chip bus (DMA's slots) */
+#define ON_E_CLOCK      2                   /* the CIAs (the E clock) */
 static int s_bus_cycle;                     /* this instruction's bus cycles so far */
 static int s_after = -1;                    /* Musashi's remaining cycles after the last access */
 static int s_last_at, s_last_wait;          /* the last access: when it began, its wait */
@@ -126,7 +128,10 @@ static inline void bus_cycle(uint32_t a)
         /* (ami_now() for the 68000: no shift, no remainder) */
         int at = ami.cycle + m68ki_initial_cycles - m68ki_remaining_cycles + 4 * s_bus_cycle;
         s_last_at = at;
-        s_last_wait = slot_wait(at);
+        /* (an E clock access begins a bus cycle sooner: the 68000 fetched
+         * the opcode during the instruction before; the slots keep their
+         * tuning) */
+        s_last_wait = s_contended[(a >> 16) & 0xFF] == ON_E_CLOCK ? ami_e_wait(at - 4) : slot_wait(at);
         m68ki_remaining_cycles -= s_last_wait;
     }
     s_bus_cycle++;
@@ -135,8 +140,8 @@ static inline void bus_cycle(uint32_t a)
 
 /* The 68000 decides on an interrupt as its instruction's last bus cycle
  * begins (WinUAE: 2 clocks into it): one raised while that cycle waits for
- * the DMA comes after the next instruction. (Musashi has no prefetch: the
- * instruction's own last access stands for it.) Lionheart polls INTREQR for
+ * the DMA comes after the next instruction. (Musashi doesn't place its
+ * prefetch at that bus cycle: the instruction's last access stands for it.) Lionheart polls INTREQR for
  * VERTB from slow RAM with exec's VERTB interrupt on; the copper's list at
  * the top of the frame holds the loop's BEQ, and it never saw the bit.
  */
@@ -166,11 +171,12 @@ void mem_update_map(void)
         s_rmap[b] = p;
         s_wmap[b] = p;
         s_wait[b] = ami.cpu_shift ? WAIT_CHIP : 0;
-        s_contended[b] = !ami.cpu_shift;
+        s_contended[b] = ami.cpu_shift ? 0 : ON_CHIP_BUS;
     }
-    /* (the 68000: slow RAM, the chips and their mirrors on the chip bus too) */
-    for (uint32_t b = 0xC0; b < 0xE0 && !ami.cpu_shift; b++) {
-        s_contended[b] = b < 0xD8 || b == 0xDF;
+    /* (the 68000: slow RAM, the chips and their mirrors on the chip bus too;
+     * the CIAs on its own side, the E clock's) */
+    for (uint32_t b = 0xA0; b < 0xE0 && !ami.cpu_shift; b++) {
+        s_contended[b] = b < 0xC0 ? ON_E_CLOCK : (b < 0xD8 || b == 0xDF) ? ON_CHIP_BUS : 0;
     }
     if (ami.ovl) {
         for (uint32_t b = 0x00; b < 0x08; b++) {
@@ -345,6 +351,19 @@ static void slow_write8(uint32_t a, uint8_t v)
 
 /* ---- Musashi's callbacks ---- */
 
+/* A read on the 68000's chip bus drives the word too, including opcode
+ * fetches from chip/slow RAM. Write-only custom registers then read this
+ * word, not just the last custom-register write. Otherwise a byte RAM
+ * probe can mistake their mirrors for RAM (Steel Empire's stack at D80000).
+ */
+static inline uint16_t cpu_bus_word(uint32_t a, uint16_t v)
+{
+    if (s_contended[a >> 16] == ON_CHIP_BUS) {
+        ami.bus = v;
+    }
+    return v;
+}
+
 unsigned int AMI_HOT m68k_read_memory_8(unsigned int a)
 {
     const uint8_t *p = s_rmap[a >> 16];
@@ -354,6 +373,7 @@ unsigned int AMI_HOT m68k_read_memory_8(unsigned int a)
         ami_cpu_wait(s_wait[a >> 16]);
     }
     if (p) {
+        cpu_bus_word(a, rd16(p, a & 0xFFFE));
         return p[(a & 0xFFFF) ^ 1];
     }
     return slow_read8(a);
@@ -368,7 +388,7 @@ unsigned int AMI_HOT m68k_read_memory_16(unsigned int a)
         ami_cpu_wait(s_wait[a >> 16]);
     }
     if (p) {
-        return rd16(p, a & 0xFFFF);
+        return cpu_bus_word(a, rd16(p, a & 0xFFFF));
     }
     return slow_read16(a);
 }
@@ -383,7 +403,7 @@ unsigned int AMI_HOT m68k_read_memory_32(unsigned int a)
         } else if (s_wait[a >> 16]) {
             ami_cpu_wait(s_wait[a >> 16]);
         }
-        return ((uint32_t)rd16(p, a & 0xFFFF) << 16) | rd16(p, (a & 0xFFFF) + 2);
+        return ((uint32_t)rd16(p, a & 0xFFFF) << 16) | cpu_bus_word(a, rd16(p, (a & 0xFFFF) + 2));
     }
     uint32_t hi = m68k_read_memory_16(a);
     return (hi << 16) | m68k_read_memory_16((a + 2) & 0xFFFFFF);
@@ -512,6 +532,7 @@ void AMI_HOT m68k_write_memory_8(unsigned int a, unsigned int v)
         ami_cpu_wait(s_wait[a >> 16]);
     }
     if (p) {
+        cpu_bus_word(a, (uint8_t)v * 0x0101u);
         p[(a & 0xFFFF) ^ 1] = v;
         return;
     }
@@ -527,6 +548,7 @@ void AMI_HOT m68k_write_memory_16(unsigned int a, unsigned int v)
         ami_cpu_wait(s_wait[a >> 16]);
     }
     if (p) {
+        cpu_bus_word(a, v);
         wr16(p, a & 0xFFFF, v);
         return;
     }
@@ -543,6 +565,7 @@ void AMI_HOT m68k_write_memory_32(unsigned int a, unsigned int v)
         } else if (s_wait[a >> 16]) {
             ami_cpu_wait(s_wait[a >> 16]);
         }
+        cpu_bus_word(a, v);
         wr16(p, a & 0xFFFF, v >> 16);
         wr16(p, (a & 0xFFFF) + 2, v & 0xFFFF);
         return;

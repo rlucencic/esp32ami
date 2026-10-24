@@ -363,8 +363,9 @@ void rtc_write(int reg, uint8_t value);
 void floppy_reset(void);
 void floppy_control(uint8_t old_prb, uint8_t prb);
 uint8_t floppy_status(void);    /* CIA-A PRA bits 5-2: /RDY /TK0 /WPRO /CHNG */
-void floppy_line(int cycles);   /* the disks turn */
-void floppy_write(uint32_t reg, uint16_t value);
+void floppy_sync(int at);       /* the disks turn up to this time */
+void floppy_rebase(int frame_cycles);
+void floppy_write(uint32_t reg, uint16_t value, int at);
 uint16_t floppy_dskbytr(void);
 const uint8_t *floppy_image(int drive, uint32_t *blocks);  /* its ADF (NULL: none, extended) */
 
@@ -388,4 +389,16 @@ static inline void ami_cpu_wait(int clocks)
 {
     extern int m68ki_remaining_cycles;
     m68ki_remaining_cycles -= clocks;
+}
+
+/* The 68000's accesses to the CIAs (VPA: 6800-style, by the E clock) end
+ * with E's high phase: 10-19 clocks instead of a bus cycle's 4 (WinUAE's
+ * cia_wait_pre/post: to 4 clocks past E's next start, then 6; its
+ * interrupt acknowledge is a plain 4-clock read). The clocks more than 4
+ * for one beginning at t.
+ */
+static inline int ami_e_wait(int t)
+{
+    int div = ((t + ami.e_phase) % 10 + 10) % 10;
+    return (div ? 14 - div : 4) + 6 - 4;
 }

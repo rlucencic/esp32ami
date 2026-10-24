@@ -437,7 +437,7 @@ void amiga_run_frame(void)
         run_line();
         display_line_end();
         cia_tod_tick(&cia[1]);
-        floppy_line(2 * ami_line_cck(ami.line));
+        floppy_sync(ami.line_start + 2 * ami_line_cck(ami.line));
         gayle_line();
         input_line();
         audio_line();
@@ -448,6 +448,7 @@ void amiga_run_frame(void)
         cia_sync(&cia[i], ami.cycle);
         cia_rebase(&cia[i], frame_cycles);
     }
+    floppy_rebase(frame_cycles);
     ami.cycle -= frame_cycles;
     if (blit.busy) {
         blit.end -= frame_cycles;

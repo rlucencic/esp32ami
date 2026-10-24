@@ -116,8 +116,12 @@ static uint16_t read_reg(uint32_t reg)
         return ami.intreq;
     case 0x07C:                     /* DENISEID: ECS Denise 8373, AGA's Lisa; OCS's isn't there */
         /* (Lisa's bits 9-8 low: graphics.library's MemType, inverted, is
-         * then 32 bits, double CAS: the bandwidth for hires in 256 colours) */
-        return ami.aga ? 0x00F8 : ami.ecs ? 0xFFFC : ami.bus;
+         * then 32 bits, double CAS: the bandwidth for hires in 256 colours).
+         * OCS: the undriven register's fallback is all ones. Our aggregate
+         * DMA model cannot reproduce the bus word at this read's slot;
+         * a CPU prefetch word here falsely identifies AGA (Rink a Dink).
+         */
+        return ami.aga ? 0x00F8 : ami.ecs ? 0xFFFC : 0xFFFF;
     default:
         return ami.bus;
     }
@@ -154,7 +158,7 @@ void custom_write(uint32_t reg, uint16_t v, int at, bool copper)
     case 0x022:
     case 0x024:
     case 0x07E:
-        floppy_write(reg, v);
+        floppy_write(reg, v, at);
         break;
     case 0x030:                     /* SERDAT: sent at once (nothing on the line) */
         if (ami.serial) {
@@ -172,6 +176,7 @@ void custom_write(uint32_t reg, uint16_t v, int at, bool copper)
         ami.lof = (v & 0x8000) != 0;
         break;
     case 0x096: {                   /* DMACON */
+        floppy_sync(at);
         uint16_t old = ami.dmacon;
         ami.dmacon = set_clr(ami.dmacon, v, 0x07FF);
         if (old != ami.dmacon) {
@@ -200,6 +205,7 @@ void custom_write(uint32_t reg, uint16_t v, int at, bool copper)
         ami_update_irq();
         break;
     case 0x09E:                     /* ADKCON */
+        floppy_sync(at);
         ami.adkcon = set_clr(ami.adkcon, v, 0x7FFF);
         break;
     case 0x1DC:                     /* BEAMCON0 (ECS) */

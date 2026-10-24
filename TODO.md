@@ -7,7 +7,7 @@ the others keep their numbers (done: 1, an RP9 setting up its machine;
 2, the blitter's timing slot by slot; 3, the 68000 on the chip bus slot by
 slot; 4, Paula's attach modes; 5, ECS super-hires; 6, writing extended
 ADFs; 7, AGA's untested and missing parts; 8, the 68EC020's instruction
-cache).
+cache; 11, the Voyage prefetch, CIA and floppy follow-up).
 
 ## 10. Titles that still fail (the smoke runs)
 
@@ -16,14 +16,6 @@ Why: found running the user's demos and game ADFs with `tools/smoke.py`
 Check each with `smoke.py` on its folder (`ONLY=<name>`) and the
 collection for the rest. Roughly a session each, in this order:
 
-- Voyage (A500 demo): an address error at $0401EC. Its trace handler
-  (Copylock-style) changes the very next instruction with `eor.w
-  D5,(A2)`: a 68000 has that word in its prefetch already and runs the
-  old one, Musashi reads it again and runs the new one (`and.l
-  D4,$c347.w`, odd). Musashi's `M68K_EMULATE_PREFETCH` keeps the next
-  word fetched (off now, in esp32emu's `m68kconf.h`): a Kconfig option
-  for the Amiga (68000 only; the 68020 has its cache), its cost on the
-  board measured, all builds.
 - Under Pressure (A1200 demo): its line drawer writes past its buffer
   into the custom registers at frame ~4600 with the chip waits at 7-8
   clocks (fine at 5). Find what the loop races against (the blitter, a
