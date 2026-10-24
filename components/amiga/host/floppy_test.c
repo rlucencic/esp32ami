@@ -59,6 +59,23 @@ int main(void)
     CHECK(chip_read16(0x1002) == 0xAAAA, "DMA continues across a frame boundary");
     CHECK(ami.intreq & INT_DSKBLK, "second word completes DMA");
 
+    /* A DSKSYNC write covers the words that went by up to the write: the
+     * new sync must not be taken back over them when the line is next
+     * brought up to date. The gap's words are all $AAAA, so a sync written
+     * at clock 700 would match the words at 448 and 672 if the disk were
+     * left behind at 300. */
+    setup(path);
+    floppy_control(0xFF, 0x77);         /* DF0 selected, motor on, side 0 */
+    floppy_sync(300);                   /* the word at clock 224 has gone */
+    ami.intreq = 0;
+    floppy_write(0x07E, 0xAAAA, 700);   /* ... and those at 448 and 672 */
+    floppy_sync(701);                   /* no word falls between the two */
+    CHECK(!(ami.intreq & INT_DSKSYN), "a late DSKSYNC must not match the words before it");
+    CHECK(!(floppy_dskbytr() & 0x1000), "nor leave DSKBYTR's word-equal set");
+    floppy_sync(900);                   /* the word at clock 896 */
+    CHECK(ami.intreq & INT_DSKSYN, "the next word matches the new sync");
+    CHECK(floppy_dskbytr() & 0x1000, "DSKBYTR reports the new sync's match");
+
     amiga_floppy_eject(0);
     unlink(path);
     puts(failures ? "floppy checks failed" : "all floppy timing checks passed");

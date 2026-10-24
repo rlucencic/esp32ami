@@ -657,6 +657,7 @@ void floppy_write(uint32_t reg, uint16_t v, int at)
         dk.len = v;
         break;
     case 0x07E:                     /* DSKSYNC */
+        floppy_sync(at);            /* the new sync takes effect from here */
         dk.sync = v;
         break;
     default:
