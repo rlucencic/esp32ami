@@ -671,6 +671,12 @@ the top two bits do nothing, Aerial Racers' race sets them),
 
 ## Testing
 
+- Real-software follow-up: `docs/software-profile-2026-11-07.md` records
+  96-game / 672-picture and 230 final disk-file comparisons, nine longer
+  three-build runs, a host blitter census and an actual Tab5 race profile.
+  These validate agreement with the baseline at checkpoints, not complete
+  gameplay or physical-input/audio correctness.
+
 - The unshifted A-to-D blitter copy trial is recorded in
   `docs/blitter-copy-experiment-2026-11-07.md`: guarded specialization keeps
   masks, overlap, wrapping and busy timing; isolated P4 cost and full-firmware
