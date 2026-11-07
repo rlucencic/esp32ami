@@ -671,6 +671,11 @@ the top two bits do nothing, Aerial Racers' race sets them),
 
 ## Testing
 
+- The unshifted A-to-D blitter copy trial is recorded in
+  `docs/blitter-copy-experiment-2026-11-07.md`: guarded specialization keeps
+  masks, overlap, wrapping and busy timing; isolated P4 cost and full-firmware
+  observations are reported separately.
+
 - The P4 planar expansion measurements and differential coverage are in
   `docs/planar-expansion-experiment-2026-11-07.md`: split 32-bit lookup halves
   reduce complete-row cost with exact pixels; whole-emulator synthetic

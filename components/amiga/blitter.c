@@ -77,9 +77,48 @@ static inline uint16_t minterm(uint8_t lf, uint16_t a, uint16_t b, uint16_t c)
     }
 }
 
+/* A-only, unshifted copy. Keep each read before its write: overlapping
+ * regions follow the blitter's direction, including wrapped chip addresses. */
+static int blit_copy(void)
+{
+    bool desc = blit.con1 & DESC;
+    int inc = desc ? -2 : 2;
+    int32_t amod = desc ? -blit.mod[A] : blit.mod[A];
+    int32_t dmod = desc ? -blit.mod[D] : blit.mod[D];
+    uint32_t apt = blit.pt[A], dpt = blit.pt[D];
+    uint16_t adat = blit.dat[A], any = 0;
+    uint32_t w = blit.width, h = blit.height;
+    for (uint32_t y = 0; y < h; y++) {
+        for (uint32_t x = 0; x < w; x++) {
+            adat = chip_read16(apt);
+            apt += inc;
+            uint16_t d = adat;
+            if (x == 0) {
+                d &= blit.afwm;
+            }
+            if (x == w - 1) {
+                d &= blit.alwm;
+            }
+            any |= d;
+            chip_write16(dpt, d);
+            dpt += inc;
+        }
+        apt += amod;
+        dpt += dmod;
+    }
+    blit.pt[A] = apt;
+    blit.pt[D] = dpt;
+    blit.dat[A] = adat;
+    blit.zero = any == 0;
+    return (int)(w * h) * s_word_cck[9];
+}
+
 static int blit_area(void)
 {
     uint16_t con0 = blit.con0, con1 = blit.con1;
+    if (con0 == (USEA | USED | 0xF0) && !(con1 & (LINE | IFE | EFE))) {
+        return blit_copy();
+    }
     bool desc = con1 & DESC;
     int ash = con0 >> 12, bsh = con1 >> 12;
     uint8_t lf = con0 & 0xFF;
