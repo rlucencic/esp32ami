@@ -171,7 +171,10 @@ static struct {
 } s;
 
 static uint8_t s_r5[256], s_g6[256];    /* 8-bit guns to RGB565's 5 and 6 bits */
-static uint64_t s_p2c[256];
+/* Each expanded byte is 0 or 1. Plane shifts 0..7 cannot carry between
+ * these 32-bit halves, so RV32 needs no variable 64-bit shift. */
+typedef struct { uint32_t lo, hi; } expanded_t;
+static expanded_t s_p2c[256];
 static uint8_t s_pf1[256], s_pf2[256];
 
 #define LATEST(st)      ((st) & 3u)
@@ -220,7 +223,8 @@ void display_init(void *picture)
         for (int k = 0; k < 8; k++) {
             v |= (uint64_t)((b >> (7 - k)) & 1) << (8 * k);
         }
-        s_p2c[b] = v;
+        s_p2c[b].lo = (uint32_t)v;
+        s_p2c[b].hi = (uint32_t)(v >> 32);
     }
     /* dual playfield: the odd planes (bits 0, 2, 4, 6) and the even ones */
     for (int v = 0; v < 256; v++) {
@@ -1500,11 +1504,14 @@ static void draw(const row_t *r, uint16_t *out, bool wide)
         d.filled = words * 16;
         const uint16_t *src = r->data;
         for (int p = 0; p < r->planes; p++) {
-            uint64_t *dst = (uint64_t *)(((p & 1) ? d.even : d.odd) + MARGIN);
+            uint32_t *dst = (uint32_t *)(((p & 1) ? d.even : d.odd) + MARGIN);
             for (int w = 0; w < words; w++) {
                 uint16_t v = *src++;
-                dst[2 * w] |= s_p2c[v >> 8] << p;
-                dst[2 * w + 1] |= s_p2c[v & 0xFF] << p;
+                expanded_t hi = s_p2c[v >> 8], lo = s_p2c[v & 0xFF];
+                dst[4 * w] |= hi.lo << p;
+                dst[4 * w + 1] |= hi.hi << p;
+                dst[4 * w + 2] |= lo.lo << p;
+                dst[4 * w + 3] |= lo.hi << p;
             }
         }
     }

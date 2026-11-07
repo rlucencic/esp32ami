@@ -671,6 +671,12 @@ the top two bits do nothing, Aerial Racers' race sets them),
 
 ## Testing
 
+- The P4 planar expansion measurements and differential coverage are in
+  `docs/planar-expansion-experiment-2026-11-07.md`: split 32-bit lookup halves
+  reduce complete-row cost with exact pixels; whole-emulator synthetic
+  throughput stays within 0.2% of reference. These are synthetic renderer
+  tests, not game-compatibility results.
+
 - `make -C components/amiga/host test`: ROM-free regression checks of
   mid-line floppy DMA and the 68000's floating chip bus. The shared core's
   `make -C ../esp32emu/components/musashi/test run run-prefetch` checks
