@@ -160,8 +160,11 @@ static inline void wr16(uint8_t *p, uint32_t off, uint16_t v)
     *(uint16_t *)(p + off) = v;
 }
 
+static void ic_map_changed(void);
+
 void mem_update_map(void)
 {
+    ic_map_changed();
     memset(s_rmap, 0, sizeof(s_rmap));
     memset(s_wmap, 0, sizeof(s_wmap));
     memset(s_wait, 0, sizeof(s_wait));
@@ -419,37 +422,62 @@ unsigned int AMI_HOT m68k_read_memory_32(unsigned int a)
  * themselves always come from memory (no stale ones after code changes).
  */
 #define IC_LINES        64
-static uint32_t s_ic_tag[IC_LINES];         /* its longword's address / 4 + 1 (0: empty) */
-static uint32_t s_ic_prev = 1;              /* the last instruction word fetched (odd: none) */
-static uint32_t s_cacr;
+static struct {
+    uint32_t tag[IC_LINES];                 /* its longword's address | 1 (0: empty); line n
+                                             * at byte n * 4: the address's bits 7-2 */
+    uint32_t next;                          /* the last instruction word fetched + 2 (odd: none) */
+    const uint16_t *next_word;              /* that word in host memory, while it's in the same
+                                             * bank of plain memory (NULL: the general path) */
+    uint32_t next_wait;                     /* (its bank's s_wait, while next_word is set) */
+    uint32_t cacr;
+    uint32_t cpu020;                        /* ami.cpu_shift (the 68000: m68k_read_memory_16()) */
+} s_ic = { .next = 1 };
+
+/* (the next word's host address may be another's now: the general path) */
+static void ic_map_changed(void)
+{
+    s_ic.next_word = NULL;
+    s_ic.cpu020 = ami.cpu_shift;
+}
 
 void mem_cacr(uint32_t cacr)
 {
-    if (cacr != s_cacr && (cacr & 8)) {
-        memset(s_ic_tag, 0, sizeof(s_ic_tag));
+    if (cacr != s_ic.cacr && (cacr & 8)) {
+        memset(s_ic.tag, 0, sizeof(s_ic.tag));
     }
-    s_cacr = cacr;
+    s_ic.cacr = cacr;
+}
+
+/* A longword's first instruction word: from the cache, else its wait (its
+ * bank's) */
+static inline void ic_longword(uint32_t a, const uint32_t *wait_at)
+{
+    uint32_t cacr = s_ic.cacr;
+    if (cacr & 1) {
+        uint32_t lw = (a & ~3u) | 1, *t = (uint32_t *)((uint8_t *)s_ic.tag + (a & (IC_LINES - 1) * 4));
+        if (*t == lw) {
+            return;
+        }
+        if (!(cacr & 2)) {
+            *t = lw;
+        }
+    }
+    uint32_t wait = *wait_at;
+    if (wait) {
+        ami_cpu_wait(wait);
+    }
 }
 
 static inline void ic_word(uint32_t a)
 {
-    uint32_t prev = s_ic_prev;
-    s_ic_prev = a;
-    if (a == prev + 2 && (a & 2)) {
+    uint32_t next = s_ic.next;
+    s_ic.next = a + 2;
+    s_ic.next_word = NULL;
+    if (a == next && (a & 2)) {
         return;                     /* the longword's second word: read with the first */
     }
-    if (s_cacr & 1) {
-        uint32_t lw = (a >> 2) + 1, *t = &s_ic_tag[(a >> 2) & (IC_LINES - 1)];
-        if (*t == lw) {
-            return;
-        }
-        if (!(s_cacr & 2)) {
-            *t = lw;
-        }
-    }
-    if (s_wait[a >> 16]) {
-        ami_cpu_wait(s_wait[a >> 16]);
-    }
+    uint32_t wait = s_wait[a >> 16];
+    ic_longword(a, &wait);
 }
 
 /* An instruction word (its wait already taken) */
@@ -459,13 +487,37 @@ static inline uint16_t program16(uint32_t a)
     return p ? rd16(p, a & 0xFFFF) : slow_read16(a);
 }
 
+/* The 68EC020 runs on through the words after the last one: those come
+ * through next_word (no bank, no mask), the cache and the waits as in
+ * ic_word(). Any other word (a branch, a new bank, the slow path's) the
+ * general way, which sets next_word up again for plain memory;
+ * mem_update_map() clears it. (The 68000 first: its path as it was.)
+ */
 unsigned int AMI_HOT m68k_read_immediate_16(unsigned int a)
 {
-    if (!ami.cpu_shift) {
+    if (!s_ic.cpu020) {
         return m68k_read_memory_16(a);
     }
+    const uint16_t *w = s_ic.next_word;
+    if (__builtin_expect(a == s_ic.next && w, 1)) {
+        uint32_t next = a + 2;
+        s_ic.next = next;
+        s_ic.next_word = __builtin_expect(next << 16 != 0, 1) ? w + 1 : NULL;  /* (a bank's end) */
+        if (!(a & 2)) {             /* (a longword's second word: read with the first) */
+            ic_longword(a, &s_ic.next_wait);
+        }
+        return *w;
+    }
     ic_word(a);
-    return program16(a);
+    const uint8_t *p = s_rmap[a >> 16];
+    if (p) {
+        if ((a + 2) & 0xFFFF) {
+            s_ic.next_word = (const uint16_t *)(p + (a & 0xFFFF) + 2);
+            s_ic.next_wait = s_wait[a >> 16];
+        }
+        return rd16(p, a & 0xFFFF);
+    }
+    return slow_read16(a);
 }
 
 /* (a long across a 64 KB bank: each word from its own; Darkage's Under

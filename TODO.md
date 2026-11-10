@@ -68,7 +68,11 @@ Nothing here can be done as things are; each says what it waits for.
   back (`mem.c`: they made two loaders fail with the back-to-back cycles).
 - Assembler (RISC-V, PIE) for hot paths: only if a game falls behind
   (Aerial Racers' race: core 1 71-78% with the 68EC020's cache and the
-  poll skip).
+  poll skip). C first: the 68EC020's instruction fetch is done (2026-11-10,
+  ~7% cheaper); the 68000's `bus_cycle()` (`mem.c`, in flash, ~50 P4
+  instructions an access) is 28% of core 1 on Kick Off 2's credits screen,
+  the A500's largest cost and the next target, its timing exact
+  (`docs/fetch-experiment-2026-11-10.md`).
 - Sprites on lines inside the window without bitplanes: Denise (WinUAE)
   wants a BPL1DAT write on a line before showing them; here they show.
   Needs a game or a test on a real Amiga that shows the difference.

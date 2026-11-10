@@ -194,7 +194,12 @@ images.
   a write with C empties it; `run_cpu()` passes CACR to `mem_cacr()`
   before each slice); an instruction word from it costs no wait, from
   outside a longword's wait for both its words; only the time (the words
-  always from memory: no stale code). Instruction reads come apart from
+  always from memory: no stale code). Its words in a row come through a
+  pointer to the next one (`s_ic.next_word`, while in the same bank of
+  plain memory; `mem_update_map()` clears it): no bank lookup or mask, the
+  cache and waits the same (the fetch ~7% cheaper in Aerial Racers' race;
+  the 68000 tested first, its path as before:
+  `docs/fetch-experiment-2026-11-10.md`). Instruction reads come apart from
   data through `CONFIG_M68K_PROGRAM_READS` (esp32emu; `-DM68K_PROGRAM_READS`
   in the host build): `m68k_read_immediate_16/32()`, the 68000 straight to
   its usual reads; `CONFIG_M68K_PREFETCH` (`-DM68K_PREFETCH`) fetches the
@@ -483,6 +488,15 @@ the top two bits do nothing, Aerial Racers' race sets them),
   before). Skipping two-instruction poll loops to their slice's end
   (`poll_wait()`) brought it back.
 
+- **On the P4 an instruction costs about the same wherever it runs; a call
+  is two of them**: inlining the 68020's fetch into Musashi's loop moved 8
+  points of core 1 out of `m68k_read_immediate_16` and 8.6 into
+  `m68k_execute` and the immediate reads (fewer instructions on the common
+  path is what helped). And a test in front of the 68000's path is paid on
+  every word of every A500 game (4 instructions: 3 points of idle on a
+  screen where the A500 is 84% busy): profile an A500 title too, not only
+  the A1200's race (`docs/fetch-experiment-2026-11-10.md`).
+
 - **ECS's DIWHIGH matters**: Kickstart 3.1's copper list opens a window at
   line 1 with VSTOP 2 through DIWHIGH = 0 (OCS rules would make VSTOP 258):
   without it the window stayed open, the next screen's fetch began a line
@@ -676,6 +690,13 @@ the top two bits do nothing, Aerial Racers' race sets them),
   three-build runs, a host blitter census and an actual Tab5 race profile.
   These validate agreement with the baseline at checkpoints, not complete
   gameplay or physical-input/audio correctness.
+
+- The instruction fetch trial is recorded in
+  `docs/fetch-experiment-2026-11-10.md`: the 68EC020's next word through a
+  pointer (96-game collection, nine 15000-frame runs and four recordings
+  the same as before), Tab5 race and A500 profiles, the variants rejected
+  (inlining into Musashi, the 68000 tested last, a 68000 pointer pair).
+  `bus_cycle()` is 28% of core 1 on an A500 screen: the next target.
 
 - The unshifted A-to-D blitter copy trial is recorded in
   `docs/blitter-copy-experiment-2026-11-07.md`: guarded specialization keeps
