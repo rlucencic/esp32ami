@@ -96,8 +96,8 @@ all are built on the shared runtime
   at power-on) works, NTSC toggle included
 - **PAL or NTSC**, the picture following the beam's standard
 - **In real time** on the Tab5: Workbench and the games tried keep the
-  Amiga's full speed with room to spare (Kick Off 2 scrolling its pitch:
-  the emulation core 56% busy)
+  Amiga's full speed with room to spare (Kick Off 2's credits on an A500:
+  the emulation core about half idle)
 
 **Disks**
 - **Two floppy drives** (DF0:, DF1:): `.adf` images read and written,

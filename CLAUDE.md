@@ -170,11 +170,19 @@ images.
   RAM or the chips (and their mirrors) is at its instruction's start plus
   4 clocks a bus cycle before it in that instruction (Musashi's remaining
   cycles changing marks a new one) and waits past the taken slots from
-  there (`s_wait_at[]`, worked out when the map changed); a blit under way
+  there (`s_m.wait_at[]`, kept up to date by `bus_take()`); a blit under way
   costs an access 6 clocks (BLTPRI off) or the rest of the blit (on).
   Fast RAM and the ROM: no wait. The CIAs: by the E clock instead
   (`ami_e_wait()`: 10-19 clocks an access, WinUAE's figures, the access
-  a bus cycle sooner than the slots take it). The 68EC020 keeps its averages
+  a bus cycle sooner than the slots take it). The callbacks work an
+  access to plain memory out inline (`bus_cycles_quick()`, no stack
+  frame): off the chip bus, or on it while no slot of the line is taken
+  and no blit is about (`s_m.no_wait`), only the counting; with only taken
+  slots in the way, `wait_at`'s wait; the rest (a blit started in the
+  line, the CIAs, the chips' registers) through `bus_cycle()` as before.
+  Kick Off 2's credits on the Tab5: core 1 16.7 -> 9.9 ms a frame; Kid
+  Pool's title from 94% speed to 100%
+  (`docs/bus-cycle-experiment-2026-11-10.md`). The 68EC020 keeps its averages
   (`ami.stall`: `SLOT_WAIT` a slot for the copper and the blitter).
   SysInfo 4.4: 1.03 times a real A600 (chip and slow RAM), its chip speed
   1.12; xSysInfo 0.12: 1.06, chip RAM 2.19 MB/s (the averages before:
@@ -215,8 +223,9 @@ images.
 - **Memory** (`mem.c`): 64 KB banks to host pointers for reads and writes
   (chip RAM mirrored by its size over $000000-$1FFFFF, the ROM over it for
   reads while OVL is set, slow RAM at $C00000, fast RAM where autoconfig
-  put it, the ROM at $F80000 and 256 KB ones mirrored); NULL banks take
-  the slow path: CIAs ($A00000-
+  put it, the ROM at $F80000 and 256 KB ones mirrored; each pointer less
+  its bank's address, so address a's byte is `s_m.rmap[a >> 16] + a`, no
+  mask); NULL banks take the slow path: CIAs ($A00000-
   $BFFFFF: CIA-A when A12 is low on odd bytes, CIA-B when A13 is low on
   even ones; a byte write goes to both halves of the bus), custom chips
   ($DFF000, and $C00000-$D7FFFF without slow RAM, above it with: the
@@ -497,6 +506,16 @@ the top two bits do nothing, Aerial Racers' race sets them),
   screen where the A500 is 84% busy): profile an A500 title too, not only
   the A1200's race (`docs/fetch-experiment-2026-11-10.md`).
 
+- **A call anywhere in a function costs every path its stack frame, and
+  GCC tail-calls only a function returning the same type**: the 68000's
+  memory callbacks saved five registers on every access for a
+  `bus_cycle()` call that mostly found nothing to wait for (89 P4
+  instructions a chip RAM word). Inline with the slow path tail-called it
+  is 29, but only once the out-of-line helpers return `unsigned int` like
+  the callbacks: with `uint16_t` GCC called them and kept the frame. Kick
+  Off 2's credits went from 16.7 to 9.9 ms of core 1 a frame
+  (`docs/bus-cycle-experiment-2026-11-10.md`).
+
 - **ECS's DIWHIGH matters**: Kickstart 3.1's copper list opens a window at
   line 1 with VSTOP 2 through DIWHIGH = 0 (OCS rules would make VSTOP 258):
   without it the window stayed open, the next screen's fetch began a line
@@ -696,7 +715,15 @@ the top two bits do nothing, Aerial Racers' race sets them),
   pointer (96-game collection, nine 15000-frame runs and four recordings
   the same as before), Tab5 race and A500 profiles, the variants rejected
   (inlining into Musashi, the 68000 tested last, a 68000 pointer pair).
-  `bus_cycle()` is 28% of core 1 on an A500 screen: the next target.
+
+- The 68000's bus cycle trial is recorded in
+  `docs/bus-cycle-experiment-2026-11-10.md`: the callbacks' inline levels
+  and the slots' table kept up to date (the same 96 games, 540 pictures and
+  four recordings; how often each case comes up in 17 A500 titles), Tab5
+  profiles of Kick Off 2's credits, Kid Pool's title and Aerial Racers'
+  race. A race script must insert another package before Aerial Racers
+  when it is still in DF0: (else the insert gives disk 2, which boots to a
+  Shell).
 
 - The unshifted A-to-D blitter copy trial is recorded in
   `docs/blitter-copy-experiment-2026-11-07.md`: guarded specialization keeps
@@ -710,7 +737,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
   tests, not game-compatibility results.
 
 - `make -C components/amiga/host test`: ROM-free regression checks of
-  mid-line floppy DMA and the 68000's floating chip bus. The shared core's
+  mid-line floppy DMA, the 68000's floating chip bus and its bus cycles
+  (the callbacks' inline paths against `bus_cycle()`'s waits, every start
+  on a line with taken slots, before it and past its end). The shared core's
   `make -C ../esp32emu/components/musashi/test run run-prefetch` checks
   the prefetch option off/on. The 2026-10-24 follow-up and completed
   hardware checks are in `docs/validation-2026-10-24.md`.

@@ -851,3 +851,41 @@ race ran at 98-101% speed, core 1 68-89% busy across 21 samples over
 40 seconds; Hyperion loaded on an A500 with 512 KB chip + 512 KB slow
 RAM and Kickstart 1.2. The saved A1200 Workbench setup was restored. See
 `validation-2026-10-24.md` for the checks and their limits.
+
+### Speed in C, 2026-11-07 to 2026-11-10
+
+Plain C changes, local to this project (`TODO.md` 9: assembler only if
+a game falls behind, C first). Each one keeps the pictures, sound and
+timing exactly. The host collection (96 RP9 games), the long runs and the
+recordings were compared before and after; the Tab5 was profiled with the
+console's PC sampler.
+
+- **Planar expansion** (`display.c`): each eight-pixel lookup is split into
+  two 32-bit halves, with no variable 64-bit shifts on the RV32 core.
+  Isolated complete-row draws are 3.1–12.5% cheaper; no whole-emulator
+  gain is claimed (`planar-expansion-experiment-2026-11-07.md`).
+- **Unshifted A-to-D blitter copies** (`blitter.c`): a guarded fast path
+  for BLTCON0 `$09F0`. Large copies cost 65–67% less in isolation; an OCS
+  control screen measured 0.3–0.7% slower, accepted
+  (`blitter-copy-experiment-2026-11-07.md`).
+- **Real-software validation** of both: 672 of 672 collection pictures
+  and 230 final disk files the same, plus a blitter census of nine titles
+  (`software-profile-2026-11-07.md`).
+- **The 68EC020's instruction fetch** (`mem.c`): its next word comes
+  through a pointer while it runs on through plain memory. The fetch is
+  ~7% cheaper in Aerial Racers' race, and the A500 is unchanged
+  (`fetch-experiment-2026-11-10.md`).
+- **The 68000's bus cycles** (`mem.c`): Musashi's memory callbacks work an
+  access to plain memory out inline, with no stack frame. Nothing in the
+  way or only taken slots are handled inline; a blit, the CIAs and the
+  chips' registers still go through `bus_cycle()`. `bus_take()` keeps the
+  slots' table up to date, and the bank pointers lose their bank's address.
+  On the Tab5:
+  - Kick Off 2's credits: core 1 16.7 → 9.9 ms a frame.
+  - Kid Pool's title, which ran at 94–95% with core 1 at 100%: now 100%
+    with 5% idle.
+  - The A1200's data callbacks: 5.3% → 3.9% of core 1.
+
+  New ROM-free checks in `make test` compare the inline paths with
+  `bus_cycle()`, and both with the slot model
+  (`bus-cycle-experiment-2026-11-10.md`).

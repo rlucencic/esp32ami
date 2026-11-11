@@ -316,6 +316,7 @@ static void start(int at)
     blit.pending = false;
     int cck = (blit.con1 & LINE) ? blit_line() : blit_area();
     blit.busy = true;
+    bus_blit_started();
     blit.left = cck;
     plan_end(at + 8);
     /* The 68EC020's slots it takes on average: those its channels use (a

@@ -20,7 +20,7 @@
  *
  * The A1200's 68EC020 waits for the chip bus: each access to chip RAM (32
  * bits at once), the custom chips or a CIA costs it WAIT_* of its clocks
- * (s_wait by 64 KB bank, the others in the slow path); the ROM and fast
+ * (s_m.wait by 64 KB bank, the others in the slow path); the ROM and fast
  * RAM don't, nor instructions from its cache (below). The 68000's waits
  * are counted otherwise (the slots, below).
  */
@@ -28,9 +28,25 @@
 #include "m68k.h"
 #include "amiga_internal.h"
 
-static const uint8_t *s_rmap[256];
-static uint8_t *s_wmap[256];
-static uint8_t s_wait[256];           /* the 68EC020's waits, by bank (0: none) */
+#define EVEN_SLOTS      116             /* (a line's 114) */
+#define LINE_CCK        (2 * EVEN_SLOTS)
+
+/* The banks and the 68000's bus cycles: one block (one base address on the
+ * P4: every access needs several of these)
+ */
+static struct {
+    int after;                          /* the 68000: Musashi's remaining cycles after its last access */
+    int n;                              /* its bus cycles in this instruction so far */
+    int last_at, last_wait;             /* its last access: when it began, its wait */
+    uint8_t no_wait;                    /* the kinds of bank that can't wait now (below) */
+    uint8_t slow;                       /* SLOW_BLIT: bus_cycle() works the chip bus's waits out */
+    uint8_t cpu020;                     /* ami.cpu_shift */
+    uint8_t kind[256];                  /* the 68000's banks that wait (below) */
+    uint8_t wait[256];                  /* the 68EC020's waits, by bank (0: none) */
+    uint16_t wait_at[LINE_CCK];         /* the clocks an access at colour clock h waits (below) */
+    const uint8_t *rmap[256];           /* each bank's host memory less the bank's address */
+    uint8_t *wmap[256];                 /* (the byte at a: rmap[a >> 16] + a; NULL: the slow path) */
+} s_m = { .after = -1 };
 
 #define WAIT_CHIP       8               /* two chip bus cycles (SysInfo: 1.04 times an A1200) */
 #define WAIT_CUSTOM     8
@@ -45,56 +61,75 @@ static uint8_t s_wait[256];           /* the 68EC020's waits, by bank (0: none) 
  * can. Each access of the 68000's to chip RAM, slow RAM or the chips is at
  * its instruction's start plus 4 clocks a bus cycle before it, and waits
  * for the next even slot free; the wait comes off Musashi's remaining
- * cycles, as the 68EC020's waits do (it keeps its averages: s_wait).
+ * cycles, as the 68EC020's waits do (it keeps its averages: s_m.wait).
  */
-#define EVEN_SLOTS      116                 /* (a line's 114) */
-#define LINE_CCK        (2 * EVEN_SLOTS)
 static bool s_taken[EVEN_SLOTS + 1];        /* this line's even slots the DMA has (h / 2) */
-static uint16_t s_wait_at[LINE_CCK];        /* the clocks an access at colour clock h waits */
-static bool s_any_taken, s_stale;           /* (the table worked out when it's needed) */
-static uint8_t s_contended[256];            /* the 68000's banks that wait: */
+static bool s_any_taken;
+/* s_m.kind: */
 #define ON_CHIP_BUS     1                   /* on the chip bus (DMA's slots) */
 #define ON_E_CLOCK      2                   /* the CIAs (the E clock) */
-static int s_bus_cycle;                     /* this instruction's bus cycles so far */
-static int s_after = -1;                    /* Musashi's remaining cycles after the last access */
-static int s_last_at, s_last_wait;          /* the last access: when it began, its wait */
+/* s_m.slow: */
+#define SLOW_BLIT       1                   /* a blit under way in this line (perhaps ended) */
 #define BLIT_WAIT       6                   /* a blit leaves the 68000 one slot in four (BLTPRI off) */
 
+/* s_m.no_wait: ON_CHIP_BUS while no slot of this line is taken and no blit
+ * under way in it (an access on the chip bus waits for nothing then: no
+ * need to know when it is), else 0 (banks off the chip bus). Below it,
+ * without SLOW_BLIT, the taken slots alone: wait_at's.
+ */
 void bus_line_start(void)
 {
     if (s_any_taken) {
         memset(s_taken, 0, sizeof(s_taken));
+        memset(s_m.wait_at, 0, sizeof(s_m.wait_at));
         s_any_taken = false;
     }
+    s_m.slow = blit.busy ? SLOW_BLIT : 0;
+    s_m.no_wait = blit.busy ? 0 : ON_CHIP_BUS;
 }
 
-/* An even slot taken at `at` (68000 clocks into the frame) */
-void bus_take(int at)
-{
-    int e = (at - ami.line_start) >> 2;     /* (h / 2) */
-    if (e >= 0 && e < EVEN_SLOTS) {
-        s_taken[e] = true;
-        s_any_taken = s_stale = true;
-    }
-}
-
-/* Each colour clock's wait: past the taken even slots from it on, 4 clocks
- * each. (Not the 2 clocks a 68000 on an odd colour clock would wait for the
- * even one, which a PAL line's 227 bring about from line to line: with them
+/* An even slot taken at `at` (68000 clocks into the frame). wait_at[h], the
+ * clocks an access at colour clock h waits, is past the taken even slots
+ * from it on, 4 clocks each: a slot newly taken adds 4 to its own and to
+ * those of the taken ones in a row before it (and the odd clocks between).
+ * (Not the 2 clocks a 68000 on an odd colour clock would wait for the even
+ * one, which a PAL line's 227 bring about from line to line: with them
  * SysInfo and xSysInfo both gave 1.03, but Hyperion's and Lethal Xcess's
  * loaders failed, their CPU too slow; Musashi knows an instruction's bus
  * cycles, not where in it they fall, and the cycle table's rounding to 4
- * keeps the phase.)
+ * keeps the phase.) The 68EC020 keeps its averages: none of this.
  */
-static void work_out_waits(void)
+void bus_take(int at)
 {
-    uint16_t next = 0;                      /* (the wait at the even slot after) */
-    for (int e = EVEN_SLOTS - 1; e >= 0; e--) {
-        s_wait_at[2 * e + 1] = next;
-        next = s_taken[e] ? (uint16_t)(next + 4) : 0;
-        s_wait_at[2 * e] = next;
+    int e = (at - ami.line_start) >> 2;     /* (h / 2) */
+    if (e < 0 || e >= EVEN_SLOTS || s_m.cpu020) {
+        return;
     }
-    s_stale = false;
+    s_any_taken = true;
+    s_m.no_wait = 0;
+    if (s_taken[e]) {
+        return;
+    }
+    s_taken[e] = true;
+    uint16_t wait = s_m.wait_at[2 * e + 1]; /* (the next even slot's) */
+    for (;;) {
+        wait += 4;
+        s_m.wait_at[2 * e] = wait;
+        if (e == 0) {
+            break;
+        }
+        s_m.wait_at[2 * e - 1] = wait;
+        if (!s_taken[--e]) {
+            break;
+        }
+    }
+}
+
+/* A blit started (until the next line the accesses work their waits out) */
+void bus_blit_started(void)
+{
+    s_m.slow |= SLOW_BLIT;
+    s_m.no_wait = 0;
 }
 
 /* The clocks an access at `at` waits for its slot */
@@ -110,32 +145,65 @@ static inline int slot_wait(int at)
     if (!s_any_taken || h >= LINE_CCK) {
         return 0;
     }
-    if (s_stale) {
-        work_out_waits();
-    }
-    return s_wait_at[h];
+    return s_m.wait_at[h];
 }
 
 /* A bus cycle of the 68000's: its wait on the chip bus */
-static inline void bus_cycle(uint32_t a)
+static void bus_cycle(uint32_t a)
 {
     extern int m68ki_initial_cycles, m68ki_remaining_cycles;
-    if (m68ki_remaining_cycles != s_after) {
-        s_bus_cycle = 0;                    /* (Musashi took an instruction's cycles: the next one) */
+    if (m68ki_remaining_cycles != s_m.after) {
+        s_m.n = 0;                          /* (Musashi took an instruction's cycles: the next one) */
     }
-    s_last_wait = 0;
-    if (s_contended[(a >> 16) & 0xFF] && ami.cpu_running) {
+    s_m.last_wait = 0;
+    if (s_m.kind[(a >> 16) & 0xFF] && ami.cpu_running) {
         /* (ami_now() for the 68000: no shift, no remainder) */
-        int at = ami.cycle + m68ki_initial_cycles - m68ki_remaining_cycles + 4 * s_bus_cycle;
-        s_last_at = at;
+        int at = ami.cycle + m68ki_initial_cycles - m68ki_remaining_cycles + 4 * s_m.n;
+        s_m.last_at = at;
         /* (an E clock access begins a bus cycle sooner: the 68000 fetched
          * the opcode during the instruction before; the slots keep their
          * tuning) */
-        s_last_wait = s_contended[(a >> 16) & 0xFF] == ON_E_CLOCK ? ami_e_wait(at - 4) : slot_wait(at);
-        m68ki_remaining_cycles -= s_last_wait;
+        s_m.last_wait = s_m.kind[(a >> 16) & 0xFF] == ON_E_CLOCK ? ami_e_wait(at - 4) : slot_wait(at);
+        m68ki_remaining_cycles -= s_m.last_wait;
     }
-    s_bus_cycle++;
-    s_after = m68ki_remaining_cycles;
+    s_m.n++;
+    s_m.after = m68ki_remaining_cycles;
+}
+
+/* bus_cycle() for `cycles` of them (1 or 2) to a bank of `kind`, inline
+ * where it's quick: a bank that can't wait now (off the chip bus, or on it
+ * with s_m.no_wait) only counts them (last_at isn't needed: last_wait 0);
+ * on the chip bus with only taken slots in the way, wait_at has each
+ * one's wait. false: the bus_cycle() way (a blit started in this line, the
+ * CIAs, the CPU not running; nothing counted yet).
+ */
+static inline bool bus_cycles_quick(int kind, int cycles)
+{
+    extern int m68ki_initial_cycles, m68ki_remaining_cycles;
+    int r = m68ki_remaining_cycles;
+    int n = r == s_m.after ? s_m.n : 0;
+    int wait = 0;
+    if (__builtin_expect(kind > s_m.no_wait, 0)) {
+        if (kind != ON_CHIP_BUS || s_m.slow || !ami.cpu_running) {
+            return false;
+        }
+        /* (slot_wait() without a blit: from the line's start) */
+        int at = ami.cycle + m68ki_initial_cycles - r + 4 * n - ami.line_start;
+        for (int i = 0; i < cycles; i++) {
+            at += i ? 4 + wait : 0;
+            unsigned h = (unsigned)(at >> 1);
+            wait = h < LINE_CCK ? s_m.wait_at[h] : 0;
+            r -= wait;
+        }
+        if (wait) {
+            s_m.last_at = at + ami.line_start;
+        }
+        m68ki_remaining_cycles = r;
+    }
+    s_m.n = n + cycles;
+    s_m.after = r;
+    s_m.last_wait = wait;
+    return true;
 }
 
 /* The 68000 decides on an interrupt as its instruction's last bus cycle
@@ -147,7 +215,8 @@ static inline void bus_cycle(uint32_t a)
  */
 bool bus_waited_over(int t)
 {
-    return s_last_wait > 0 && s_last_at < t && s_last_at + s_last_wait >= t && s_last_at + s_last_wait <= ami.cycle;
+    return s_m.last_wait > 0 && s_m.last_at < t && s_m.last_at + s_m.last_wait >= t &&
+           s_m.last_at + s_m.last_wait <= ami.cycle;
 }
 
 static inline uint16_t rd16(const uint8_t *p, uint32_t off)
@@ -165,43 +234,53 @@ static void ic_map_changed(void);
 void mem_update_map(void)
 {
     ic_map_changed();
-    memset(s_rmap, 0, sizeof(s_rmap));
-    memset(s_wmap, 0, sizeof(s_wmap));
-    memset(s_wait, 0, sizeof(s_wait));
-    memset(s_contended, 0, sizeof(s_contended));
+    s_m.cpu020 = ami.cpu_shift != 0;
+    memset(s_m.rmap, 0, sizeof(s_m.rmap));
+    memset(s_m.wmap, 0, sizeof(s_m.wmap));
+    memset(s_m.wait, 0, sizeof(s_m.wait));
+    memset(s_m.kind, 0, sizeof(s_m.kind));
     for (uint32_t b = 0x00; b < 0x20; b++) {
         uint8_t *p = ami.chip + ((b << 16) & (ami.chip_size - 1));
-        s_rmap[b] = p;
-        s_wmap[b] = p;
-        s_wait[b] = ami.cpu_shift ? WAIT_CHIP : 0;
-        s_contended[b] = ami.cpu_shift ? 0 : ON_CHIP_BUS;
+        s_m.rmap[b] = p;
+        s_m.wmap[b] = p;
+        s_m.wait[b] = ami.cpu_shift ? WAIT_CHIP : 0;
+        s_m.kind[b] = ami.cpu_shift ? 0 : ON_CHIP_BUS;
     }
     /* (the 68000: slow RAM, the chips and their mirrors on the chip bus too;
      * the CIAs on its own side, the E clock's) */
     for (uint32_t b = 0xA0; b < 0xE0 && !ami.cpu_shift; b++) {
-        s_contended[b] = b < 0xC0 ? ON_E_CLOCK : (b < 0xD8 || b == 0xDF) ? ON_CHIP_BUS : 0;
+        s_m.kind[b] = b < 0xC0 ? ON_E_CLOCK : (b < 0xD8 || b == 0xDF) ? ON_CHIP_BUS : 0;
     }
     if (ami.ovl) {
         for (uint32_t b = 0x00; b < 0x08; b++) {
-            s_rmap[b] = ami.rom + ((b << 16) & (ami.rom_size - 1));
+            s_m.rmap[b] = ami.rom + ((b << 16) & (ami.rom_size - 1));
         }
     }
     for (uint32_t b = 0; b < (ami.slow_size >> 16); b++) {
-        s_rmap[0xC0 + b] = s_wmap[0xC0 + b] = ami.slow + (b << 16);
+        s_m.rmap[0xC0 + b] = s_m.wmap[0xC0 + b] = ami.slow + (b << 16);
     }
     uint32_t board, board_size;
     uint8_t *mem = hdboard_memory(&board, &board_size);
     for (uint32_t b = 0; mem && board && b < (board_size >> 16); b++) {
-        s_rmap[(board >> 16) + b] = s_wmap[(board >> 16) + b] = mem + (b << 16);
+        s_m.rmap[(board >> 16) + b] = s_m.wmap[(board >> 16) + b] = mem + (b << 16);
     }
     for (uint32_t b = 0; ami.fast_base && b < (ami.fast_size >> 16); b++) {
-        s_rmap[(ami.fast_base >> 16) + b] = s_wmap[(ami.fast_base >> 16) + b] = ami.fast + (b << 16);
+        s_m.rmap[(ami.fast_base >> 16) + b] = s_m.wmap[(ami.fast_base >> 16) + b] = ami.fast + (b << 16);
     }
     for (uint32_t b = 0; ami.ext && b < (EXT_ROM_SIZE >> 16); b++) {
-        s_rmap[0xE0 + b] = ami.ext + (b << 16);
+        s_m.rmap[0xE0 + b] = ami.ext + (b << 16);
     }
     for (uint32_t b = 0xF8; b < 0x100; b++) {
-        s_rmap[b] = ami.rom + ((b << 16) & (ami.rom_size - 1));
+        s_m.rmap[b] = ami.rom + ((b << 16) & (ami.rom_size - 1));
+    }
+    /* (each less its bank's address: address a's byte at rmap[a >> 16] + a) */
+    for (uint32_t b = 0; b < 0x100; b++) {
+        if (s_m.rmap[b]) {
+            s_m.rmap[b] -= b << 16;
+        }
+        if (s_m.wmap[b]) {
+            s_m.wmap[b] -= b << 16;
+        }
     }
 }
 
@@ -264,7 +343,7 @@ static inline void io_wait(uint32_t a)
     }
 }
 
-static uint16_t slow_read16(uint32_t a)
+static unsigned int slow_read16(uint32_t a)
 {
     io_wait(a);
     if (is_custom(a)) {
@@ -291,7 +370,7 @@ static uint16_t slow_read16(uint32_t a)
     return 0;
 }
 
-static uint8_t slow_read8(uint32_t a)
+static unsigned int slow_read8(uint32_t a)
 {
     io_wait(a);
     if (is_custom(a)) {
@@ -361,52 +440,153 @@ static void slow_write8(uint32_t a, uint8_t v)
  */
 static inline uint16_t cpu_bus_word(uint32_t a, uint16_t v)
 {
-    if (s_contended[a >> 16] == ON_CHIP_BUS) {
+    if (s_m.kind[a >> 16] == ON_CHIP_BUS) {
         ami.bus = v;
     }
     return v;
 }
 
-unsigned int AMI_HOT m68k_read_memory_8(unsigned int a)
+/* The 68000's other accesses (a blit started in this line, the CIAs, the
+ * chips' registers): bus_cycle() first, as it always was. Out of line: the
+ * callbacks' quick path (bus_cycles_quick()) needs no stack frame.
+ */
+static unsigned int AMI_HOT __attribute__((noinline)) read8_000(uint32_t a)
 {
-    const uint8_t *p = s_rmap[a >> 16];
-    if (!ami.cpu_shift) {
-        bus_cycle(a);
-    } else if (s_wait[a >> 16]) {
-        ami_cpu_wait(s_wait[a >> 16]);
-    }
+    bus_cycle(a);
+    const uint8_t *p = s_m.rmap[a >> 16];
     if (p) {
-        cpu_bus_word(a, rd16(p, a & 0xFFFE));
-        return p[(a & 0xFFFF) ^ 1];
+        cpu_bus_word(a, rd16(p, a & ~1u));
+        return p[a ^ 1];
     }
     return slow_read8(a);
 }
 
-unsigned int AMI_HOT m68k_read_memory_16(unsigned int a)
+static unsigned int AMI_HOT __attribute__((noinline)) read16_000(uint32_t a)
 {
-    const uint8_t *p = s_rmap[a >> 16];
-    if (!ami.cpu_shift) {
-        bus_cycle(a);
-    } else if (s_wait[a >> 16]) {
-        ami_cpu_wait(s_wait[a >> 16]);
-    }
+    bus_cycle(a);
+    const uint8_t *p = s_m.rmap[a >> 16];
     if (p) {
-        return cpu_bus_word(a, rd16(p, a & 0xFFFF));
+        return cpu_bus_word(a, rd16(p, a));
     }
     return slow_read16(a);
 }
 
+static unsigned int AMI_HOT __attribute__((noinline)) read32_000(uint32_t a)
+{
+    const uint8_t *p = s_m.rmap[a >> 16];
+    if (p && (a & 0xFFFF) <= 0xFFFC) {
+        bus_cycle(a);
+        bus_cycle(a);
+        return ((uint32_t)rd16(p, a) << 16) | cpu_bus_word(a, rd16(p, a + 2));
+    }
+    uint32_t hi = m68k_read_memory_16(a);
+    return (hi << 16) | m68k_read_memory_16((a + 2) & 0xFFFFFF);
+}
+
+static void AMI_HOT __attribute__((noinline)) write8_000(uint32_t a, unsigned int v)
+{
+    bus_cycle(a);
+    uint8_t *p = s_m.wmap[a >> 16];
+    if (p) {
+        cpu_bus_word(a, (uint8_t)v * 0x0101u);
+        p[a ^ 1] = v;
+        return;
+    }
+    slow_write8(a, v);
+}
+
+static void AMI_HOT __attribute__((noinline)) write16_000(uint32_t a, unsigned int v)
+{
+    bus_cycle(a);
+    uint8_t *p = s_m.wmap[a >> 16];
+    if (p) {
+        cpu_bus_word(a, v);
+        wr16(p, a, v);
+        return;
+    }
+    slow_write16(a, v);
+}
+
+static void AMI_HOT __attribute__((noinline)) write32_000(uint32_t a, unsigned int v)
+{
+    uint8_t *p = s_m.wmap[a >> 16];
+    if (p && (a & 0xFFFF) <= 0xFFFC) {
+        bus_cycle(a);
+        bus_cycle(a);
+        cpu_bus_word(a, v);
+        wr16(p, a, v >> 16);
+        wr16(p, a + 2, v & 0xFFFF);
+        return;
+    }
+    m68k_write_memory_16(a, v >> 16);
+    m68k_write_memory_16((a + 2) & 0xFFFFFF, v & 0xFFFF);
+}
+
+/* Each callback: the 68000's access to plain memory inline (off the chip
+ * bus, or on it while nothing or only this line's taken slots are in the
+ * way), the rest as above; then the 68EC020's.
+ */
+unsigned int AMI_HOT m68k_read_memory_8(unsigned int a)
+{
+    uint32_t b = a >> 16;
+    const uint8_t *p = s_m.rmap[b];
+    if (!s_m.cpu020) {
+        int kind = s_m.kind[b];
+        if (p && bus_cycles_quick(kind, 1)) {
+            if (kind) {
+                ami.bus = rd16(p, a & ~1u);
+            }
+            return p[a ^ 1];
+        }
+        return read8_000(a);
+    }
+    if (s_m.wait[b]) {
+        ami_cpu_wait(s_m.wait[b]);
+    }
+    return p ? p[a ^ 1] : slow_read8(a);
+}
+
+unsigned int AMI_HOT m68k_read_memory_16(unsigned int a)
+{
+    uint32_t b = a >> 16;
+    const uint8_t *p = s_m.rmap[b];
+    if (!s_m.cpu020) {
+        int kind = s_m.kind[b];
+        if (p && bus_cycles_quick(kind, 1)) {
+            uint16_t v = rd16(p, a);
+            if (kind) {
+                ami.bus = v;
+            }
+            return v;
+        }
+        return read16_000(a);
+    }
+    if (s_m.wait[b]) {
+        ami_cpu_wait(s_m.wait[b]);
+    }
+    return p ? rd16(p, a) : slow_read16(a);
+}
+
 unsigned int AMI_HOT m68k_read_memory_32(unsigned int a)
 {
-    const uint8_t *p = s_rmap[a >> 16];
-    if (p && (a & 0xFFFF) <= 0xFFFC) {
-        if (!ami.cpu_shift) {
-            bus_cycle(a);
-            bus_cycle(a);
-        } else if (s_wait[a >> 16]) {
-            ami_cpu_wait(s_wait[a >> 16]);
+    uint32_t b = a >> 16;
+    const uint8_t *p = s_m.rmap[b];
+    if (!s_m.cpu020) {
+        int kind = s_m.kind[b];
+        if (p && (a & 0xFFFF) <= 0xFFFC && bus_cycles_quick(kind, 2)) {
+            uint16_t lo = rd16(p, a + 2);
+            if (kind) {
+                ami.bus = lo;
+            }
+            return ((uint32_t)rd16(p, a) << 16) | lo;
         }
-        return ((uint32_t)rd16(p, a & 0xFFFF) << 16) | cpu_bus_word(a, rd16(p, (a & 0xFFFF) + 2));
+        return read32_000(a);
+    }
+    if (p && (a & 0xFFFF) <= 0xFFFC) {
+        if (s_m.wait[b]) {
+            ami_cpu_wait(s_m.wait[b]);
+        }
+        return ((uint32_t)rd16(p, a) << 16) | rd16(p, a + 2);
     }
     uint32_t hi = m68k_read_memory_16(a);
     return (hi << 16) | m68k_read_memory_16((a + 2) & 0xFFFFFF);
@@ -428,7 +608,7 @@ static struct {
     uint32_t next;                          /* the last instruction word fetched + 2 (odd: none) */
     const uint16_t *next_word;              /* that word in host memory, while it's in the same
                                              * bank of plain memory (NULL: the general path) */
-    uint32_t next_wait;                     /* (its bank's s_wait, while next_word is set) */
+    uint32_t next_wait;                     /* (its bank's s_m.wait, while next_word is set) */
     uint32_t cacr;
     uint32_t cpu020;                        /* ami.cpu_shift (the 68000: m68k_read_memory_16()) */
 } s_ic = { .next = 1 };
@@ -476,15 +656,15 @@ static inline void ic_word(uint32_t a)
     if (a == next && (a & 2)) {
         return;                     /* the longword's second word: read with the first */
     }
-    uint32_t wait = s_wait[a >> 16];
+    uint32_t wait = s_m.wait[a >> 16];
     ic_longword(a, &wait);
 }
 
 /* An instruction word (its wait already taken) */
 static inline uint16_t program16(uint32_t a)
 {
-    const uint8_t *p = s_rmap[a >> 16];
-    return p ? rd16(p, a & 0xFFFF) : slow_read16(a);
+    const uint8_t *p = s_m.rmap[a >> 16];
+    return p ? rd16(p, a) : slow_read16(a);
 }
 
 /* The 68EC020 runs on through the words after the last one: those come
@@ -509,13 +689,13 @@ unsigned int AMI_HOT m68k_read_immediate_16(unsigned int a)
         return *w;
     }
     ic_word(a);
-    const uint8_t *p = s_rmap[a >> 16];
+    const uint8_t *p = s_m.rmap[a >> 16];
     if (p) {
         if ((a + 2) & 0xFFFF) {
-            s_ic.next_word = (const uint16_t *)(p + (a & 0xFFFF) + 2);
-            s_ic.next_wait = s_wait[a >> 16];
+            s_ic.next_word = (const uint16_t *)(p + a + 2);
+            s_ic.next_wait = s_m.wait[a >> 16];
         }
-        return rd16(p, a & 0xFFFF);
+        return rd16(p, a);
     }
     return slow_read16(a);
 }
@@ -530,9 +710,9 @@ unsigned int AMI_HOT m68k_read_immediate_32(unsigned int a)
     }
     ic_word(a);
     ic_word((a + 2) & 0xFFFFFF);
-    const uint8_t *p = s_rmap[a >> 16];
+    const uint8_t *p = s_m.rmap[a >> 16];
     if (p && (a & 0xFFFF) <= 0xFFFC) {
-        return ((uint32_t)rd16(p, a & 0xFFFF) << 16) | rd16(p, (a & 0xFFFF) + 2);
+        return ((uint32_t)rd16(p, a) << 16) | rd16(p, a + 2);
     }
     return ((uint32_t)program16(a) << 16) | program16((a + 2) & 0xFFFFFF);
 }
@@ -558,7 +738,7 @@ bool mem_poll_loop(uint32_t pc)
 
 /* PC-relative operands: data (the cache holds instructions only). Musashi
  * hands these over without its 24-bit mask (its data path masks inside):
- * an index going round the top read past s_rmap (Desert Dream crashed)
+ * an index going round the top read past s_m.rmap (Desert Dream crashed)
  */
 unsigned int m68k_read_pcrelative_8(unsigned int a)
 {
@@ -577,15 +757,25 @@ unsigned int m68k_read_pcrelative_32(unsigned int a)
 
 void AMI_HOT m68k_write_memory_8(unsigned int a, unsigned int v)
 {
-    uint8_t *p = s_wmap[a >> 16];
-    if (!ami.cpu_shift) {
-        bus_cycle(a);
-    } else if (s_wait[a >> 16]) {
-        ami_cpu_wait(s_wait[a >> 16]);
+    uint32_t b = a >> 16;
+    uint8_t *p = s_m.wmap[b];
+    if (!s_m.cpu020) {
+        int kind = s_m.kind[b];
+        if (p && bus_cycles_quick(kind, 1)) {
+            if (kind) {
+                ami.bus = (uint8_t)v * 0x0101u;
+            }
+            p[a ^ 1] = v;
+            return;
+        }
+        write8_000(a, v);
+        return;
+    }
+    if (s_m.wait[b]) {
+        ami_cpu_wait(s_m.wait[b]);
     }
     if (p) {
-        cpu_bus_word(a, (uint8_t)v * 0x0101u);
-        p[(a & 0xFFFF) ^ 1] = v;
+        p[a ^ 1] = v;
         return;
     }
     slow_write8(a, v);
@@ -593,15 +783,25 @@ void AMI_HOT m68k_write_memory_8(unsigned int a, unsigned int v)
 
 void AMI_HOT m68k_write_memory_16(unsigned int a, unsigned int v)
 {
-    uint8_t *p = s_wmap[a >> 16];
-    if (!ami.cpu_shift) {
-        bus_cycle(a);
-    } else if (s_wait[a >> 16]) {
-        ami_cpu_wait(s_wait[a >> 16]);
+    uint32_t b = a >> 16;
+    uint8_t *p = s_m.wmap[b];
+    if (!s_m.cpu020) {
+        int kind = s_m.kind[b];
+        if (p && bus_cycles_quick(kind, 1)) {
+            if (kind) {
+                ami.bus = v;
+            }
+            wr16(p, a, v);
+            return;
+        }
+        write16_000(a, v);
+        return;
+    }
+    if (s_m.wait[b]) {
+        ami_cpu_wait(s_m.wait[b]);
     }
     if (p) {
-        cpu_bus_word(a, v);
-        wr16(p, a & 0xFFFF, v);
+        wr16(p, a, v);
         return;
     }
     slow_write16(a, v);
@@ -609,17 +809,27 @@ void AMI_HOT m68k_write_memory_16(unsigned int a, unsigned int v)
 
 void AMI_HOT m68k_write_memory_32(unsigned int a, unsigned int v)
 {
-    uint8_t *p = s_wmap[a >> 16];
-    if (p && (a & 0xFFFF) <= 0xFFFC) {
-        if (!ami.cpu_shift) {
-            bus_cycle(a);
-            bus_cycle(a);
-        } else if (s_wait[a >> 16]) {
-            ami_cpu_wait(s_wait[a >> 16]);
+    uint32_t b = a >> 16;
+    uint8_t *p = s_m.wmap[b];
+    if (!s_m.cpu020) {
+        int kind = s_m.kind[b];
+        if (p && (a & 0xFFFF) <= 0xFFFC && bus_cycles_quick(kind, 2)) {
+            if (kind) {
+                ami.bus = v;
+            }
+            wr16(p, a, v >> 16);
+            wr16(p, a + 2, v & 0xFFFF);
+            return;
         }
-        cpu_bus_word(a, v);
-        wr16(p, a & 0xFFFF, v >> 16);
-        wr16(p, (a & 0xFFFF) + 2, v & 0xFFFF);
+        write32_000(a, v);
+        return;
+    }
+    if (p && (a & 0xFFFF) <= 0xFFFC) {
+        if (s_m.wait[b]) {
+            ami_cpu_wait(s_m.wait[b]);
+        }
+        wr16(p, a, v >> 16);
+        wr16(p, a + 2, v & 0xFFFF);
         return;
     }
     m68k_write_memory_16(a, v >> 16);
@@ -632,9 +842,9 @@ void mem_copy_to(uint32_t a, const uint8_t *src, uint32_t len)
 {
     for (uint32_t i = 0; i < len; i++, a++) {
         a &= 0xFFFFFF;
-        uint8_t *p = s_wmap[a >> 16];
+        uint8_t *p = s_m.wmap[a >> 16];
         if (p) {
-            p[(a & 0xFFFF) ^ 1] = src[i];
+            p[a ^ 1] = src[i];
         } else {
             m68k_write_memory_8(a, src[i]);
         }
@@ -645,8 +855,8 @@ void mem_copy_from(uint8_t *dst, uint32_t a, uint32_t len)
 {
     for (uint32_t i = 0; i < len; i++, a++) {
         a &= 0xFFFFFF;
-        const uint8_t *p = s_rmap[a >> 16];
-        dst[i] = p ? p[(a & 0xFFFF) ^ 1] : (uint8_t)m68k_read_memory_8(a);
+        const uint8_t *p = s_m.rmap[a >> 16];
+        dst[i] = p ? p[a ^ 1] : (uint8_t)m68k_read_memory_8(a);
     }
 }
 
@@ -655,8 +865,8 @@ void mem_copy_from(uint8_t *dst, uint32_t a, uint32_t len)
 uint16_t amiga_peek16(uint32_t a)
 {
     a &= 0xFFFFFE;
-    const uint8_t *p = s_rmap[a >> 16];
-    return p ? rd16(p, a & 0xFFFF) : 0;
+    const uint8_t *p = s_m.rmap[a >> 16];
+    return p ? rd16(p, a) : 0;
 }
 
 uint8_t amiga_peek8(uint32_t a)
@@ -726,9 +936,9 @@ bool amiga_mem_free(amiga_mem_free_t *chip, amiga_mem_free_t *slow, amiga_mem_fr
 void amiga_poke8(uint32_t a, uint8_t v)
 {
     a &= 0xFFFFFF;
-    uint8_t *p = s_wmap[a >> 16];
+    uint8_t *p = s_m.wmap[a >> 16];
     if (p) {
-        p[(a & 0xFFFF) ^ 1] = v;
+        p[a ^ 1] = v;
     }
 }
 

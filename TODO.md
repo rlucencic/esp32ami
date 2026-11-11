@@ -69,10 +69,13 @@ Nothing here can be done as things are; each says what it waits for.
 - Assembler (RISC-V, PIE) for hot paths: only if a game falls behind
   (Aerial Racers' race: core 1 71-78% with the 68EC020's cache and the
   poll skip). C first: the 68EC020's instruction fetch is done (2026-11-10,
-  ~7% cheaper); the 68000's `bus_cycle()` (`mem.c`, in flash, ~50 P4
-  instructions an access) is 28% of core 1 on Kick Off 2's credits screen,
-  the A500's largest cost and the next target, its timing exact
-  (`docs/fetch-experiment-2026-11-10.md`).
+  ~7% cheaper), and so are the 68000's bus cycles inline in the callbacks
+  (Kick Off 2's credits: core 1 16.7 -> 9.9 ms a frame; Kid Pool's title,
+  which fell behind at 94%, now at 100% with 5% idle;
+  `docs/bus-cycle-experiment-2026-11-10.md`). What's left on an A500 is
+  spread out: the callbacks' 26-29 instructions, `bus_take()` a slot at a
+  time, the chips' registers through `bus_cycle()`. Which A500 titles
+  still fall behind on the Tab5 isn't known (none measured but these).
 - Sprites on lines inside the window without bitplanes: Denise (WinUAE)
   wants a BPL1DAT write on a line before showing them; here they show.
   Needs a game or a test on a real Amiga that shows the difference.
