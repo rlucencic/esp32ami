@@ -53,10 +53,10 @@ collection for the rest. Roughly a session each, in this order:
   table refresh); turns are paced by the `$21ff*` effect, so camera
   rate follows CPU/chip wait — hence WAIT 5 vs 8 only shifts frames.
   WAIT 12 (diagnostic only) still hits the same neg-Y class (~frame
-  9811). WinUAE is not on this host: next, compare phase/camera rate
-  to a real A1200 or WinUAE, or decide the missing soft-clip is a
-  title quirk under otherwise-correct timing. Needs A1200 + 4–8 MB
-  fast (readme); we use 8. Host probes: `AMI_NEGY=224a60`,
+  9811). Soft buffer is a hardcoded `lea $2fffd0` (fast). Mechanism
+  is understood; blocked on a real A1200 or WinUAE angle/phase
+  compare at `AMI_TIME=1729641600` (not on this host). Needs A1200 +
+  4–8 MB fast (readme); we use 8. Host probes: `AMI_NEGY=224a60`,
   `AMI_PROJ=224b3e` (D2/D3/Z/rot), `AMI_PROJENTRY=224ae2`,
   `AMI_ANG=2efd3e`, `AMI_PROJFROM`/`TO`, `AMI_TRACE`+`AMI_TRACE_FRAME`,
   `AMI_LOGFROM`. Work folder `build/todo10-2026-11-11/`.
@@ -65,12 +65,12 @@ collection for the rest. Roughly a session each, in this order:
   Space is pressed at the title. Find the writer with
   `AMI_WATCH=C6720` (host; optional `:<frame>`), then whether a real
   A1200 without fast RAM would do the same. Needs the title's disk
-  (not in the 96-game RP9 set on this machine).
+  (not on this machine; not on Aminet as a freely fetchable dump).
 - Killer (A1200): out of scope. Aminet `CNCD_Killer.readme`: needs at
   least a 68040/25 MHz (fun on a 68060). Our 68EC020 will not run it.
 - Pango Fun (a beta): a Guru on every machine; see whether the beta is
   just broken (another dump, WinUAE's behaviour described anywhere).
-  Needs the title's disk.
+  Needs the title's disk (not on this machine).
 
 ## 9. Waiting on something
 
