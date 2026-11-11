@@ -53,13 +53,26 @@ collection for the rest. Roughly a session each, in this order:
   table refresh); turns are paced by the `$21ff*` effect, so camera
   rate follows CPU/chip wait — hence WAIT 5 vs 8 only shifts frames.
   WAIT 12 (diagnostic only) still hits the same neg-Y class (~frame
-  9811). Soft buffer is a hardcoded `lea $2fffd0` (fast). Mechanism
-  is understood; blocked on a real A1200 or WinUAE angle/phase
-  compare at `AMI_TIME=1729641600` (not on this host). Needs A1200 +
-  4–8 MB fast (readme); we use 8. Host probes: `AMI_NEGY=224a60`,
+  9811). Soft buffer is a hardcoded `lea $2fffd0` (fast). Cliff
+  camera stream is installed at frame 9675 (`$2222e4` writes script
+  ptr `$2efd46` into `$2262a8`; end `$2f039a`): authored keyframes
+  `(60,30,Z=-390)` ×20, `(120,60,-490)` ×30, `(90,90,-290)` ×15,
+  then `(80,20,-390)` (the smash centers) before `(40,30,-450)` and
+  `(100,80,-490)`. Soft drawer is already fed a slightly negative Y
+  on the opening `(60,30)` pose (frame 9681). Angles are not reset
+  on that load: no CPU write to `$2efd3e` from frame 9000 until the
+  camera resumes at 9676 (`add.w` → `$4bf0`, so carry-in `$4b00`);
+  the cliff stream then accumulates both angles to `$b518` (matches
+  smash). So D5==D6 is script + carry-in, not a one-off corrupt.
+  Mechanism is understood; blocked on a real A1200 or WinUAE
+  angle/phase compare at `AMI_TIME=1729641600` (not on this host) —
+  whether that demo scene is meant to look like this, or whether
+  carry-in / step count differs there. Needs A1200 + 4–8 MB fast
+  (readme); we use 8. Host probes: `AMI_NEGY=224a60`,
   `AMI_PROJ=224b3e` (D2/D3/Z/rot), `AMI_PROJENTRY=224ae2`,
   `AMI_ANG=2efd3e`, `AMI_PROJFROM`/`TO`, `AMI_TRACE`+`AMI_TRACE_FRAME`,
-  `AMI_LOGFROM`. Work folder `build/todo10-2026-11-11/`.
+  `AMI_LOGFROM`, `AMI_WATCH=2efd3e:9000`, `AMI_WATCH=2262a8:9670`.
+  Work folder `build/todo10-2026-11-11/` (incl. `run-script*.log`).
 - All New World of Lemmings (AGA crack, no fast RAM): an OS hook at
   $C6720 gets overwritten, then a jump through it every ~14 frames once
   Space is pressed at the title. Find the writer with
