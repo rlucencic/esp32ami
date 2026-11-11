@@ -15,7 +15,7 @@
  * AMI_SHOTS=<n> (a picture every n frames, <out>-<frame>.ppm), AMI_LOG=<n>
  * (the machine's state every n frames), AMI_LOGFROM=<frame> (every frame
  * from there), AMI_RING=<n> (the last n instructions at the end),
- * AMI_STOP=<pc>[:<frame>], AMI_TRACE=<pc>:<n>,
+ * AMI_STOP=<pc>[:<frame>], AMI_TRACE=<pc>:<n> (+ AMI_TRACE_FRAME),
  * AMI_WATCH=<addr hex>[:<frame>] (stop on a CPU write that covers the
  * address, as AMI_STOP), AMI_NEGY=<pc> (log each visit where D1.w < 0),
  * AMI_PROJ=<pc> (log projected x,y outside 0..319/0..255),
@@ -226,23 +226,38 @@ void m68k_host_instruction(unsigned int pc)
         int16_t y = (int16_t)(m68k_get_reg(NULL, M68K_REG_D1) & 0xFFFF);
         if (y < 0 || y > 255 || x < 0 || x > 319) {
             uint32_t a5 = m68k_get_reg(NULL, M68K_REG_A5) & 0xFFFFFF;
+            uint32_t a4 = m68k_get_reg(NULL, M68K_REG_A4) & 0xFFFFFF;
+            uint32_t a2 = m68k_get_reg(NULL, M68K_REG_A2) & 0xFFFFFF;
+            /* Rotated X/Y/Z.l were just stored at A4-12; D3 is the divs divisor. */
             printf("-- proj out at $%06x frame %lu: x=%d y=%d center %d,%d "
-                   "A1 $%06x A5 $%06x\n",
+                   "D2 %08x D3 %d Z.w %d A1 $%06x rot %d,%d,%d\n",
                    pc, (unsigned long)s_frame, x, y,
                    (int16_t)amiga_peek16(a5), (int16_t)amiga_peek16(a5 + 2),
-                   m68k_get_reg(NULL, M68K_REG_A1) & 0xFFFFFF, a5);
+                   m68k_get_reg(NULL, M68K_REG_D2),
+                   (int16_t)(m68k_get_reg(NULL, M68K_REG_D3) & 0xFFFF),
+                   (int16_t)(a2 & 0xFFFF),
+                   m68k_get_reg(NULL, M68K_REG_A1) & 0xFFFFFF,
+                   (int32_t)(((uint32_t)amiga_peek16(a4 - 12) << 16) |
+                             amiga_peek16(a4 - 10)),
+                   (int32_t)(((uint32_t)amiga_peek16(a4 - 8) << 16) |
+                             amiga_peek16(a4 - 6)),
+                   (int32_t)(((uint32_t)amiga_peek16(a4 - 4) << 16) |
+                             amiga_peek16(a4 - 2)));
             fflush(stdout);
         }
     }
 
     static uint32_t trace_pc = 1;
-    static int trace_n, trace_left;
+    static int trace_n, trace_left, trace_from;
     if (trace_pc == 1) {
         const char *e = getenv("AMI_TRACE");
         trace_pc = e ? strtoul(e, NULL, 16) : 0;
         trace_n = e && strchr(e, ':') ? atoi(strchr(e, ':') + 1) : 100;
+        e = getenv("AMI_TRACE_FRAME");
+        trace_from = e ? atoi(e) : 0;
     }
-    if (trace_pc && pc == trace_pc && trace_left == 0) {
+    if (trace_pc && pc == trace_pc && trace_left == 0 &&
+        (!trace_from || (int)s_frame >= trace_from)) {
         trace_left = trace_n;
     }
     if (trace_left > 0) {

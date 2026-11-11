@@ -36,17 +36,30 @@ collection for the rest. Roughly a session each, in this order:
   `$224880` blend is only a framebuffer fade (`move.l (A0)+,D0` /
   `dbra`), not the angles. `$8b46` at `$21ff3c` is PACK D6,D5,#0
   (68020; in the exe after `lsr.l #8,D5`), not OR/illegal — Musashi
-  runs it; the host disassembler still prints ILLEGAL. Angle/center
-  advance is CPU-wait sensitive (WAIT 5 reaches the same poses ~60
-  frames earlier) but the smash class is unchanged. WinUAE is not on
-  this host: next, deepen why that pose's projected edges go negative
-  (script vs VERTB timing, or a clip path skipped) without changing
-  WAIT_CHIP.
-  Host probes: `AMI_NEGY=224a60`, `AMI_PROJ=224b3e`,
-  `AMI_PROJENTRY=224ae2`, `AMI_ANG=2efd3e`, `AMI_PROJFROM`/`TO`,
-  `AMI_LOGFROM`. Work folder `build/todo10-2026-11-11/`; older RP9
-  dumps may still be in `build/underpressure-20261024/` when that tree
-  is present.
+  runs it; the host disassembler still prints ILLEGAL for PACK.
+  Camera script `$226260`: center x/y absolute from a stream, each
+  angle `+= 4*center`, Z word absolute; stepped when `$21ff8e` matches
+  `$22696c` (CPU-wait sensitive: WAIT 5 reaches the same poses ~60
+  frames earlier). Soft drawer `$224a2e` ends the edge list with
+  `bmi` only — no Y clip. Buffer base `$2fffd0` (fast); `mulu.w` of a
+  negative Y lands in a custom mirror from the first neg Y (frame
+  9681, vertex `(60,-3)` among otherwise sane verts). Projection
+  `$224ae2`: `muls` rotate, `asr #4`, `divs` by `(depth.w + Z + 1000)`;
+  that out-of-range point has rot `0,-330876,93156`, divisor 615, Z
+  `-390` — the screen math checks out. Object at `$2f0404` includes
+  `(0,-21,0)` (terminator `$7fff`): the off-screen screen point is a
+  real model vertex, not corrupted data. Dispatcher `$2268f0` runs the
+  camera every turn (phase `$21ff8e` / shadow `$22696c` only gate a
+  table refresh); turns are paced by the `$21ff*` effect, so camera
+  rate follows CPU/chip wait — hence WAIT 5 vs 8 only shifts frames.
+  WAIT 12 (diagnostic only) still hits the same neg-Y class (~frame
+  9811). WinUAE is not on this host: next, compare phase/camera rate
+  to a real A1200 or WinUAE, or decide the missing soft-clip is a
+  title quirk under otherwise-correct timing. Needs A1200 + 4–8 MB
+  fast (readme); we use 8. Host probes: `AMI_NEGY=224a60`,
+  `AMI_PROJ=224b3e` (D2/D3/Z/rot), `AMI_PROJENTRY=224ae2`,
+  `AMI_ANG=2efd3e`, `AMI_PROJFROM`/`TO`, `AMI_TRACE`+`AMI_TRACE_FRAME`,
+  `AMI_LOGFROM`. Work folder `build/todo10-2026-11-11/`.
 - All New World of Lemmings (AGA crack, no fast RAM): an OS hook at
   $C6720 gets overwritten, then a jump through it every ~14 frames once
   Space is pressed at the title. Find the writer with
