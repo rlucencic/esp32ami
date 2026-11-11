@@ -212,9 +212,10 @@ remaining instructions. `m68k_read_memory_16()` takes 12.4%, about 0.4%
 of core 1 per instruction of its 29, and `ami.bus`'s address is two of
 those. On Kid Pool, the cost is spread out: `bus_take()` 0.9 ms a frame
 (the display's slots taken one call each), and the chips' registers
-through `bus_cycle()`. Those are likely byte reads of the beam's position
-in a `cmpi.b` loop (`m68k_op_cmpi_8_al`, `custom_read()` and `beam()` in
-the profile), which `poll_wait()` doesn't cover. The A1200's race is unchanged in its large
+through `bus_cycle()`. Those were largely byte reads of the beam's
+position in a `cmpi.b` loop (`m68k_op_cmpi_8_al`, `custom_read()` and
+`beam()` in the profile), which `poll_wait()` didn't cover: done next
+(`docs/poll-vhpos-experiment-2026-11-11.md`). The A1200's race is unchanged in its large
 items: the fetch, `m68k_execute`, Lisa's fetch and Paula.
 
 The board was restored to its MSX. The full 16 MB backup taken before

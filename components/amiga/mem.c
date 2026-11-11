@@ -374,7 +374,7 @@ static unsigned int slow_read8(uint32_t a)
 {
     io_wait(a);
     if (is_custom(a)) {
-        uint16_t w = custom_read(a & 0x1FE);
+        uint16_t w = custom_read_addr(a);
         return (a & 1) ? (w & 0xFF) : (w >> 8);
     }
     if (is_cia(a)) {

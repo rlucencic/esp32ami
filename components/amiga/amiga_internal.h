@@ -266,6 +266,7 @@ static inline void chip_write16(uint32_t a, uint16_t v)
 
 /* The custom chip registers (custom.c: $DFF000-$DFF1FE, register offsets) */
 uint16_t custom_read(uint32_t reg);
+uint16_t custom_read_addr(uint32_t a);      /* byte or word: a selects the poll */
 void custom_write(uint32_t reg, uint16_t value, int at, bool copper);
 void custom_reset(void);
 

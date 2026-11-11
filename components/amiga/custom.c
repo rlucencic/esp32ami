@@ -32,12 +32,16 @@ static uint16_t read_reg(uint32_t reg);
 
 /* A program waiting for the blitter, the beam or an interrupt in a loop of
  * two instructions, this read and a branch back to it (Aerial Racers:
- * btst #0,$dff005 / bne): DMACONR's busy bit, VPOSR and INTREQR change
- * only where the CPU's slice ends (an event, the line's end), so the
- * slice's rest passes at once. The loop then leaves at most a pass sooner;
- * one that does more (counts its passes: a speed test) runs as it is.
- * (Each PC decoded once while it stays in the table: a game reads these
- * from many places.)
+ * btst #0,$dff005 / bne; Kid Pool: cmpi.b #-$c,$dff006 / bne): DMACONR's
+ * busy bit, VPOSR and INTREQR change only where the CPU's slice ends (an
+ * event, the line's end), so the slice's rest passes at once (before the
+ * read: the value is already the one at that end). VHPOSR's vertical byte
+ * is stable within a line too (skip after the read, and only while the
+ * branch will loop: skipping on the exit pass would burn the cycles the
+ * code after the wait should get). Its horizontal byte changes every
+ * colour clock and is not skipped. A loop that does more (counts its
+ * passes: a speed test) runs as it is. (Each PC decoded once while it
+ * stays in the table: a game reads these from many places.)
  */
 #define POLL_PCS        32
 static void poll_wait(void)
@@ -59,6 +63,122 @@ static void poll_wait(void)
     }
 }
 
+/* Bcc taken? `cc` is the condition field (op bits 11-8); flags from an
+ * 8-bit subtract (CMPI/CMP) or from Z/N alone (MOVE/TST/BTST: pass C=V=0,
+ * Z/N as given).
+ */
+static bool poll_bcc(int cc, int n, int z, int v, int c)
+{
+    switch (cc) {
+    case 0x2: return !c && !z;          /* HI */
+    case 0x3: return c || z;            /* LS */
+    case 0x4: return !c;                /* CC */
+    case 0x5: return c;                 /* CS */
+    case 0x6: return !z;                /* NE */
+    case 0x7: return z;                 /* EQ */
+    case 0x8: return !v;                /* VC */
+    case 0x9: return v;                 /* VS */
+    case 0xA: return !n;                /* PL */
+    case 0xB: return n;                 /* MI */
+    case 0xC: return n == v;            /* GE */
+    case 0xD: return n != v;            /* LT */
+    case 0xE: return n == v && !z;      /* GT */
+    case 0xF: return n != v || z;       /* LE */
+    default:  return false;             /* BRA/BSR: not a poll */
+    }
+}
+
+static void sub8_flags(uint8_t dst, uint8_t src, int *n, int *z, int *v, int *c)
+{
+    unsigned r = (unsigned)dst - (unsigned)src;
+    *n = (r >> 7) & 1;
+    *z = ((uint8_t)r == 0);
+    *v = (((dst ^ src) & (dst ^ r)) >> 7) & 1;
+    *c = (dst < src);
+}
+
+/* VHPOSR V-byte poll: skip the slice only while the two-instruction loop
+ * will branch back (the byte won't change before the line ends). Unknown
+ * opcodes are left alone.
+ */
+static void poll_vhpos_v(uint8_t vbyte)
+{
+    static uint32_t s_pc[POLL_PCS];
+    static int8_t s_ok[POLL_PCS];       /* 1 skip-when-looping, 0 never, -1 undecided */
+    if (!ami.cpu_running) {
+        return;
+    }
+    uint32_t pc = m68k_get_reg(NULL, M68K_REG_PPC);
+    int i = (pc >> 1) & (POLL_PCS - 1);
+    if (s_pc[i] != pc + 1) {
+        s_pc[i] = pc + 1;
+        s_ok[i] = mem_poll_loop(pc) ? -1 : 0;
+    }
+    if (s_ok[i] == 0) {
+        return;
+    }
+    uint16_t op = (uint16_t)m68k_read_disassembler_16(pc);
+    uint32_t b;
+    int n, z, v, c;
+    int cc;
+    /* CMPI.B #imm, abs.W/abs.L */
+    if ((op & 0xFFC0) == 0x0C00 && ((op & 0x3F) == 0x38 || (op & 0x3F) == 0x39)) {
+        uint8_t imm = (uint8_t)m68k_read_disassembler_16(pc + 2);
+        b = pc + ((op & 0x3F) == 0x39 ? 8 : 6);
+        sub8_flags(vbyte, imm, &n, &z, &v, &c);
+    } else if ((op & 0xFFC0) == 0x4A00 && ((op & 0x3F) == 0x38 || (op & 0x3F) == 0x39)) {
+        /* TST.B abs */
+        b = pc + ((op & 0x3F) == 0x39 ? 6 : 4);
+        n = (vbyte >> 7) & 1;
+        z = (vbyte == 0);
+        v = c = 0;
+    } else if ((op & 0xF1C0) == 0x1000 && ((op & 0x3F) == 0x38 || (op & 0x3F) == 0x39)) {
+        /* MOVE.B abs, Dn */
+        b = pc + ((op & 0x3F) == 0x39 ? 6 : 4);
+        n = (vbyte >> 7) & 1;
+        z = (vbyte == 0);
+        v = c = 0;
+    } else if ((op & 0xFFC0) == 0x0800 && ((op & 0x3F) == 0x38 || (op & 0x3F) == 0x39)) {
+        /* BTST #imm, abs */
+        int bit = m68k_read_disassembler_16(pc + 2) & 7;
+        b = pc + ((op & 0x3F) == 0x39 ? 8 : 6);
+        z = !((vbyte >> bit) & 1);
+        n = v = c = 0;
+    } else if ((op & 0xF1C0) == 0xB000 && ((op & 0x3F) == 0x38 || (op & 0x3F) == 0x39)) {
+        /* CMP.B abs, Dn */
+        uint8_t dn = (uint8_t)m68k_get_reg(NULL, M68K_REG_D0 + ((op >> 9) & 7));
+        b = pc + ((op & 0x3F) == 0x39 ? 6 : 4);
+        sub8_flags(dn, vbyte, &n, &z, &v, &c);
+    } else {
+        s_ok[i] = 0;                /* leave unknown polls alone */
+        return;
+    }
+    uint16_t bcc = (uint16_t)m68k_read_disassembler_16(b);
+    if ((bcc & 0xF000) != 0x6000 || (bcc & 0x0F00) < 0x0200) {
+        s_ok[i] = 0;
+        return;
+    }
+    s_ok[i] = 1;
+    cc = (bcc >> 8) & 0xF;
+    if (!poll_bcc(cc, n, z, v, c)) {
+        return;                     /* wait ends: keep the slice for what follows */
+    }
+    /* Only the common "wait for VHPOS == $F4" in low chip RAM (Kid Pool's
+     * title at $152C4). Other immediates and higher PCs are loaders or
+     * games that lose disk/copper phase if the wait is collapsed
+     * (Warm Up $80/$FF, Ziriax $C8 at $4E050, Tactical Manager 2 at
+     * $94C7C). */
+    if ((op & 0xFFC0) != 0x0C00 || (cc != 0x6 && cc != 0x7) ||
+        (uint8_t)m68k_read_disassembler_16(pc + 2) != 0xF4 ||
+        (pc & 0xFFFFFF) >= 0x20000) {
+        return;
+    }
+    {
+        extern int m68ki_remaining_cycles;
+        ami_cpu_wait(m68ki_remaining_cycles > 0 ? m68ki_remaining_cycles : 0);
+    }
+}
+
 /* What the 68000 reads; a write-only register gives the last word on the
  * bus (Dr. Mario keeps a counter in one)
  */
@@ -69,6 +189,24 @@ uint16_t custom_read(uint32_t reg)
     }
     uint16_t v = read_reg(reg);
     ami.bus = v;
+    return v;
+}
+
+/* A byte read: a selects the register and which half. VHPOSR's vertical
+ * byte ($dff006) is stable within a line; see poll_vhpos_v. Its
+ * horizontal byte ($dff007) changes every colour clock and is not skipped.
+ */
+uint16_t custom_read_addr(uint32_t a)
+{
+    uint32_t reg = a & 0x1FE;
+    if (reg == 0x002 || reg == 0x004 || reg == 0x01E) {
+        poll_wait();
+    }
+    uint16_t v = read_reg(reg);
+    ami.bus = v;
+    if (reg == 0x006 && !(a & 1)) {
+        poll_vhpos_v((uint8_t)(v >> 8));
+    }
     return v;
 }
 

@@ -153,8 +153,12 @@ images.
   loop of two instructions, the read and a Bcc back to it
   (`mem_poll_loop()`: Musashi's disassembler for its length, cached by PC),
   lets the slice's rest pass at once: those change only where a slice ends
-  (an event, the line's end), so the loop leaves at most a pass sooner. A
-  loop that does more (a speed test counting its passes) runs as it is;
+  (an event, the line's end), so the loop leaves at most a pass sooner.
+  VHPOSR's vertical byte (`$dff006`, after the read via
+  `custom_read_addr()` / `poll_vhpos_v()`): the same while the Bcc still
+  loops, gated to CMPI.B `# $F4` in low chip RAM (Kid Pool's title;
+  broader gates broke other titles). Its horizontal byte is not skipped.
+  A loop that does more (a speed test counting its passes) runs as it is;
   SysInfo the same before and after on both CPUs. For the host's time:
   with the 68EC020's cache Aerial Racers' `btst #0,$dff005 / bne` ran 2.6
   times the instructions (117 M in the collection's 7000 frames, 33 M with

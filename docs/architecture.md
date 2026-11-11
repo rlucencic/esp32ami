@@ -889,3 +889,9 @@ console's PC sampler.
   New ROM-free checks in `make test` compare the inline paths with
   `bus_cycle()`, and both with the slot model
   (`bus-cycle-experiment-2026-11-10.md`).
+- **VHPOSR's vertical-byte poll** (`custom.c`): Kid Pool's title
+  `cmpi.b #-$c,$dff006` / `bne` skips the slice's rest after the read,
+  only while the branch still loops and only for CMPI.B `# $F4` in low
+  chip RAM. Collection 96/96 the same. Tab5 title: core 1 load 85–86% →
+  53–55% at 100% speed (idle in the profile 6% → 39%;
+  `poll-vhpos-experiment-2026-11-11.md`).
