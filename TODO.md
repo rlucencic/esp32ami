@@ -64,11 +64,14 @@ collection for the rest. Roughly a session each, in this order:
   camera resumes at 9676 (`add.w` → `$4bf0`, so carry-in `$4b00`);
   the cliff stream then accumulates both angles to `$b518` (matches
   smash). So D5==D6 is script + carry-in, not a one-off corrupt.
-  Mechanism is understood; blocked on a real A1200 or WinUAE
-  angle/phase compare at `AMI_TIME=1729641600` (not on this host) —
-  whether that demo scene is meant to look like this, or whether
-  carry-in / step count differs there. Needs A1200 + 4–8 MB fast
-  (readme); we use 8. Host probes: `AMI_NEGY=224a60`,
+  Carry-in itself is a finished earlier camera run: angles cleared
+  at frame 5370, accumulate from ~6205 at `$226252`, last write
+  frame 6588 stores exactly `$4b00`, then hold until the cliff
+  stream — so real hardware that finishes that segment lands on
+  the same pose. Mechanism is understood; blocked only on a
+  real/WinUAE eyeball of whether that scene is meant to look like
+  this (`AMI_TIME=1729641600`, not on this host). Needs A1200 +
+  4–8 MB fast (readme); we use 8. Host probes: `AMI_NEGY=224a60`,
   `AMI_PROJ=224b3e` (D2/D3/Z/rot), `AMI_PROJENTRY=224ae2`,
   `AMI_ANG=2efd3e`, `AMI_PROJFROM`/`TO`, `AMI_TRACE`+`AMI_TRACE_FRAME`,
   `AMI_LOGFROM`, `AMI_WATCH=2efd3e:9000`, `AMI_WATCH=2262a8:9670`.
@@ -78,12 +81,11 @@ collection for the rest. Roughly a session each, in this order:
   Space is pressed at the title. Find the writer with
   `AMI_WATCH=C6720` (host; optional `:<frame>`), then whether a real
   A1200 without fast RAM would do the same. Needs the title's disk
-  (not on this machine; not on Aminet as a freely fetchable dump).
-- Killer (A1200): out of scope. Aminet `CNCD_Killer.readme`: needs at
-  least a 68040/25 MHz (fun on a 68060). Our 68EC020 will not run it.
+  (not on this machine; not on Aminet; not under the WinUAE Hard
+  Disk on WDBLACK1TB — Games/L empty).
 - Pango Fun (a beta): a Guru on every machine; see whether the beta is
   just broken (another dump, WinUAE's behaviour described anywhere).
-  Needs the title's disk (not on this machine).
+  Needs the title's disk (not on this machine; not on Aminet).
 
 ## 9. Waiting on something
 

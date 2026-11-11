@@ -831,7 +831,9 @@ Aerial Racers' race on the Tab5 after all of them: 98-102%, core 1
 of the difference the alert detector's false alarms, red titles; Last
 Action Hero, Lionheart, Project-X and Navy Seals now run; Summer Games,
 Cube-X and Neighbours fewer dark pictures; the rest the same scenes at
-other moments). Still failing: `TODO.md` 10.
+other moments). Still failing: `TODO.md` 10 (Under Pressure mechanism
+understood, blocked on a real/WinUAE eyeball; Lemmings and Pango Fun
+need their disks; Killer out of scope — needs a 68040+).
 
 
 ### Voyage follow-up, 2026-10-24
