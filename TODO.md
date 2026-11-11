@@ -16,7 +16,8 @@ Why: found running the user's demos and game ADFs with `tools/smoke.py`
 Check each with `smoke.py` on its folder (`ONLY=<name>`) and the
 collection for the rest. Roughly a session each, in this order:
 
-- Under Pressure (A1200 demo), paused 2026-10-24 at the user's request:
+- Under Pressure (A1200 demo), paused 2026-10-24 at the user's request
+  (RP9 / `build/underpressure-20261024/` not on this machine today):
   reproduced on `3db07b0`, with its RP9's A1200, Kickstart 3.1, 2 MB
   chip + 8 MB fast RAM, no input and `AMI_TIME=1729641600`. Previous
   observation: fails with chip waits of 7-8 clocks, works at 5; the cause
@@ -43,9 +44,10 @@ collection for the rest. Roughly a session each, in this order:
   always run from a copy of the disks).
 - All New World of Lemmings (AGA crack, no fast RAM): an OS hook at
   $C6720 gets overwritten, then a jump through it every ~14 frames once
-  Space is pressed at the title. Find the writer: a host write watch
-  (`AMI_WATCH=<addr>`, to add) would show it; then whether a real A1200
-  without fast RAM would do the same.
+  Space is pressed at the title. Find the writer with
+  `AMI_WATCH=C6720` (host; optional `:<frame>`), then whether a real
+  A1200 without fast RAM would do the same. Needs the title's disk
+  (not in the 96-game RP9 set on this machine).
 - Killer (A1200, marked for a JIT): quits at once. Check whether it
   wants a 68030 or an FPU (out of scope then).
 - Pango Fun (a beta): a Guru on every machine; see whether the beta is

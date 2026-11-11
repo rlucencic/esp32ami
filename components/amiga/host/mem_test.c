@@ -1,5 +1,6 @@
 /* The chip bus as seen through floating custom registers. No ROM needed. */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "amiga_internal.h"
 #include "m68k.h"
@@ -12,6 +13,18 @@ static int failures;
 } while (0)
 
 void m68k_host_instruction(unsigned int pc) { (void)pc; }
+
+static int s_watch_hits;
+static uint32_t s_watch_addr, s_watch_value;
+static int s_watch_bytes;
+
+void ami_host_watch_hit(uint32_t addr, int bytes, uint32_t value)
+{
+    s_watch_hits++;
+    s_watch_addr = addr;
+    s_watch_bytes = bytes;
+    s_watch_value = value;
+}
 
 static unsigned floating_word(void) { return m68k_read_memory_16(0xDFF0FA); }
 
@@ -185,6 +198,20 @@ int main(void)
     CHECK(waited == 2, "the last access waited from 40 to 44");
     CHECK(slot_model_mismatches(false) == 0, "inline waits follow the slot model");
     CHECK(slot_model_mismatches(true) == 0, "bus_cycle()'s waits follow the slot model");
+
+    /* AMI_WATCH: a CPU write covering the address reports once */
+    setenv("AMI_WATCH", "1234", 1);
+    mem_watch_reload();
+    s_watch_hits = 0;
+    ami.frames = 0;
+    m68k_write_memory_16(0x1234, 0xABCD);
+    CHECK(s_watch_hits == 1 && s_watch_addr == 0x1234 && s_watch_bytes == 2 &&
+          s_watch_value == 0xABCD, "AMI_WATCH stops on a covering word write");
+    s_watch_hits = 0;
+    m68k_write_memory_16(0x2000, 0);
+    CHECK(s_watch_hits == 0, "AMI_WATCH ignores other addresses");
+    unsetenv("AMI_WATCH");
+    mem_watch_reload();
 
     puts(failures ? "chip bus checks failed" : "all chip bus checks passed");
     return failures != 0;

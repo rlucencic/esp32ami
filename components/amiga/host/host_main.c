@@ -15,7 +15,9 @@
  * AMI_SHOTS=<n> (a picture every n frames, <out>-<frame>.ppm), AMI_LOG=<n>
  * (the machine's state every n frames), AMI_RING=<n> (the last n
  * instructions at the end), AMI_STOP=<pc>[:<frame>], AMI_TRACE=<pc>:<n>,
- * AMI_DIS=<addr hex>:<n> (disassemble and stop), AMI_EXC (exceptions other than interrupts; "all" with them),
+ * AMI_WATCH=<addr hex>[:<frame>] (stop on a CPU write that covers the
+ * address, as AMI_STOP), AMI_DIS=<addr hex>:<n> (disassemble and stop),
+ * AMI_EXC (exceptions other than interrupts; "all" with them),
  * AMI_EXCSTOP=<vector>[:<frame>] (stop at that exception, as AMI_STOP), AMI_LOGREGS
  * (AMI_LOG's lines with the display's registers),
  * AMI_DEBUG=<port> (serve the debugger, in real time), AMI_MODEL (0 A500, 1
@@ -80,6 +82,17 @@ static void stop_here(void)
     }
     printf("\n");
     exit(0);
+}
+
+/* mem.c: AMI_WATCH hit (a CPU write covering the address) */
+void ami_host_watch_hit(uint32_t addr, int bytes, uint32_t value)
+{
+    printf("-- write %d bytes %0*x to $%06x at PC $%06x (frame %lu), after:\n",
+           bytes, bytes <= 1 ? 2 : bytes <= 2 ? 4 : 8, (unsigned)value,
+           (unsigned)addr,
+           m68k_get_reg(NULL, M68K_REG_PPC) & 0xFFFFFF,
+           (unsigned long)s_frame);
+    stop_here();
 }
 
 void m68k_host_instruction(unsigned int pc)

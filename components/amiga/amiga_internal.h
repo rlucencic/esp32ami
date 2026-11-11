@@ -270,6 +270,11 @@ uint16_t custom_read_addr(uint32_t a);      /* byte or word: a selects the poll 
 void custom_write(uint32_t reg, uint16_t value, int at, bool copper);
 void custom_reset(void);
 
+#ifndef ESP_PLATFORM
+/* Host: re-read AMI_WATCH (mem_test); no-op on the board */
+void mem_watch_reload(void);
+#endif
+
 /* copper.c */
 typedef enum { COP_STOPPED, COP_FETCH, COP_WAIT } copper_state_t;
 typedef struct {

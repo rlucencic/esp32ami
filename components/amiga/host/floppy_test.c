@@ -12,6 +12,12 @@ static int failures;
 } while (0)
 
 void m68k_host_instruction(unsigned int pc) { (void)pc; }
+void ami_host_watch_hit(uint32_t addr, int bytes, uint32_t value)
+{
+    (void)addr;
+    (void)bytes;
+    (void)value;
+}
 
 static void setup(const char *path)
 {

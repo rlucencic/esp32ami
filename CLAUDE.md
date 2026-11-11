@@ -759,7 +759,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
   `AMI_SHOTS=<n>` (a picture every n frames), `AMI_LOG=<n>` (the state
   every n frames), `AMI_RING=<n>` (the last instructions at the end),
   `AMI_STOP=<pc>[:<frame>]` (the 60 instructions before and the registers),
-  `AMI_TRACE=<pc>:<n>`, `AMI_EXC` (exceptions; `all` with interrupts),
+  `AMI_TRACE=<pc>:<n>`, `AMI_WATCH=<addr>[:<frame>]` (a CPU write that
+  covers the address: the instructions before and the registers),
+  `AMI_EXC` (exceptions; `all` with interrupts),
   `AMI_EXCSTOP=<vector>[:<frame>]` (stop at that exception, as `AMI_STOP`),
   `AMI_DEBUG=<port>` (the debugger, real time), `AMI_DF0`/`AMI_DF1` (ADF
   images: they get written, use copies), `AMI_INSERT=<frame>:<drive>:<adf>

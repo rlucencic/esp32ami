@@ -25,6 +25,10 @@
  * are counted otherwise (the slots, below).
  */
 #include <string.h>
+#ifndef ESP_PLATFORM
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 #include "m68k.h"
 #include "amiga_internal.h"
 
@@ -755,8 +759,46 @@ unsigned int m68k_read_pcrelative_32(unsigned int a)
     return m68k_read_memory_32(a & 0xFFFFFF);
 }
 
+#ifndef ESP_PLATFORM
+/* Host: AMI_WATCH=<addr hex>[:<frame>] stops on a CPU write that covers
+ * that address (All New World of Lemmings' overwritten OS hook). The
+ * board build has no getenv here.
+ */
+static int s_watch_ready;
+static uint32_t s_watch_addr, s_watch_after;
+
+void mem_watch_reload(void)
+{
+    s_watch_ready = 0;
+}
+
+static void watch_write(uint32_t a, int bytes, uint32_t v)
+{
+    if (!s_watch_ready) {
+        const char *e = getenv("AMI_WATCH");
+        s_watch_addr = e ? (uint32_t)strtoul(e, NULL, 16) : 0;
+        s_watch_after = (e && strchr(e, ':')) ? (uint32_t)atoi(strchr(e, ':') + 1) : 0;
+        s_watch_ready = 1;
+    }
+    if (!s_watch_addr || ami.frames < s_watch_after) {
+        return;
+    }
+    uint32_t lo = a & 0xFFFFFF;
+    uint32_t hi = (lo + (uint32_t)bytes - 1) & 0xFFFFFF;
+    if (s_watch_addr < lo || s_watch_addr > hi) {
+        return;
+    }
+    extern void ami_host_watch_hit(uint32_t addr, int bytes, uint32_t value);
+    ami_host_watch_hit(lo, bytes, v);
+}
+#define WATCH_WRITE(a, n, v) watch_write((a), (n), (v))
+#else
+#define WATCH_WRITE(a, n, v) ((void)0)
+#endif
+
 void AMI_HOT m68k_write_memory_8(unsigned int a, unsigned int v)
 {
+    WATCH_WRITE(a, 1, v);
     uint32_t b = a >> 16;
     uint8_t *p = s_m.wmap[b];
     if (!s_m.cpu020) {
@@ -783,6 +825,7 @@ void AMI_HOT m68k_write_memory_8(unsigned int a, unsigned int v)
 
 void AMI_HOT m68k_write_memory_16(unsigned int a, unsigned int v)
 {
+    WATCH_WRITE(a, 2, v);
     uint32_t b = a >> 16;
     uint8_t *p = s_m.wmap[b];
     if (!s_m.cpu020) {
@@ -809,6 +852,7 @@ void AMI_HOT m68k_write_memory_16(unsigned int a, unsigned int v)
 
 void AMI_HOT m68k_write_memory_32(unsigned int a, unsigned int v)
 {
+    WATCH_WRITE(a, 4, v);
     uint32_t b = a >> 16;
     uint8_t *p = s_m.wmap[b];
     if (!s_m.cpu020) {
