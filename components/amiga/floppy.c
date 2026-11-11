@@ -855,28 +855,17 @@ static bool load_rp9(int drive, const char *path, int n, const rp9_t *r)
     if (stat(copy, &st) == 0 && st.st_size > 0 && load_file(drive, copy)) {
         return true;
     }
-    if (!buffers(drive, EXT_MAX)) {
-        return false;
-    }
-    uint32_t size = 0;
-    if (!rp9_member(path, r->disk[n], d->data, EXT_MAX, &size)) {
+    /* Stream out of the ZIP like hard-disk RP9s: a one-shot inflate of a
+     * ~2 MB extended ADF needs another ~1 MB for the packed bytes next to
+     * the image buffer and fails when PSRAM is tight (Son Shu Shi). */
+    if (!rp9_extract(path, r->disk[n], copy)) {
         AMI_LOGW("DF%d: %s: no %s in it", drive, path, r->disk[n]);
-        d->data = NULL;
         return false;
     }
-    d->size = size;
-    FILE *f = fopen(copy, "wb");
-    bool saved = f && fwrite(d->data, 1, size, f) == size;
-    if (f) {
-        fclose(f);
-    }
-    if (saved) {
-        return take(drive, copy, false);
-    }
-    if (!take(drive, copy, true)) {     /* (kept in memory only: write protected) */
+    if (!load_file(drive, copy)) {
+        remove(copy);
         return false;
     }
-    d->path[0] = 0;
     return true;
 }
 

@@ -116,8 +116,12 @@ Nothing here can be done as things are; each says what it waits for.
   ~100%/45%, Kid Pool title ~100%/55%, F1 GP ~100%/52–71%, Toobin
   ~100%/55–69%, Arkanoid ~100%/65%, Lure ~100%/50%, X-Balls ~99%/84–85%
   (hottest; profile idle 4.9%, `m68k_read_memory_16` 15%, `display_fetch`
-  9%, `bus_take` 8%). None fell behind; assembler still waits on a title
-  that does. Son Shu Shi's RP9 refused insert ("Not a disk image").
+  9%, `bus_take` 8%).   None fell behind; assembler still waits on a title
+  that does. Son Shu Shi's RP9 insert failed on the Tab5
+  (`no sonshushi1.adf in it`: one-shot inflate of a ~2 MB
+  extended ADF next to the image buffer when PSRAM was tight);
+  floppy RP9s now stream via `rp9_extract` like hard-disk ones
+  (2026-11-11, checked on the Tab5: disk 1 of 2).
 - Sprites on lines inside the window without bitplanes: Denise (WinUAE)
   wants a BPL1DAT write on a line before showing them; here they show.
   Needs a game or a test on a real Amiga that shows the difference.
