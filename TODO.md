@@ -16,42 +16,42 @@ Why: found running the user's demos and game ADFs with `tools/smoke.py`
 Check each with `smoke.py` on its folder (`ONLY=<name>`) and the
 collection for the rest. Roughly a session each, in this order:
 
-- Under Pressure (A1200 demo), paused 2026-10-24 at the user's request
-  (RP9 / `build/underpressure-20261024/` not on this machine today):
-  reproduced on `3db07b0`, with its RP9's A1200, Kickstart 3.1, 2 MB
-  chip + 8 MB fast RAM, no input and `AMI_TIME=1729641600`. Previous
-  observation: fails with chip waits of 7-8 clocks, works at 5; the cause
-  is still unproven. Its manifest requests a maximum-speed 68020.
-  The first trapped negative starting Y is at frame 4553: entry to the
-  software line drawer `$23F25C`, endpoints (60,-3) and (57,28), buffer
-  A2 `$31A7D8`. At `$23F268`, `mulu.w D5,D1` treats a negative Y as
-  unsigned, producing an address far beyond the buffer. At frame 4628,
-  line 165, `st (A0)` at `$23F28A` writes through A0 `$D1AF00`, a custom
-  mirror, setting BPLCON0 to `$FFFF`; exception 3 follows at frame 5462.
-  Next: trace the projected coordinates produced by `$23F29C` into
-  `$5FA89C` (source `$30AC0C`, called at `$23CB8A`), then drawn by the
-  call at `$23CB9C`. Establish why they leave the screen: geometry or
-  instruction behavior, missed timing/scene transition, or the demo's
-  CPU-speed assumption. No blitter/copper/VBL race has been established;
-  do not lower the global wait just to hide it.
-  Local evidence: `build/underpressure-20261024/` contains `old.log`,
-  `bad.log`/`bad.bin` (16 MB dump), `probe.log` (first negative Y),
-  `stop.log`, pictures, copied RP9/system disks, and temporary instrumented
-  sources/binaries. No emulator source was changed. Reproduce with
-  `AMI_HD0="$PWD/build/underpressure-20261024/title.rp9" AMI_TIME=1729641600
-  AMI_EXCSTOP=3:400 components/amiga/host/build/ami_host roms 5500
-  build/underpressure-20261024/repro.ppm` (join onto one shell line;
-  always run from a copy of the disks).
+- Under Pressure (A1200 demo): reproduced 2026-11-11 from Aminet
+  `DKG-UnderP.lha` (exe on a bootable 32 MB HDF;
+  `build/todo10-2026-11-11/`), A1200, Kickstart 3.1, 2 MB chip + 8 MB
+  fast, `AMI_TIME=1729641600`. Same failure class as the 2026-10-24 RP9
+  run (addresses differ by load). Soft line drawer `$224a54`:
+  `mulu.w D5,D1` with pitch `$A0` treats a negative start Y as unsigned;
+  `st (A0)` at `$224a82` then writes `$FF` into a custom mirror
+  (`$CFFxxx` / `$D00xxx` → BPLCON0 `$FFFF` via the byte-duplicating
+  custom path). First negative Y at frame 9681 (endpoints (60,-3) /
+  (57,28)); smash at 9748 with Y=-7; INTREQ floods `$5FDF` and the run
+  hangs in 9750. Projection `$224ae2` writes screen verts to `$5E0094`
+  (center constants at `$224B54` = 60,30); edge list `$2F0438`; draw
+  `$222386` → `$224A2E` has no clip.   WAIT_CHIP 5 still produces neg Y
+  and the BPLCON0 smash (only the frame numbers move): do not lower the
+  global wait.   Angles+Z at `$2EFD3E` → sine table `$2EF33C` → D5/D6; center at
+  `$224B54` is animated (`$226274`). At frame 9748 both angles are
+  `$02A8` so D5==D6 is a real pose, not register corruption. Next:
+  compare the `$2EFD3E` angle/Z track (and `$224B54` center) to WinUAE
+  at the same `AMI_TIME`; if they match, the smash is the demo's missing
+  clip under that pose. Also check the `$224880` blend that runs just
+  before project.
+  Host probes: `AMI_NEGY=224a60`, `AMI_PROJ=224b3e`,
+  `AMI_PROJENTRY=224ae2`, `AMI_LOGFROM`. Work folder
+  `build/todo10-2026-11-11/`; older RP9 dumps may still be in
+  `build/underpressure-20261024/` when that tree is present.
 - All New World of Lemmings (AGA crack, no fast RAM): an OS hook at
   $C6720 gets overwritten, then a jump through it every ~14 frames once
   Space is pressed at the title. Find the writer with
   `AMI_WATCH=C6720` (host; optional `:<frame>`), then whether a real
   A1200 without fast RAM would do the same. Needs the title's disk
   (not in the 96-game RP9 set on this machine).
-- Killer (A1200, marked for a JIT): quits at once. Check whether it
-  wants a 68030 or an FPU (out of scope then).
+- Killer (A1200): out of scope. Aminet `CNCD_Killer.readme`: needs at
+  least a 68040/25 MHz (fun on a 68060). Our 68EC020 will not run it.
 - Pango Fun (a beta): a Guru on every machine; see whether the beta is
   just broken (another dump, WinUAE's behaviour described anywhere).
+  Needs the title's disk.
 
 ## 9. Waiting on something
 

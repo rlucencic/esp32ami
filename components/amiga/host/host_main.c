@@ -13,10 +13,14 @@
  * AMI_NTSC, AMI_SERIAL (print what's sent on the serial port), AMI_EXT=<rom>
  * (AROS's extension ROM at $E00000),
  * AMI_SHOTS=<n> (a picture every n frames, <out>-<frame>.ppm), AMI_LOG=<n>
- * (the machine's state every n frames), AMI_RING=<n> (the last n
- * instructions at the end), AMI_STOP=<pc>[:<frame>], AMI_TRACE=<pc>:<n>,
+ * (the machine's state every n frames), AMI_LOGFROM=<frame> (every frame
+ * from there), AMI_RING=<n> (the last n instructions at the end),
+ * AMI_STOP=<pc>[:<frame>], AMI_TRACE=<pc>:<n>,
  * AMI_WATCH=<addr hex>[:<frame>] (stop on a CPU write that covers the
- * address, as AMI_STOP), AMI_DIS=<addr hex>:<n> (disassemble and stop),
+ * address, as AMI_STOP), AMI_NEGY=<pc> (log each visit where D1.w < 0),
+ * AMI_PROJ=<pc> (log projected x,y outside 0..319/0..255),
+ * AMI_PROJENTRY=<pc> (log D5/D6/A2 once a frame at projection entry),
+ * AMI_DIS=<addr hex>:<n> (disassemble and stop),
  * AMI_EXC (exceptions other than interrupts; "all" with them),
  * AMI_EXCSTOP=<vector>[:<frame>] (stop at that exception, as AMI_STOP), AMI_LOGREGS
  * (AMI_LOG's lines with the display's registers),
@@ -68,9 +72,16 @@ static void show_ring(int n)
     }
 }
 
-/* The last instructions and the registers, then the end */
+/* The last instructions and the registers, then the end.
+ * Re-entry (disassemble reading memory that faults into AMI_EXCSTOP) just exits.
+ */
 static void stop_here(void)
 {
+    static int stopping;
+    if (stopping) {
+        exit(0);
+    }
+    stopping = 1;
     show_ring(60);
     printf("D0-7:");
     for (int r = M68K_REG_D0; r <= M68K_REG_D7; r++) {
@@ -112,6 +123,101 @@ void m68k_host_instruction(unsigned int pc)
         stop_here();
     }
 
+    /* AMI_NEGY=<pc>: log each visit where D1.w is negative (Under Pressure
+     * line drawer's mulu.w D5,D1 treats Y unsigned). */
+    static uint32_t negy_pc = 1;
+    if (negy_pc == 1) {
+        const char *e = getenv("AMI_NEGY");
+        negy_pc = e ? strtoul(e, NULL, 16) : 0;
+    }
+    if (negy_pc && pc == negy_pc) {
+        uint32_t d1 = m68k_get_reg(NULL, M68K_REG_D1);
+        if ((int16_t)(d1 & 0xFFFF) < 0) {
+            static int negy_n;
+            uint32_t a1 = m68k_get_reg(NULL, M68K_REG_A1) & 0xFFFFFF;
+            uint32_t a5 = m68k_get_reg(NULL, M68K_REG_A5) & 0xFFFFFF;
+            printf("-- neg Y at $%06x frame %lu: D0=%d D1=%d D2=%d D3=%d "
+                   "A0 $%06x A1 $%06x A2 $%06x A5 $%06x center %d,%d\n",
+                   pc, (unsigned long)s_frame,
+                   (int16_t)(m68k_get_reg(NULL, M68K_REG_D0) & 0xFFFF),
+                   (int16_t)(d1 & 0xFFFF),
+                   (int16_t)(m68k_get_reg(NULL, M68K_REG_D2) & 0xFFFF),
+                   (int16_t)(m68k_get_reg(NULL, M68K_REG_D3) & 0xFFFF),
+                   m68k_get_reg(NULL, M68K_REG_A0) & 0xFFFFFF,
+                   a1,
+                   m68k_get_reg(NULL, M68K_REG_A2) & 0xFFFFFF,
+                   a5,
+                   (int16_t)amiga_peek16(a5),
+                   (int16_t)amiga_peek16(a5 + 2));
+            if (negy_n++ == 0) {
+                unsigned int x = 0x224a2e;
+                printf("-- draw entry disasm:\n");
+                for (int i = 0; i < 36; i++) {
+                    char buf[128];
+                    unsigned int n = m68k_disassemble(buf, x, m68k_get_reg(NULL, M68K_REG_CPU_TYPE));
+                    printf("  $%06x  %s\n", x, buf);
+                    x += n;
+                }
+                printf("-- edges @ $2f0438:");
+                for (int i = 0; i < 16; i++) {
+                    printf(" %04x", amiga_peek16(0x2f0438 + i * 2));
+                }
+                printf("\n-- center words @ $224b54: %d,%d\n",
+                       (int16_t)amiga_peek16(0x224b54),
+                       (int16_t)amiga_peek16(0x224b56));
+                printf("-- A3 verts @ $5e0094 (x,y):");
+                for (int i = 0; i < 12; i++) {
+                    uint32_t v = 0x5e0094 + i * 6;
+                    printf(" (%d,%d)",
+                           (int16_t)amiga_peek16(v),
+                           (int16_t)amiga_peek16(v + 2));
+                }
+                printf("\n");
+            }
+            fflush(stdout);
+        }
+    }
+
+    /* AMI_PROJ=<pc>: log screen-center A5 and projected x,y after add (Under Pressure).
+     * Use the store PC ($224b3e). AMI_PROJENTRY=<pc> logs matrix/Z once a frame
+     * at the projection loop entry ($224ae2). */
+    static uint32_t proj_pc = 1, proj_entry = 1;
+    if (proj_pc == 1) {
+        const char *e = getenv("AMI_PROJ");
+        proj_pc = e ? strtoul(e, NULL, 16) : 0;
+        e = getenv("AMI_PROJENTRY");
+        proj_entry = e ? strtoul(e, NULL, 16) : 0;
+    }
+    if (proj_entry && pc == proj_entry) {
+        static uint32_t last_frame = ~0u;
+        if (s_frame != last_frame && s_frame >= 9670 && s_frame <= 9750) {
+            last_frame = (uint32_t)s_frame;
+            printf("-- proj entry frame %lu: D5 %08x D6 %08x A2 %06x A0 %06x A1 %06x A4 %06x A5 %06x\n",
+                   (unsigned long)s_frame,
+                   m68k_get_reg(NULL, M68K_REG_D5),
+                   m68k_get_reg(NULL, M68K_REG_D6),
+                   m68k_get_reg(NULL, M68K_REG_A2) & 0xFFFFFF,
+                   m68k_get_reg(NULL, M68K_REG_A0) & 0xFFFFFF,
+                   m68k_get_reg(NULL, M68K_REG_A1) & 0xFFFFFF,
+                   m68k_get_reg(NULL, M68K_REG_A4) & 0xFFFFFF,
+                   m68k_get_reg(NULL, M68K_REG_A5) & 0xFFFFFF);
+            fflush(stdout);
+        }
+    }
+    if (proj_pc && pc == proj_pc) {
+        int16_t x = (int16_t)(m68k_get_reg(NULL, M68K_REG_D0) & 0xFFFF);
+        int16_t y = (int16_t)(m68k_get_reg(NULL, M68K_REG_D1) & 0xFFFF);
+        if (y < 0 || y > 255 || x < 0 || x > 319) {
+            uint32_t a5 = m68k_get_reg(NULL, M68K_REG_A5) & 0xFFFFFF;
+            printf("-- proj out at $%06x frame %lu: x=%d y=%d center %d,%d "
+                   "A1 $%06x A5 $%06x\n",
+                   pc, (unsigned long)s_frame, x, y,
+                   (int16_t)amiga_peek16(a5), (int16_t)amiga_peek16(a5 + 2),
+                   m68k_get_reg(NULL, M68K_REG_A1) & 0xFFFFFF, a5);
+            fflush(stdout);
+        }
+    }
+
     static uint32_t trace_pc = 1;
     static int trace_n, trace_left;
     if (trace_pc == 1) {
@@ -141,10 +247,21 @@ static void exception(unsigned int vector)
         }
     }
     if (stop_vector && vector == stop_vector && s_frame >= stop_after) {
-        printf("-- exception %u at PC $%06x (frame %lu), SR %04x, after:\n", vector,
+        /* Regs only: show_ring() can re-enter here via a faulting disassemble. */
+        printf("-- exception %u at PC $%06x (frame %lu), SR %04x\n", vector,
                m68k_get_reg(NULL, M68K_REG_PPC) & 0xFFFFFF, (unsigned long)s_frame,
                m68k_get_reg(NULL, M68K_REG_SR));
-        stop_here();
+        printf("D0-7:");
+        for (int r = M68K_REG_D0; r <= M68K_REG_D7; r++) {
+            printf(" %08x", m68k_get_reg(NULL, r));
+        }
+        printf("\nA0-7:");
+        for (int r = M68K_REG_A0; r <= M68K_REG_A7; r++) {
+            printf(" %08x", m68k_get_reg(NULL, r));
+        }
+        printf("\n");
+        fflush(stdout);
+        exit(0);
     }
     if (mode == 0 || (mode == 1 && vector >= 24 && vector < 32)) {
         return;
@@ -460,6 +577,22 @@ int main(int argc, char **argv)
                 char regs[200];
                 amiga_display_regs(regs, sizeof(regs));
                 printf("   %s\n", regs);
+            }
+        }
+        /* AMI_LOGFROM=<frame>: log every frame from there (Under Pressure cliff). */
+        {
+            static int log_from = -1;
+            if (log_from < 0) {
+                const char *e = getenv("AMI_LOGFROM");
+                log_from = e ? atoi(e) : 0;
+            }
+            if (log_from && (int)s_frame >= log_from) {
+                amiga_status_t st;
+                amiga_get_status(&st);
+                printf("-- frame %lu: PC $%06lx SR %04x INTENA %04x INTREQ %04x DMACON %04x%s\n",
+                       (unsigned long)st.frames, (unsigned long)st.pc, st.sr, st.intena, st.intreq,
+                       st.dmacon, st.halted ? " HALTED" : "");
+                fflush(stdout);
             }
         }
         if (shots && (s_frame + 1) % shots == 0) {
