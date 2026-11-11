@@ -20,6 +20,7 @@
  * address, as AMI_STOP), AMI_NEGY=<pc> (log each visit where D1.w < 0),
  * AMI_PROJ=<pc> (log projected x,y outside 0..319/0..255),
  * AMI_PROJENTRY=<pc> (log D5/D6/A2 once a frame at projection entry),
+ * AMI_ANG=<addr> (with PROJENTRY: peek angle/Z words there), AMI_PROJFROM/TO,
  * AMI_DIS=<addr hex>:<n> (disassemble and stop),
  * AMI_EXC (exceptions other than interrupts; "all" with them),
  * AMI_EXCSTOP=<vector>[:<frame>] (stop at that exception, as AMI_STOP), AMI_LOGREGS
@@ -190,17 +191,33 @@ void m68k_host_instruction(unsigned int pc)
     }
     if (proj_entry && pc == proj_entry) {
         static uint32_t last_frame = ~0u;
-        if (s_frame != last_frame && s_frame >= 9670 && s_frame <= 9750) {
+        static uint32_t ang_base = 1;
+        static int from_frame, to_frame;
+        if (ang_base == 1) {
+            const char *e = getenv("AMI_ANG");
+            ang_base = e ? strtoul(e, NULL, 16) : 0;
+            e = getenv("AMI_PROJFROM");
+            from_frame = e ? atoi(e) : 0;
+            e = getenv("AMI_PROJTO");
+            to_frame = e ? atoi(e) : 0;
+        }
+        if (s_frame != last_frame &&
+            (!from_frame || (int)s_frame >= from_frame) &&
+            (!to_frame || (int)s_frame <= to_frame)) {
             last_frame = (uint32_t)s_frame;
-            printf("-- proj entry frame %lu: D5 %08x D6 %08x A2 %06x A0 %06x A1 %06x A4 %06x A5 %06x\n",
+            printf("-- proj entry frame %lu: D5 %08x D6 %08x A2 %06x",
                    (unsigned long)s_frame,
                    m68k_get_reg(NULL, M68K_REG_D5),
                    m68k_get_reg(NULL, M68K_REG_D6),
-                   m68k_get_reg(NULL, M68K_REG_A2) & 0xFFFFFF,
-                   m68k_get_reg(NULL, M68K_REG_A0) & 0xFFFFFF,
-                   m68k_get_reg(NULL, M68K_REG_A1) & 0xFFFFFF,
-                   m68k_get_reg(NULL, M68K_REG_A4) & 0xFFFFFF,
-                   m68k_get_reg(NULL, M68K_REG_A5) & 0xFFFFFF);
+                   m68k_get_reg(NULL, M68K_REG_A2) & 0xFFFFFF);
+            if (ang_base) {
+                printf(" ang %04x %04x Z %04x center %d,%d",
+                       amiga_peek16(ang_base), amiga_peek16(ang_base + 2),
+                       amiga_peek16(ang_base + 4),
+                       (int16_t)amiga_peek16(0x224b54),
+                       (int16_t)amiga_peek16(0x224b56));
+            }
+            printf("\n");
             fflush(stdout);
         }
     }

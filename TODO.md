@@ -28,19 +28,25 @@ collection for the rest. Roughly a session each, in this order:
   (57,28)); smash at 9748 with Y=-7; INTREQ floods `$5FDF` and the run
   hangs in 9750. Projection `$224ae2` writes screen verts to `$5E0094`
   (center constants at `$224B54` = 60,30); edge list `$2F0438`; draw
-  `$222386` → `$224A2E` has no clip.   WAIT_CHIP 5 still produces neg Y
+  `$222386` → `$224A2E` has no clip. WAIT_CHIP 5 still produces neg Y
   and the BPLCON0 smash (only the frame numbers move): do not lower the
-  global wait.   Angles+Z at `$2EFD3E` → sine table `$2EF33C` → D5/D6; center at
-  `$224B54` is animated (`$226274`). At frame 9748 both angles are
-  `$02A8` so D5==D6 is a real pose, not register corruption. Next:
-  compare the `$2EFD3E` angle/Z track (and `$224B54` center) to WinUAE
-  at the same `AMI_TIME`; if they match, the smash is the demo's missing
-  clip under that pose. Also check the `$224880` blend that runs just
-  before project.
+  global wait. Angles+Z at `$2EFD3E` → sine table `$2EF33C` → D5/D6;
+  center at `$224B54` is animated (`$226274`). At frame 9748 both angles
+  are `$b518` so D5==D6 is a real pose, not register corruption. The
+  `$224880` blend is only a framebuffer fade (`move.l (A0)+,D0` /
+  `dbra`), not the angles. `$8b46` at `$21ff3c` is PACK D6,D5,#0
+  (68020; in the exe after `lsr.l #8,D5`), not OR/illegal — Musashi
+  runs it; the host disassembler still prints ILLEGAL. Angle/center
+  advance is CPU-wait sensitive (WAIT 5 reaches the same poses ~60
+  frames earlier) but the smash class is unchanged. WinUAE is not on
+  this host: next, deepen why that pose's projected edges go negative
+  (script vs VERTB timing, or a clip path skipped) without changing
+  WAIT_CHIP.
   Host probes: `AMI_NEGY=224a60`, `AMI_PROJ=224b3e`,
-  `AMI_PROJENTRY=224ae2`, `AMI_LOGFROM`. Work folder
-  `build/todo10-2026-11-11/`; older RP9 dumps may still be in
-  `build/underpressure-20261024/` when that tree is present.
+  `AMI_PROJENTRY=224ae2`, `AMI_ANG=2efd3e`, `AMI_PROJFROM`/`TO`,
+  `AMI_LOGFROM`. Work folder `build/todo10-2026-11-11/`; older RP9
+  dumps may still be in `build/underpressure-20261024/` when that tree
+  is present.
 - All New World of Lemmings (AGA crack, no fast RAM): an OS hook at
   $C6720 gets overwritten, then a jump through it every ~14 frames once
   Space is pressed at the title. Find the writer with
