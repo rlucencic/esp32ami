@@ -188,7 +188,8 @@ images.
   Pool's title from 94% speed to 100%
   (`docs/bus-cycle-experiment-2026-11-10.md`). The 68EC020 keeps its averages
   (`ami.stall`: `SLOT_WAIT` a slot for the copper and the blitter).
-  SysInfo 4.4: 1.03 times a real A600 (chip and slow RAM), its chip speed
+  SysInfo 4.4: 1.00 times a real A600 (chip and slow RAM; 1.03 before the
+  prefetch, 534 Dhrystones, measured again 2026-11-15), its chip speed
   1.12; xSysInfo 0.12: 1.06, chip RAM 2.19 MB/s (the averages before:
   1.00 and 1.09, chip speed 1.16 and 2.26 MB/s; bare Musashi was 1.46).
   The same on the Tab5 (core 1 25% in SysInfo); the host ~23% slower.
@@ -1014,7 +1015,7 @@ the top two bits do nothing, Aerial Racers' race sets them),
   local mock with example data, halved).
 - Phases 4-7 (`docs/architecture.md`): games (phase 4's blitter timing
   per slot: done, `TODO.md` 2), the A1200's rest (phase 7, below). The
-  68000's bus is slot by slot now (`TODO.md` 3: SysInfo 1.03, xSysInfo
+  68000's bus is slot by slot now (`TODO.md` 3: SysInfo 1.00, xSysInfo
   1.06); the rest would need where an instruction's bus cycles fall.
 - AROS (the setup screen's Kickstart "AROS", every model): its ROM at
   $F80000 and its extension ROM at $E00000 (`amiga_config_t.extension`,

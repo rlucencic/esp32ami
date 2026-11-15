@@ -97,8 +97,8 @@ Nothing here can be done as things are; each says what it waits for.
 - The clock's saved offset keeps a clock set while the board's time was
   wrong (unlikely with the Tab5's RTC): a remark, nothing to do.
 - The 68000's bus cycles where a real one has them: the slot model takes
-  an instruction's back to back from its start (SysInfo 1.03, xSysInfo
-  1.06 times an A600); 1.00 needs each bus cycle's place in the
+  an instruction's back to back from its start (SysInfo 1.00, xSysInfo
+  1.06 times an A600); xSysInfo's 1.00 needs each bus cycle's place in the
   instruction (a bus-cycle 68000 core, not Musashi): a project of its
   own. Then the 2 clocks a 68000 on an odd colour clock waits could come
   back (`mem.c`: they made two loaders fail with the back-to-back cycles).

@@ -66,8 +66,8 @@ all are built on the shared runtime
 **The machine**
 - **68000** at 7.09 MHz (7.16 MHz in NTSC), timed on the Amiga's chip bus:
   its memory accesses fall on the bus's slots and wait for the chips' DMA,
-  except when it runs from fast RAM or the ROM. SysInfo and xSysInfo
-  measure 1.00 times an A600 in chip RAM and a B2000 in fast RAM
+  except when it runs from fast RAM or the ROM. SysInfo measures 1.00
+  times an A600 in chip RAM (xSysInfo 1.06) and a B2000 in fast RAM
 - **68EC020** at 14.19 MHz for the A1200 with its 256-byte instruction
   cache, waiting for the chip bus on each access to chip RAM and the
   chips: SysInfo measures 1.04 times an A1200 and 14.6 MHz
@@ -344,7 +344,7 @@ lessons learned along the way.
 - The 68000 waits for the chip bus slot by slot (the DMA's even slots
   in each line), but its bus cycles are taken back to back from each
   instruction's start, not where a real 68000 has them: SysInfo and
-  xSysInfo give 1.03 and 1.06 times an A600. The blitter gets the slots
+  xSysInfo give 1.00 and 1.06 times an A600. The blitter gets the slots
   each line's display leaves it, counted a line at a time. Demos that
   count on exact bus cycles may show it.
 - No IPF (SPS) images. DMS archives in the
