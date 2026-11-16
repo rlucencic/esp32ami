@@ -8,7 +8,7 @@ the 68000 and the custom chips together. Plan and decisions: `docs/architecture.
 Progress there). **What's next: `TODO.md`**, the remaining work sketched
 and in order; asked "what's next", name its first item.
 ESP-IDF
-v5.5.4, C.
+v5.5.6, C.
 
 The board side (tasks, LCD, touch, SD, WiFi, BLE, setup screen, web page,
 console) and the 68000 core (Musashi) are the shared library in
@@ -28,7 +28,7 @@ the Tab5's settings from `../esp32emu` go on top.
 
 ```sh
 bash -c '. $IDF_PATH/export.sh >/dev/null 2>&1; \
-  export IDF_PYTHON_ENV_PATH=/Users/robertlucencic/.espressif/tools/python/v5.5.4/venv; \
+  export IDF_PYTHON_ENV_PATH=/Users/robertlucencic/.espressif/tools/python/v5.5.6/venv; \
   export PATH=$IDF_PYTHON_ENV_PATH/bin:$PATH; \
   idf.py -B build-tab5 -DIDF_TARGET=esp32p4 -DSDKCONFIG=$PWD/build-tab5/sdkconfig build && \
   idf.py -B build-tab5 -DIDF_TARGET=esp32p4 -DSDKCONFIG=$PWD/build-tab5/sdkconfig -p /dev/cu.usbmodem3101 flash'

@@ -165,7 +165,7 @@ isn't supported: its ESP32-S3 hasn't the speed for the Amiga's chipset.
 
 ### 1. What you need
 
-- [ESP-IDF](https://github.com/espressif/esp-idf) v5.5 (developed with v5.5.4)
+- [ESP-IDF](https://github.com/espressif/esp-idf) v5.5 (developed with v5.5.6)
 - [esp32emu](https://github.com/rlucencic/esp32emu), checked out next to this project (`../esp32emu`)
 - Kickstart ROM images, which are copyrighted and **not included**, under
   FS-UAE's names in `roms/` (see [roms/README.md](roms/README.md)), e.g.
