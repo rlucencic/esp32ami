@@ -185,8 +185,9 @@ idf.py -B build-tab5 -DIDF_TARGET=esp32p4 -DSDKCONFIG=build-tab5/sdkconfig -p /d
 ```
 
 Later updates only need `app-flash` instead of `flash`. Instead of flashing
-the ROMs, you can also copy them into a `roms` folder on the SD card. The
-Tab5 is the only target: a build for any other stops with a message.
+the ROMs, you can also copy them into the `amiga/roms` folder on the SD
+card. The Tab5 is the only target: a build for any other stops with a
+message.
 
 ### 3. First start
 
@@ -194,7 +195,7 @@ Tab5 is the only target: a build for any other stops with a message.
    network: the clock is set from the internet, and the web page becomes
    reachable.
 2. Open `http://amiga.local` and drop disk images onto the page, then
-   choose **Insert into… → DF0:**. (Or copy them into the `floppies`
+   choose **Insert into… → DF0:**. (Or copy them into the `amiga`
    folder of the SD card.)
 3. Tap **Bluetooth** to pair a keyboard and mouse (optional: the touch
    screen is a touchpad too).
@@ -220,7 +221,10 @@ Tab5 is the only target: a build for any other stops with a message.
 | Copy disk images from a computer | Drop them onto the web page (ZIP files and DMS archives are unpacked) |
 | …or from the command line | `curl -T Game.adf http://amiga.local/disks/` |
 
-Disk images live in the `floppies` folder on the SD card. The inserted
+Disk images live in the `amiga` folder on the SD card, the Amiga's own
+(until 2026-11-17 `floppies`, shared with the Atari ST and the Archimedes,
+and the ROMs in the card's `roms`: esp32emu's `tools/sd_folders.ps1 E:\`
+moves an older card's files into each machine's folder). The inserted
 disks are remembered across restarts, and so are the settings and the
 clock.
 
@@ -253,7 +257,7 @@ flowchart LR
     BLE[Bluetooth HID · touch]
   end
   PSRAM[(PSRAM<br>chip, slow, fast RAM · ROM)]
-  SD[(microSD<br>floppies/)]
+  SD[(microSD<br>amiga/)]
   EMU <--> PSRAM
   EMU -- line records --> PRES
   PRES --> LCD[1280×720 panel]

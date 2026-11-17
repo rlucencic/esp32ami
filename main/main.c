@@ -81,7 +81,7 @@ static bool start(void)
             "Kickstart 3.1 (40.68) for the A1200",
         };
         snprintf(text, sizeof(text),
-                 "No %s: put it in roms/ and flash with idf.py flash, or copy it into the \"roms\" folder "
+                 "No %s: put it in roms/ and flash with idf.py flash, or copy it into the \"amiga/roms\" folder "
                  "on the SD card.", names[settings.kick]);
         emu_set_message(text);
         return false;
@@ -658,7 +658,7 @@ static void disk_removed(const char *path)
 }
 
 static const disks_config_t disks = {
-    .folder = "floppies",
+    .folder = "amiga",
     .extensions = extensions,
     .description = "Disk images (.ADF, .HDF) and Amiga Forever games (.RP9)",
     .title = "Disks",

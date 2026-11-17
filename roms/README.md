@@ -16,6 +16,6 @@ names are the ones in those sets:
 | `aros-20250422.rom`, `aros-20250422-ext.rom` | AROS (free; the setup screen's Kickstart "AROS", with its extension ROM at $E00000) | 512 KB each | `kick_aros`, `kick_aros_ext` |
 
 `idf.py flash` writes them to their partitions. Without flashing, the
-emulator also finds them in a `roms` folder on the SD card, under any file
-name (by the version in them). Amiga Forever's encrypted images (with
+emulator also finds them in the `amiga/roms` folder on the SD card, under
+any file name (by the version in them). Amiga Forever's encrypted images (with
 `rom.key`) need decrypting first.

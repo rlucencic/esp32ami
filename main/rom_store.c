@@ -8,7 +8,7 @@
 #include "rom_store.h"
 
 #define ROM_PARTITION_TYPE  0x40
-#define ROM_FOLDER          SDCARD_MOUNT_POINT "/roms"
+#define ROM_FOLDER          SDCARD_MOUNT_POINT "/amiga/roms"
 #define EXT_SIZE            (512 * 1024)
 
 static const char *TAG = "rom";
@@ -66,7 +66,7 @@ static bool from_partition(kick_t kick, bool ext, uint8_t *buf)
     return is_rom(kick, ext, buf, size);
 }
 
-/* Any file in the SD card's "roms" folder with that version */
+/* Any file in the SD card's "amiga/roms" folder with that version */
 static bool from_sd(kick_t kick, bool ext, uint8_t *buf)
 {
     DIR *dir = opendir(ROM_FOLDER);

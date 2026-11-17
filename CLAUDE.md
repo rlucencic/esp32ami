@@ -46,9 +46,11 @@ bash -c '. $IDF_PATH/export.sh >/dev/null 2>&1; \
   in seconds),
   its drives `amifloppy`.
 - Disk images: `.adf`, `.hdf` and Amiga Forever's `.rp9` games in the SD
-  card's `floppies/` folder (shared with esp32arc: its 800 KB ADFS images
-  are refused by size; its hard disks are `.hdf` too:
-  leave them). Drives DF0:, DF1: (ADFs, RP9s with floppies; the API's 1,
+  card's `amiga/` folder, the Amiga's own; Kickstarts in `amiga/roms/`.
+  Until 2026-11-17 `floppies/`, shared with esp32arc (its 800 KB ADFS
+  images refused by size, its hard disks `.hdf` too) and esp32ste, and the
+  card's `roms/`: esp32emu's `tools/sd_folders.ps1` moves an old card's
+  files. Drives DF0:, DF1: (ADFs, RP9s with floppies; the API's 1,
   2) and DH0:, DH1: (HDFs, RP9s with a hard disk; 3, 4). Uploads up to
   256 MB.
   Blank disks: 880 KB floppies, 20, 50 or 100 MB hard disks (an RDB with
@@ -104,7 +106,7 @@ images.
 | Path | What |
 |---|---|
 | `main/main.c` | The Amiga as an `emu_machine_t`: memory, start, setup rows, drives (DF0:, DF1:, written tracks to the card), the clock's offset, key map, mouse, joystick keys, the touchpad (super-hires pixels halved), sound, status, console |
-| `main/rom_store.c` | Kickstarts from their flash partitions, else files in the SD card's `roms/` with that version |
+| `main/rom_store.c` | Kickstarts from their flash partitions, else files in the SD card's `amiga/roms/` with that version |
 | `main/settings.c` | NVS `ami`, which Kickstart and RAM each model takes, its defaults (A2000: 1 MB chip, 2 MB fast) |
 | `components/amiga/` | The machine, platform independent (`include/amiga.h`) |
 | `components/amiga/host/` | Host build for testing on the Mac (see Testing) |
@@ -1019,7 +1021,7 @@ the top two bits do nothing, Aerial Racers' race sets them),
   1.06); the rest would need where an instruction's bus cycles fall.
 - AROS (the setup screen's Kickstart "AROS", every model): its ROM at
   $F80000 and its extension ROM at $E00000 (`amiga_config_t.extension`,
-  partitions `kick_aros`/`kick_aros_ext` or files in the card's roms/
+  partitions `kick_aros`/`kick_aros_ext` or files in the card's amiga/roms/
   that say "AROS ROM"/"AROS EXT" at $18). Boots to its "Waiting for
   bootable media" screen, the Workbench 3.1 floppy to its own Workbook
   1.0 (host and Tab5: 100%, core 1 25%), DH0: through Gayle (its ata

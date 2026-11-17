@@ -8,7 +8,7 @@
 
 /* Load Kickstart `kick` into buf (ROM_MAX_SIZE bytes): from its flash
  * partition (roms/README.md: written by idf.py flash), else from a file in
- * the SD card's "roms" folder with that version. Its size in *size, its
+ * the SD card's "amiga/roms" folder with that version. Its size in *size, its
  * name ("Kickstart 1.3 (34.5)") in *name.
  */
 bool rom_store_load(kick_t kick, uint8_t *buf, uint32_t *size, const char **name);
