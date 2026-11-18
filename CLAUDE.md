@@ -46,7 +46,8 @@ bash -c '. $IDF_PATH/export.sh >/dev/null 2>&1; \
   in seconds),
   its drives `amifloppy`.
 - Disk images: `.adf`, `.hdf` and Amiga Forever's `.rp9` games in the SD
-  card's `amiga/` folder, the Amiga's own; Kickstarts in `amiga/roms/`.
+  card's `amiga/` folder, the Amiga's own; a Kickstart in `amiga/roms/`
+  overrides the flashed one of its version (since 2026-11-18).
   Until 2026-11-17 `floppies/`, shared with esp32arc (its 800 KB ADFS
   images refused by size, its hard disks `.hdf` too) and esp32ste, and the
   card's `roms/`: esp32emu's `tools/sd_folders.ps1` moves an old card's
@@ -106,7 +107,7 @@ images.
 | Path | What |
 |---|---|
 | `main/main.c` | The Amiga as an `emu_machine_t`: memory, start, setup rows, drives (DF0:, DF1:, written tracks to the card), the clock's offset, key map, mouse, joystick keys, the touchpad (super-hires pixels halved), sound, status, console |
-| `main/rom_store.c` | Kickstarts from their flash partitions, else files in the SD card's `amiga/roms/` with that version |
+| `main/rom_store.c` | Kickstarts from their flash partitions, overridden by files in the SD card's `amiga/roms/` with that version |
 | `main/settings.c` | NVS `ami`, which Kickstart and RAM each model takes, its defaults (A2000: 1 MB chip, 2 MB fast) |
 | `components/amiga/` | The machine, platform independent (`include/amiga.h`) |
 | `components/amiga/host/` | Host build for testing on the Mac (see Testing) |
@@ -1021,11 +1022,11 @@ the top two bits do nothing, Aerial Racers' race sets them),
   1.06); the rest would need where an instruction's bus cycles fall.
 - AROS (the setup screen's Kickstart "AROS", every model): its ROM at
   $F80000 and its extension ROM at $E00000 (`amiga_config_t.extension`,
-  partitions `kick_aros`/`kick_aros_ext` or files in the card's amiga/roms/
-  that say "AROS ROM"/"AROS EXT" at $18). Boots to its "Waiting for
-  bootable media" screen, the Workbench 3.1 floppy to its own Workbook
-  1.0 (host and Tab5: 100%, core 1 25%), DH0: through Gayle (its ata
-  driver), DH1: through our board.
+  partitions `kick_aros`/`kick_aros_ext`, overridden by files in the
+  card's amiga/roms/ that say "AROS ROM"/"AROS EXT" at $18). Boots to its
+  "Waiting for bootable media" screen, the Workbench 3.1 floppy to its own
+  Workbook 1.0 (host and Tab5: 100%, core 1 25%), DH0: through Gayle (its
+  ata driver), DH1: through our board.
 - Assembler (RISC-V with the P4's PIE SIMD; this project is Tab5 only)
   for hot paths is wanted: `../esp32emu/CLAUDE.md`, "To do". Profiles on
   the Tab5 (`docs/architecture.md`, phase 6): Kick Off 2 scrolling at

@@ -15,7 +15,7 @@ names are the ones in those sets:
 | `amiga-os-310-a1200.rom` | 3.1 (40.68): A1200 | 512 KB | `kick_310_a1200` |
 | `aros-20250422.rom`, `aros-20250422-ext.rom` | AROS (free; the setup screen's Kickstart "AROS", with its extension ROM at $E00000) | 512 KB each | `kick_aros`, `kick_aros_ext` |
 
-`idf.py flash` writes them to their partitions. Without flashing, the
-emulator also finds them in the `amiga/roms` folder on the SD card, under
-any file name (by the version in them). Amiga Forever's encrypted images (with
+`idf.py flash` writes them to their partitions. A Kickstart in the
+`amiga/roms` folder on the SD card, under any file name, is used instead of
+the flashed one of the version in it. Amiga Forever's encrypted images (with
 `rom.key`) need decrypting first.

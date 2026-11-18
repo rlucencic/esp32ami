@@ -102,7 +102,8 @@ bool rom_store_load(kick_t kick, uint8_t *buf, uint32_t *size, const char **name
     if ((unsigned)kick >= KICK_COUNT) {
         return false;
     }
-    if (!from_partition(kick, false, buf) && !from_sd(kick, false, buf)) {
+    /* the card's overrides the built-in one */
+    if (!from_sd(kick, false, buf) && !from_partition(kick, false, buf)) {
         return false;
     }
     *size = s_kick[kick].size;
@@ -124,5 +125,5 @@ bool rom_store_has_extension(kick_t kick)
 
 bool rom_store_load_extension(kick_t kick, uint8_t *buf)
 {
-    return rom_store_has_extension(kick) && (from_partition(kick, true, buf) || from_sd(kick, true, buf));
+    return rom_store_has_extension(kick) && (from_sd(kick, true, buf) || from_partition(kick, true, buf));
 }

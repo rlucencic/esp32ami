@@ -81,8 +81,7 @@ static bool start(void)
             "Kickstart 3.1 (40.68) for the A1200",
         };
         snprintf(text, sizeof(text),
-                 "No %s: put it in roms/ and flash with idf.py flash, or copy it into the \"amiga/roms\" folder "
-                 "on the SD card.", names[settings.kick]);
+                 "No %s: put it in roms/ and flash with idf.py flash.", names[settings.kick]);
         emu_set_message(text);
         return false;
     }

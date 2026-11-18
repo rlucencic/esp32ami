@@ -184,10 +184,10 @@ idf.py -B build-tab5 -DIDF_TARGET=esp32p4 -DSDKCONFIG=build-tab5/sdkconfig build
 idf.py -B build-tab5 -DIDF_TARGET=esp32p4 -DSDKCONFIG=build-tab5/sdkconfig -p /dev/cu.usbmodem… flash   # app and the ROMs
 ```
 
-Later updates only need `app-flash` instead of `flash`. Instead of flashing
-the ROMs, you can also copy them into the `amiga/roms` folder on the SD
-card. The Tab5 is the only target: a build for any other stops with a
-message.
+Later updates only need `app-flash` instead of `flash`. A Kickstart copied
+into the `amiga/roms` folder on the SD card is used instead of the flashed
+one of its version. The Tab5 is the only target: a build for any other
+stops with a message.
 
 ### 3. First start
 
