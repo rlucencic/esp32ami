@@ -64,7 +64,17 @@ bash -c '. $IDF_PATH/export.sh >/dev/null 2>&1; \
   `curl -X PUT --data "disk.adf" http://amiga.local/api/drive/1` (2: DF1:).
 - `../esp32emu/tools/emu_console.py PORT log N | lcd F.png | send "cmd" | info`
   with the IDF venv's Python (`-I`). `curl http://amiga.local/api/status`
-  (`board.load`: the cores' busy %).
+  (`board.load`: the cores' busy %). The web page's machine card
+  (`status_rows()` in `main.c`, the core's read-only `amiga_get_chips()`,
+  `amiga_get_screen()`, `amiga_get_sound()`): System (CPU, clock, cache,
+  RAM), Kickstart (where from, where), Memory (the RAM's map now: OVL,
+  autoconfig's fast RAM), free RAM bars, Chipset (VPOSR's and DENISEID's IDs),
+  Screen (the latest frame's records: the mode most lines have, its size,
+  BPLCON0/FMODE, sprites, COP1LC), Palette (colours 0-31 as a 32 x 1 BMP:
+  as swatches they took ~500 of the reply's 4096 bytes), DMA, Interrupts,
+  Sound (Paula's channels, the LED's filter), Keyboard (Caps Lock, F12's
+  joystick), Expansions (our hard disk board, Gayle, the clock). Rows
+  ~1.0-1.2 KB (worst ~1.6 KB, ~2 KB with the drives' details).
 - Flashing restarts the board and ends the user's session: say so first.
 
 Console commands: the shared ones (`emu/console.h`) and the Amiga's

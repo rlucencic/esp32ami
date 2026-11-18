@@ -12,6 +12,8 @@
  * *size, its name ("Kickstart 1.3 (34.5)") in *name.
  */
 bool rom_store_load(kick_t kick, uint8_t *buf, uint32_t *size, const char **name);
+/* Where the last one loaded came from: "the flash", "the SD card" (NULL: none yet) */
+const char *rom_store_source(void);
 
 /* Its extension ROM (AROS's, for $E00000): 512 KB into buf, the same ways */
 bool rom_store_has_extension(kick_t kick);

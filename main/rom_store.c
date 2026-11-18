@@ -12,6 +12,7 @@
 #define EXT_SIZE            (512 * 1024)
 
 static const char *TAG = "rom";
+static const char *s_source;         /* where the last Kickstart came from */
 
 static const struct {
     const char *partition;
@@ -103,7 +104,11 @@ bool rom_store_load(kick_t kick, uint8_t *buf, uint32_t *size, const char **name
         return false;
     }
     /* the card's overrides the built-in one */
-    if (!from_sd(kick, false, buf) && !from_partition(kick, false, buf)) {
+    if (from_sd(kick, false, buf)) {
+        s_source = "the SD card";
+    } else if (from_partition(kick, false, buf)) {
+        s_source = "the flash";
+    } else {
         return false;
     }
     *size = s_kick[kick].size;
@@ -116,6 +121,11 @@ bool rom_store_load(kick_t kick, uint8_t *buf, uint32_t *size, const char **name
         *name = aros;
     }
     return true;
+}
+
+const char *rom_store_source(void)
+{
+    return s_source;
 }
 
 bool rom_store_has_extension(kick_t kick)

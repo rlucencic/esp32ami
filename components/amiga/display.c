@@ -722,6 +722,69 @@ void amiga_display_regs(char *buf, size_t len)
              s.diwstop, s.diwhigh_set ? s.diwhigh : 0, s.mod[0], s.mod[1], (unsigned long)s.color[0]);
 }
 
+/* The screen for the web page, from the latest frame's records (the
+ * long field's): read only, from another task (a frame ending meanwhile
+ * gives a moment's mix)
+ */
+#define MODE_BITS       (BPLCON0_HIRES | BPLCON0_HAM | BPLCON0_DPF | BPLCON0_SHRES | BPLCON0_LACE)
+
+void amiga_get_screen(amiga_screen_t *st)
+{
+    memset(st, 0, sizeof(*st));
+    st->ncolors = s.ncolors;
+    if (s.rows == NULL) {
+        return;
+    }
+    const row_t *rows = buffer(0, (int)LATEST(__atomic_load_n(&s.state[0], __ATOMIC_ACQUIRE)));
+    int n = amiga_screen_height() / 2;
+    uint32_t keys[8] = { 0 };
+    int best = -1, best_len = 0, start = 0, len = 0;
+    uint32_t prev = 0;
+    for (int i = 0; i < n; i++) {
+        const row_t *r = &rows[i];
+        for (int k = 0; k < r->sprites && k < 8; k++) {
+            st->sprites |= (uint8_t)(1u << (r->spr_num[k] & 7));
+        }
+        if (r->planes == 0 || r->x0 >= r->x1) {
+            len = 0;
+            continue;
+        }
+        uint32_t key = (uint32_t)(r->con0 & MODE_BITS) << 16 ^ (uint32_t)r->planes << 8 ^
+                       (uint32_t)(r->x1 - r->x0) * 0x9E3779B1u;
+        if (len && key == prev) {
+            len++;
+        } else {
+            start = i;
+            len = 1;
+            prev = key;
+            int k = 0;
+            while (k < st->modes && keys[k] != key) {
+                k++;
+            }
+            if (k == st->modes && k < 8) {
+                keys[st->modes++] = key;
+            }
+        }
+        if (len > best_len) {
+            best = start;
+            best_len = len;
+        }
+    }
+    const row_t *r = &rows[best >= 0 ? best + best_len / 2 : n / 2];
+    if (best >= 0) {
+        st->planes = r->planes;
+        st->bplcon0 = r->con0;
+        st->bplcon2 = r->con2;
+        st->fmode = r->fmode;
+        int w = r->x1 - r->x0;      /* hires pixels */
+        st->width = (r->con0 & BPLCON0_SHRES) ? w * 2 : (r->con0 & BPLCON0_HIRES) ? w : w / 2;
+        st->lines = best_len;
+    }
+    for (int i = 0; i < 32; i++) {
+        st->color[i] = r->color[i];
+    }
+}
+
 /* ---- Collisions (CLXDAT) ----
  *
  * Worked out at each line's end while a program reads CLXDAT (for a few

@@ -712,15 +712,297 @@ static void every_second(void)
 
 /* ---- Status ---- */
 
-/* Joystick keys on the web page's status */
-static const char *input_text(void)
+static const char *const models[] = { "Amiga 500", "Amiga 2000", "Amiga 600", "Amiga 1200" };
+
+/* A register's set bits by the HRM's names ("PORTS, VERTB"), the names of
+ * bits 0-14
+ */
+static void bit_names(char *buf, size_t len, uint16_t v, const char *const names[15])
 {
-    return s_joy_keys ? "cursor keys and keypad are the joystick (F12 switches back), Alt fire"
-                      : "keys (F12: cursor keys and keypad as the joystick)";
+    size_t n = 0;
+    buf[0] = '\0';
+    for (int b = 0; b < 15 && n < len; b++) {
+        if ((v & (1u << b)) && names[b]) {
+            n += (size_t)snprintf(buf + n, len - n, "%s%s", n ? ", " : "", names[b]);
+        }
+    }
 }
 
+/* INTENA's and INTREQ's bits (the four audio ones as AUD0-3 when all set) */
+static void int_names(char *buf, size_t len, uint16_t v)
+{
+    static const char *const names[15] = {
+        "TBE", "DSKBLK", "SOFT", "PORTS", "COPER", "VERTB", "BLIT", "AUD0", "AUD1", "AUD2", "AUD3",
+        "RBF", "DSKSYN", "EXTER", NULL,
+    };
+    static const char *const all_audio[15] = {
+        "TBE", "DSKBLK", "SOFT", "PORTS", "COPER", "VERTB", "BLIT", "AUD0-3", NULL, NULL, NULL,
+        "RBF", "DSKSYN", "EXTER", NULL,
+    };
+    bit_names(buf, len, v, (v & 0x0780) == 0x0780 ? all_audio : names);
+}
 
-static const char *const models[] = { "Amiga 500", "Amiga 2000", "Amiga 600", "Amiga 1200" };
+/* Bytes as base64 (n a multiple of 3), NUL-terminated: its length */
+static size_t base64(char *out, const uint8_t *in, size_t n)
+{
+    static const char digits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t o = 0;
+    for (size_t i = 0; i + 2 < n; i += 3) {
+        uint32_t v = (uint32_t)in[i] << 16 | (uint32_t)in[i + 1] << 8 | in[i + 2];
+        out[o++] = digits[(v >> 18) & 63];
+        out[o++] = digits[(v >> 12) & 63];
+        out[o++] = digits[(v >> 6) & 63];
+        out[o++] = digits[v & 63];
+    }
+    out[o] = '\0';
+    return o;
+}
+
+/* The machine card's rows: the state now (the core's plain copies) */
+static void status_rows(emu_json_t *j)
+{
+    char text[400];
+    amiga_chips_t c;
+    amiga_get_chips(&c);
+    bool aga = s_cfg.model == AMIGA_A1200;
+
+    /* System: the CPU and its clock (the crystal's: PAL 28.37516 MHz, NTSC 28.63636), RAM */
+    int n;
+    if (aga) {
+        n = snprintf(text, sizeof(text), "%s: a 68EC020 at %s MHz (cache %s), %u MB chip RAM",
+                     models[s_cfg.model], s_cfg.ntsc ? "14.32" : "14.19",
+                     (c.cacr & 1) ? ((c.cacr & 2) ? "on, frozen" : "on") : "off",
+                     (unsigned)(s_cfg.chip_size >> 20));
+    } else {
+        n = snprintf(text, sizeof(text), "%s: a 68000 at %s MHz, %u KB chip RAM", models[s_cfg.model],
+                     s_cfg.ntsc ? "7.16" : "7.09", (unsigned)(s_cfg.chip_size >> 10));
+    }
+    if (s_cfg.slow_size) {
+        n += snprintf(text + n, sizeof(text) - n, ", %u KB slow RAM", (unsigned)(s_cfg.slow_size >> 10));
+    }
+    if (s_cfg.fast_size) {
+        snprintf(text + n, sizeof(text) - n, ", %u MB fast RAM", (unsigned)(s_cfg.fast_size >> 20));
+    }
+    emu_json_row(j, "System", text);
+
+    snprintf(text, sizeof(text), "%s from %s: %s%s", s_kick_name ? s_kick_name : "-",
+             rom_store_source() ? rom_store_source() : "-",
+             s_cfg.kickstart_size > 256 * 1024 ? "512 KB at $F80000" : "256 KB at $FC0000 (and $F80000)",
+             c.ext_rom ? ", its extension at $E00000" : "");
+    emu_json_row(j, "Kickstart", text);
+
+    /* Memory: the RAM's map now (autoconfig places the fast RAM; the
+     * overlay puts the ROM over chip RAM's start after a reset)
+     */
+    n = snprintf(text, sizeof(text), "Chip RAM $000000-$%06lX%s", (unsigned long)(s_cfg.chip_size - 1),
+                 c.ovl ? " (the ROM over its start: OVL)" : "");
+    if (s_cfg.slow_size) {
+        n += snprintf(text + n, sizeof(text) - n, ", slow RAM $C00000-$%06lX",
+                      (unsigned long)(0xC00000 + s_cfg.slow_size - 1));
+    }
+    if (s_cfg.fast_size && c.fast_base) {
+        n += snprintf(text + n, sizeof(text) - n, ", fast RAM $%06lX-$%06lX", (unsigned long)c.fast_base,
+                      (unsigned long)(c.fast_base + s_cfg.fast_size - 1));
+    } else if (s_cfg.fast_size) {
+        n += snprintf(text + n, sizeof(text) - n, ", fast RAM not configured yet");
+    }
+    emu_json_row(j, "Memory", text);
+
+    /* Free memory by Kickstart's lists */
+    amiga_mem_free_t mem[3];
+    if (amiga_mem_free(&mem[0], &mem[1], &mem[2])) {
+        static const char *const labels[] = { "Free chip RAM", "Free slow RAM", "Free fast RAM" };
+        const uint32_t sizes[] = { s_cfg.chip_size, s_cfg.slow_size, s_cfg.fast_size };
+        for (int k = 0; k < 3; k++) {
+            if (!mem[k].found || sizes[k] == 0 || mem[k].free > sizes[k]) {
+                continue;               /* (a program that took over the memory: its lists gone) */
+            }
+            bool mb = sizes[k] >= 1024 * 1024;
+            int len = snprintf(text, sizeof(text), "%lu KB of %lu %s", (unsigned long)(mem[k].free / 1024),
+                               (unsigned long)(mb ? sizes[k] >> 20 : sizes[k] >> 10), mb ? "MB" : "KB");
+            if (mem[k].largest && mem[k].largest / 1024 < mem[k].free / 1024) {
+                snprintf(text + len, sizeof(text) - len, " <span class=\"dim\">(largest block %lu KB)</span>",
+                         (unsigned long)(mem[k].largest / 1024));
+            }
+            int used = 100 - (int)((uint64_t)mem[k].free * 100 / sizes[k]);
+            emu_json_row_bar(j, labels[k], text, used < 0 ? 0 : used);
+        }
+    }
+
+    /* Chipset: Agnus's and Denise's IDs as programs read them */
+    unsigned agnus = c.agnus_id;
+    if (aga) {
+        n = snprintf(text, sizeof(text), "AGA: Alice (VPOSR ID $%02X), Lisa (DENISEID $%02X)", agnus,
+                     c.denise_id & 0xFF);
+    } else if (s_cfg.ecs) {
+        n = snprintf(text, sizeof(text), "ECS: Super Agnus %s (VPOSR ID $%02X), Super Denise 8373 (DENISEID $%02X)",
+                     s_cfg.model == AMIGA_A600 ? "8375" : "8372", agnus, c.denise_id & 0xFF);
+    } else {
+        n = snprintf(text, sizeof(text), "OCS: Agnus %s (VPOSR ID $%02X), Denise 8362 (no DENISEID)",
+                     s_cfg.ntsc ? "8370" : "8371", agnus);
+    }
+    if (c.ntsc_beam != s_cfg.ntsc) {
+        snprintf(text + n, sizeof(text) - n, "; the beam %s by BEAMCON0", c.ntsc_beam ? "NTSC" : "PAL");
+    }
+    emu_json_row(j, "Chipset", text);
+
+    /* Screen: the mode most lines of the last frame have */
+    static amiga_screen_t scr;      /* (~160 bytes: off the web server's stack) */
+    amiga_get_screen(&scr);
+    char sprites[32] = "", what[48];
+    for (int i = 0, k = 0; i < 8; i++) {
+        if (scr.sprites & (1u << i)) {
+            int last = i;
+            while (last < 7 && (scr.sprites & (2u << last))) {
+                last++;
+            }
+            k += last > i + 1 ? snprintf(sprites + k, sizeof(sprites) - k, "%s%d-%d", k ? ", " : "", i, last)
+                              : snprintf(sprites + k, sizeof(sprites) - k, "%s%d", k ? ", " : "", i);
+            i = last > i + 1 ? last : i;
+        }
+    }
+    if (scr.planes == 0) {
+        n = snprintf(text, sizeof(text), "No bitplanes (the background colour only)");
+    } else {
+        uint16_t con0 = scr.bplcon0;
+        bool shres = con0 & 0x0040, hires = con0 & 0x8000, lace = con0 & 0x0004;
+        bool ham = con0 & 0x0800, dpf = con0 & 0x0400;
+        if (ham) {
+            snprintf(what, sizeof(what), scr.planes == 8 ? "HAM8: 262144 colours" : "HAM: 4096 colours");
+        } else if (dpf) {
+            snprintf(what, sizeof(what), "dual playfield, %u + %u colours", (1u << ((scr.planes + 1) / 2)) - 1,
+                     (1u << (scr.planes / 2)) - 1);
+        } else if (scr.planes == 6 && !(aga && (scr.bplcon2 & 0x0200))) {
+            snprintf(what, sizeof(what), "extra half-brite: 64 colours");
+        } else {
+            snprintf(what, sizeof(what), "%u colours", 1u << scr.planes);
+        }
+        n = snprintf(text, sizeof(text), "%s%s, %d bitplane%s, %s: %d × %d (BPLCON0 $%04X%s",
+                     shres ? "Super-hires" : hires ? "Hires" : "Lores", lace ? " interlaced" : "", scr.planes,
+                     scr.planes == 1 ? "" : "s", what, scr.width, scr.lines * (lace ? 2 : 1), con0,
+                     aga && (scr.fmode & 3) ? ", FMODE " : ")");
+        if (aga && (scr.fmode & 3)) {
+            n += snprintf(text + n, sizeof(text) - n, "$%04X)", scr.fmode);
+        }
+        if (scr.modes > 1) {
+            n += snprintf(text + n, sizeof(text) - n, ", %d modes on screen", scr.modes);
+        }
+    }
+    snprintf(text + n, sizeof(text) - n, "; %s%s; the copper list at $%06lX",
+             !sprites[0] ? "no sprites" : (scr.sprites & (scr.sprites - 1)) ? "sprites " : "sprite ", sprites,
+             (unsigned long)c.cop1lc);
+    emu_json_row(j, "Screen", text);
+
+    /* Palette: the first 32 colour registers as a strip, a 32 x 1 BMP (as
+     * CSS swatches 32 colours took ~500 bytes; the whole reply has 4 KB,
+     * esp32emu's STATUS_SIZE)
+     */
+    static const char start[] = "<img style=width:100%;height:1.2em;image-rendering:pixelated "
+                                "src=data:image/bmp;base64,";
+    uint8_t bmp[54 + 32 * 3] = {
+        'B', 'M', sizeof(bmp), 0, 0, 0, 0, 0, 0, 0, 54, 0, 0, 0,          /* the file: its size, the pixels' offset */
+        40, 0, 0, 0, 32, 0, 0, 0, 1, 0, 0, 0, 1, 0, 24, 0,                  /* 32 x 1, 24 bits a pixel */
+    };
+    for (int i = 0; i < 32; i++) {
+        bmp[54 + 3 * i] = (uint8_t)scr.color[i];                           /* B, G, R */
+        bmp[55 + 3 * i] = (uint8_t)(scr.color[i] >> 8);
+        bmp[56 + 3 * i] = (uint8_t)(scr.color[i] >> 16);
+    }
+    static char strip[64 + sizeof(start) + 4 * sizeof(bmp) / 3];     /* (no '=': unquoted) */
+    n = snprintf(strip, sizeof(strip), "%s%s", aga ? "Colours 0-31 of 256 (24-bit)" : "The 32 colours (of 4096)",
+                 start);
+    n += (int)base64(strip + n, bmp, sizeof(bmp));
+    snprintf(strip + n, sizeof(strip) - n, ">");
+    emu_json_row(j, "Palette", strip);
+
+    /* DMA (DMACON's channels, DMAEN their master switch), interrupts by
+     * the HRM's names
+     */
+    char names[120];
+    if (c.dmacon & 0x0200) {
+        static const struct { uint16_t bit; const char *name; } dma[] = {
+            { 0x0100, "bitplanes" }, { 0x0080, "copper" }, { 0x0040, "blitter" }, { 0x0400, " (nasty)" },
+            { 0x0020, "sprites" }, { 0x0010, "disk" },
+        };
+        n = 0;
+        for (size_t i = 0; i < sizeof(dma) / sizeof(dma[0]); i++) {
+            if ((c.dmacon & dma[i].bit) && (dma[i].bit != 0x0400 || (c.dmacon & 0x0040))) {
+                n += snprintf(names + n, sizeof(names) - n, "%s%s", n && dma[i].bit != 0x0400 ? ", " : "",
+                              dma[i].name);
+            }
+        }
+        if (c.dmacon & 0x000F) {
+            n += snprintf(names + n, sizeof(names) - n, "%saudio", n ? ", " : "");
+            for (int ch = 0; ch < 4; ch++) {
+                if (c.dmacon & (1u << ch)) {
+                    n += snprintf(names + n, sizeof(names) - n, " %d", ch);
+                }
+            }
+        }
+        snprintf(text, sizeof(text), "On: %s (DMACON $%04X)", n ? names : "no channel", c.dmacon);
+    } else {
+        snprintf(text, sizeof(text), "Off (DMACON $%04X)", c.dmacon);
+    }
+    emu_json_row(j, "DMA", text);
+    if (c.intena & 0x4000) {
+        int_names(names, sizeof(names), c.intena);
+        n = snprintf(text, sizeof(text), "On: %s (INTENA $%04X)", names[0] ? names : "none", c.intena);
+        /* (the requests at the level the 68000 is asked for) */
+        static const uint16_t levels[7] = { 0, 0x0007, 0x0008, 0x0070, 0x0780, 0x1800, 0x2000 };
+        uint16_t due = c.intena & c.intreq & levels[c.ipl >= 0 && c.ipl < 7 ? c.ipl : 0];
+        if (due) {
+            int_names(names, sizeof(names), due);
+            snprintf(text + n, sizeof(text) - n, "; %s due (level %d)", names, c.ipl);
+        }
+    } else {
+        snprintf(text, sizeof(text), "Off (INTENA $%04X)", c.intena);
+    }
+    emu_json_row(j, "Interrupts", text);
+
+    /* Sound: Paula's channels now */
+    amiga_sound_t snd;
+    amiga_get_sound(&snd);
+    n = 0;
+    text[0] = '\0';
+    for (int ch = 0; ch < 4 && n < (int)sizeof(text); ch++) {
+        if (!snd.ch[ch].dma && !snd.ch[ch].playing) {
+            continue;
+        }
+        const char *sep = n ? "; " : "";
+        if (snd.ch[ch].attached && ch < 3) {
+            n += snprintf(text + n, sizeof(text) - n, "%s%d: %s of %d", sep, ch,
+                          snd.ch[ch].attached == 3 ? "the volume and period" :
+                          snd.ch[ch].attached == 1 ? "the volume" : "the period", ch + 1);
+        } else if (snd.ch[ch].attached) {
+            n += snprintf(text + n, sizeof(text) - n, "%s%d: attached, silent", sep, ch);
+        } else {
+            n += snprintf(text + n, sizeof(text) - n, "%s%d: %lu Hz, volume %u", sep, ch,
+                          (unsigned long)(snd.clock / snd.ch[ch].period), snd.ch[ch].volume);
+        }
+    }
+    if (n < (int)sizeof(text)) {
+        snprintf(text + n, sizeof(text) - n, "%sthe LED filter %s", n ? "; " : "Paula silent; ",
+                 c.led ? "on" : "off");
+    }
+    emu_json_row(j, "Sound", text);
+
+    snprintf(text, sizeof(text), "By position; F11 Help, Windows keys Amiga; Caps Lock %s; F12: joystick keys "
+             "(cursor keys, keypad, Alt fire) %s", s_caps ? "on" : "off", s_joy_keys ? "on" : "off");
+    emu_json_row(j, "Keyboard", text);
+
+    /* Expansions: our hard disk board (Zorro II, autoconfig's; the fast
+     * RAM board's place is in Memory), Gayle, the clock
+     */
+    n = 0;
+    if (c.hd_base) {
+        n = snprintf(text, sizeof(text), "The esp32ami hard disk board at $%06lX", (unsigned long)c.hd_base);
+    }
+    if (c.gayle) {
+        n += snprintf(text + n, sizeof(text) - n, "%sGayle (ID $%02X): IDE at $DA0000", n ? "; " : "", c.gayle_id);
+    }
+    snprintf(text + n, sizeof(text) - n, "%s clock (MSM6242B) at $DC0000", n ? "; the" : "The");
+    emu_json_row(j, "Expansions", text);
+}
 
 static void status(emu_json_t *j, int section)
 {
@@ -757,42 +1039,9 @@ static void status(emu_json_t *j, int section)
         }
         return;
     }
-    if (section != EMU_STATUS_ROWS) {
-        return;
+    if (section == EMU_STATUS_ROWS) {
+        status_rows(j);
     }
-    int n = snprintf(text, sizeof(text), "%s, %u KB chip RAM", models[s_cfg.model],
-                     (unsigned)(s_cfg.chip_size >> 10));
-    if (s_cfg.slow_size) {
-        n += snprintf(text + n, sizeof(text) - n, " + %u KB slow RAM", (unsigned)(s_cfg.slow_size >> 10));
-    }
-    if (s_cfg.fast_size) {
-        snprintf(text + n, sizeof(text) - n, " + %u MB fast RAM", (unsigned)(s_cfg.fast_size >> 20));
-    }
-    emu_json_row(j, "System", text);
-    amiga_mem_free_t mem[3];
-    if (amiga_mem_free(&mem[0], &mem[1], &mem[2])) {
-        static const char *const labels[] = { "Free chip RAM", "Free slow RAM", "Free fast RAM" };
-        const uint32_t sizes[] = { s_cfg.chip_size, s_cfg.slow_size, s_cfg.fast_size };
-        for (int k = 0; k < 3; k++) {
-            if (!mem[k].found || sizes[k] == 0) {
-                continue;
-            }
-            bool mb = sizes[k] >= 1024 * 1024;
-            int len = snprintf(text, sizeof(text), "%lu KB of %lu %s", (unsigned long)(mem[k].free / 1024),
-                               (unsigned long)(mb ? sizes[k] >> 20 : sizes[k] >> 10), mb ? "MB" : "KB");
-            if (mem[k].largest && mem[k].largest / 1024 < mem[k].free / 1024) {
-                snprintf(text + len, sizeof(text) - len, " <span class=\"dim\">(largest block %lu KB)</span>",
-                         (unsigned long)(mem[k].largest / 1024));
-            }
-            int used = 100 - (int)((uint64_t)mem[k].free * 100 / sizes[k]);
-            emu_json_row_bar(j, labels[k], text, used < 0 ? 0 : used);
-        }
-    }
-    emu_json_row(j, "Kickstart", s_kick_name ? s_kick_name : "-");
-    snprintf(text, sizeof(text), "%s, %s", s_cfg.model == AMIGA_A1200 ? "AGA" : s_cfg.ecs ? "ECS" : "OCS",
-             s_cfg.ntsc ? "NTSC (60 Hz)" : "PAL (50 Hz)");
-    emu_json_row(j, "Chipset", text);
-    emu_json_row(j, "Cursor keys", input_text());
 }
 
 /* ---- Console ---- */

@@ -506,3 +506,25 @@ void amiga_get_status(amiga_status_t *st)
     st->halted = ami.halted;
     st->insns = ami.insns;
 }
+
+void amiga_get_chips(amiga_chips_t *c)
+{
+    c->agnus_id = custom_agnus_id();
+    c->denise_id = custom_denise_id();
+    c->gayle = gayle_present();
+    c->gayle_id = ami.model == AMIGA_A1200 ? 0xD1 : 0xD0;
+    c->ntsc_beam = ami_ntsc_beam();
+    c->ovl = ami.ovl;
+    c->fast_base = ami.fast_size ? ami.fast_base : 0;
+    uint32_t base = 0, size;
+    c->hd_base = hdboard_memory(&base, &size) ? base : 0;
+    c->ext_rom = ami.ext != NULL;
+    c->dmacon = ami.dmacon;
+    c->intena = ami.intena;
+    c->intreq = ami.intreq;
+    c->ipl = ami.ipl;
+    c->cop1lc = cop.lc[0];
+    c->cacr = ami.cpu_shift ? m68k_get_reg(NULL, M68K_REG_CACR) : 0;
+    uint8_t pra = (cia[0].pra & cia[0].ddra) | (uint8_t)~cia[0].ddra;
+    c->led = !(pra & 0x02);
+}

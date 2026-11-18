@@ -102,6 +102,57 @@ void amiga_get_status(amiga_status_t *status);
 /* The display's registers as text (logs) */
 void amiga_display_regs(char *buf, size_t len);
 
+/* ---- The web page's machine card: the state now, plain copies (read
+ * from another task while the machine runs: now and then a moment's mix;
+ * nothing here changes the machine) ---- */
+
+typedef struct {
+    uint8_t agnus_id;               /* VPOSR's bits 14-8: $00 OCS, $20 ECS, $23 Alice (NTSC: + $10) */
+    uint16_t denise_id;             /* DENISEID: $FFFF (OCS's has none), $FFFC ECS, $00F8 Lisa */
+    bool gayle;                     /* Gayle there (the A600's, A1200's, or for a hard disk) */
+    uint8_t gayle_id;               /* $D0, the A1200's $D1 */
+    bool ntsc_beam;                 /* the beam's standard now (ECS: BEAMCON0's PAL bit) */
+    bool ovl;                       /* the ROM over chip RAM from $000000 (reads) */
+    uint32_t fast_base;             /* where autoconfig put the fast RAM (0: not yet) */
+    uint32_t hd_base;               /* our hard disk board (0: not configured) */
+    bool ext_rom;                   /* AROS's extension ROM at $E00000 */
+    uint16_t dmacon, intena, intreq;
+    int ipl;                        /* the interrupt level Paula asks for (0: none) */
+    uint32_t cop1lc;                /* the copper's list */
+    uint32_t cacr;                  /* the 68EC020's cache control */
+    bool led;                       /* the power LED bright (CIA-A PRA bit 1 low): the sound filter on */
+} amiga_chips_t;
+void amiga_get_chips(amiga_chips_t *chips);
+
+/* The screen last drawn (its latest frame's line records): the mode the
+ * most lines in a row have (lines with bitplanes, the same BPLCON0 mode
+ * bits and window), the colours as its middle line began
+ */
+typedef struct {
+    int planes;                     /* that mode's bitplanes (0: no line has any) */
+    uint16_t bplcon0, bplcon2, fmode;
+    int width;                      /* the window's width, in the mode's pixels */
+    int lines;                      /* the lines in that mode (a field's: interlace doubles them) */
+    int modes;                      /* modes on the lines with bitplanes (up to 8) */
+    uint8_t sprites;                /* bit n: sprite n shown on some line */
+    int ncolors;                    /* colour registers: 32, AGA 256 */
+    uint32_t color[32];             /* the first 32 as 24-bit RGB */
+} amiga_screen_t;
+void amiga_get_screen(amiga_screen_t *screen);
+
+/* Paula's channels now */
+typedef struct {
+    struct {
+        bool dma;                   /* playing from memory */
+        bool playing;               /* a word playing (DMA, or written to AUDxDAT) */
+        uint8_t attached;           /* ADKCON: 1 the next one's volume, 2 its period */
+        uint16_t period;            /* colour clocks a byte */
+        uint8_t volume;             /* 0-64 */
+    } ch[4];
+    uint32_t clock;                 /* colour clocks a second (PAL 3546895, NTSC 3579545) */
+} amiga_sound_t;
+void amiga_get_sound(amiga_sound_t *sound);
+
 /* Memory as the CPU sees it, without side effects (RAM and ROM; else 0) */
 uint16_t amiga_peek16(uint32_t address);
 /* Free memory by Kickstart's lists, by kind (false until it has made

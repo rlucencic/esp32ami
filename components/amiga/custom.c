@@ -252,17 +252,28 @@ static uint16_t read_reg(uint32_t reg)
         return ami.intena;
     case 0x01E:                     /* INTREQR */
         return ami.intreq;
-    case 0x07C:                     /* DENISEID: ECS Denise 8373, AGA's Lisa; OCS's isn't there */
-        /* (Lisa's bits 9-8 low: graphics.library's MemType, inverted, is
-         * then 32 bits, double CAS: the bandwidth for hires in 256 colours).
-         * OCS: the undriven register's fallback is all ones. Our aggregate
-         * DMA model cannot reproduce the bus word at this read's slot;
-         * a CPU prefetch word here falsely identifies AGA (Rink a Dink).
-         */
-        return ami.aga ? 0x00F8 : ami.ecs ? 0xFFFC : 0xFFFF;
+    case 0x07C:                     /* DENISEID */
+        return custom_denise_id();
     default:
         return ami.bus;
     }
+}
+
+uint8_t custom_agnus_id(void)
+{
+    return (uint8_t)agnus_id();
+}
+
+/* DENISEID: ECS Denise 8373, AGA's Lisa; OCS's isn't there */
+uint16_t custom_denise_id(void)
+{
+    /* (Lisa's bits 9-8 low: graphics.library's MemType, inverted, is
+     * then 32 bits, double CAS: the bandwidth for hires in 256 colours).
+     * OCS: the undriven register's fallback is all ones. Our aggregate
+     * DMA model cannot reproduce the bus word at this read's slot;
+     * a CPU prefetch word here falsely identifies AGA (Rink a Dink).
+     */
+    return ami.aga ? 0x00F8 : ami.ecs ? 0xFFFC : 0xFFFF;
 }
 
 static uint16_t set_clr(uint16_t reg, uint16_t v, uint16_t mask)

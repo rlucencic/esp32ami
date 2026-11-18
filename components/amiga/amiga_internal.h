@@ -269,6 +269,8 @@ uint16_t custom_read(uint32_t reg);
 uint16_t custom_read_addr(uint32_t a);      /* byte or word: a selects the poll */
 void custom_write(uint32_t reg, uint16_t value, int at, bool copper);
 void custom_reset(void);
+uint8_t custom_agnus_id(void);              /* VPOSR's ID */
+uint16_t custom_denise_id(void);            /* DENISEID */
 
 #ifndef ESP_PLATFORM
 /* Host: re-read AMI_WATCH (mem_test); no-op on the board */

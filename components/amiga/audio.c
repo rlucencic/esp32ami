@@ -285,6 +285,21 @@ AMI_HOT void audio_line(void)
     }
 }
 
+/* For the web page (another task: plain copies) */
+void amiga_get_sound(amiga_sound_t *s)
+{
+    for (int c = 0; c < 4; c++) {
+        const chan_t *ch = &au.ch[c];
+        int att = attached(c);          /* (channel 3's: silent) */
+        s->ch[c].dma = ch->dma;
+        s->ch[c].playing = ch->playing;
+        s->ch[c].attached = (uint8_t)(((att & ATT_VOL) ? 1 : 0) | ((att & ATT_PER) ? 2 : 0));
+        s->ch[c].period = period_of(ch);
+        s->ch[c].volume = (uint8_t)ch->vol;
+    }
+    s->clock = ami.ntsc ? 3579545 : 3546895;
+}
+
 /* ---- The speaker's side ---- */
 
 void amiga_audio_enable(bool on)
