@@ -43,6 +43,7 @@ work the Workbench and the games, and a setup screen on the touch panel,
 and a web page on your network, handle everything else.
 
 It's a sibling of
+[esp32oric](https://github.com/rlucencic/esp32oric) (Oric Atmos and Oric-1),
 [esp32ste](https://github.com/rlucencic/esp32ste) (Atari STE),
 [esp32mac](https://github.com/rlucencic/esp32mac) (Macintosh Plus, SE, Classic),
 [esp32mac2](https://github.com/rlucencic/esp32mac2) (Macintosh LC and II),
