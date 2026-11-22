@@ -29,8 +29,14 @@ void copper_reset(void)
 
 void copper_vblank(void)
 {
-    cop.pc = cop.lc[0];
-    cop.state = COP_FETCH;
+    if (copper_enabled()) {
+        cop.pc = cop.lc[0];
+        cop.state = COP_FETCH;
+    } else {
+        /* The vertical-blank strobe waits for DMA. COP1LC can change
+         * before the Copper takes that first cycle. */
+        cop.state = COP_RELOAD;
+    }
     cop.at = 0;
 }
 
@@ -185,6 +191,10 @@ void copper_run(int now, int limit)
             cop.at += 4;
             cop.state = COP_FETCH;
             continue;
+        }
+        if (cop.state == COP_RELOAD) {
+            cop.pc = cop.lc[0];
+            cop.state = COP_FETCH;
         }
         uint16_t ir1 = chip_read16(cop.pc), ir2 = chip_read16(cop.pc + 2);
         if (!(ir1 & 1)) {

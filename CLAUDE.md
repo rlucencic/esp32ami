@@ -1071,14 +1071,14 @@ the top two bits do nothing, Aerial Racers' race sets them),
   them. Sprites inside the window on lines without bitplanes still show:
   Denise (WinUAE) would want a BPL1DAT write on the line first, which
   wasn't settled for those lines (above and below the window it is).
-- **Titles still failing** (the smoke runs, Testing; 2026-10-23;
-  `TODO.md` item 10). Killer (A1200, marked for a JIT) quits at once
-  (030 or FPU, likely). All New World of Lemmings (AGA, a crack)
-  without fast RAM jumps through an
-  overwritten OS hook every ~14 frames once Space is pressed at its title
-  (with 4 MB fast RAM it doesn't); Pango Fun (a beta) shows a Guru on
-  every machine. Not faults: The Magician fails only with slow RAM, ECO
-  wants 1.2, DarkSide and Primal Rage 2.04 with 1 MB; Hardwired wants its
+- **Titles still failing** (the smoke runs, Testing; `TODO.md` item 10).
+  Killer (A1200, marked for a JIT) quits at once (030 or FPU, likely).
+  All New World of Lemmings (Hoodlum AGA disks) still hits a disk read
+  error after the title on the A1200 without fast RAM. The Gayle fix
+  clears its exception loop, and the Copper fix clears the Pango Fun
+  beta's Guru (2026-11-22, `docs/architecture.md`). The Magician fails
+  only with slow RAM, ECO wants 1.2, DarkSide and Primal Rage 2.04 with
+  1 MB; Hardwired wants its
   disk 2 in DF0 and a right click; the Quartex cracks of Navy Seals and
   Crime Does Not Pay load through a trace-vector decoder for ~160 s ("the
   game takes a while to load"; not timed on a real one).

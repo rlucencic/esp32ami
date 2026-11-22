@@ -278,7 +278,7 @@ void mem_watch_reload(void);
 #endif
 
 /* copper.c */
-typedef enum { COP_STOPPED, COP_FETCH, COP_WAIT } copper_state_t;
+typedef enum { COP_STOPPED, COP_FETCH, COP_WAIT, COP_RELOAD } copper_state_t;
 typedef struct {
     uint32_t lc[2];
     uint32_t pc;

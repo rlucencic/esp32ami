@@ -167,7 +167,7 @@ does.
 
 | Address | What |
 |---|---|
-| 000000 | Chip RAM (512 KB - 2 MB); at reset the ROM (OVL) until CIA-A clears it |
+| 000000 | Chip RAM (512 KB - 2 MB), temporarily overlaid by ROM after reset. CIA-A port A controls OVL on the A500/A2000. The first CIA-A write clears Gayle's reset overlay on the A600/A1200. |
 | 200000 | Zorro II fast RAM (autoconfig: up to 8 MB) |
 | A00000-BEFFFF | Nothing (the ST's lesson: unmapped space must behave as the real board's) |
 | BFD000, BFE001 | CIA-B (even addresses: the data bus's high byte), CIA-A (odd addresses: the low byte), each register every 256 bytes |
@@ -862,6 +862,40 @@ The Tab5 ran the original executable from a compact bootable HDF with
 the same PAL A1200 configuration. It passed the previous freeze near
 frame 9750, rendered the blue scene, showed the credits, and returned to
 the AmigaDOS prompt by frame 15600. The heavier scenes ran at about 33 fps.
+
+### Lemmings and Pango Fun, 2026-11-22
+
+- **All New World of Lemmings** (Hoodlum AGA disks, PAL A1200, Kickstart
+  3.1, 2 MiB chip RAM). After Space on the title, a write of `$4F` to
+  CIA-A port A turned the ROM overlay back on. Subsequent exceptions
+  read ROM contents as vectors. Gayle now handles the overlay on both
+  the A600 and the A1200 as a reset latch cleared by the first CIA-A
+  write. The older A500 and A2000 keep the port-controlled overlay.
+  The corrected host and Tab5 get past the exception loop. The game
+  still hits a block 925 read error with the tested no-fast-RAM setup.
+  `AMI_DISKLOG` records the retries with no selected spinning drive.
+  FS-UAE 3.1.66 reached the map room with the same images. The remaining
+  disk issue is in `TODO.md`. [WinUAE CIA behavior](https://github.com/tonioni/WinUAE/blob/master/cia.cpp), [MAME Gayle overlay behavior](https://github.com/mamedev/mame/blob/master/src/mame/amiga/amiga_m.cpp)
+- **Pango Fun** (Heresy beta, PAL A500, 512 KiB chip and 512 KiB slow
+  RAM). The intro turns Copper DMA off while replacing its list.
+  On resumption, the Copper fetched from the overwritten list at
+  `$7616` and enabled a level 4 audio interrupt with a stray write to
+  `INTENA`. Kickstart dispatched to a null handler and raised Guru
+  `$00000004`. The Copper now defers the vertical-blank reload while
+  its DMA is off and uses the current `COP1LC` when it can fetch again.
+  FS-UAE passed the Guru point and reached the credits. The corrected
+  host reached the first level with all three disk 1 variants, under
+  Kickstart 1.2 and 1.3. The Tab5 also reached the first level with
+  Kickstart 1.3. [FS-UAE 3.1.66 Copper restart](https://github.com/FrodeSolheim/fs-uae/blob/v3.1.66/src/custom.cpp)
+
+The host regression exercises both Gayle models, the A500 port-controlled
+overlay and the deferred Copper reload. It fails on the previous code
+and passes on the corrected build. Under Pressure still returns to the
+Shell. Seven of eight RP9 titles matched frame for frame at the sampled
+points. Traps 'n Treasures showed the same title and scrolling intro at
+slightly different points in their animations. The Tab5's previous
+Amiga settings and disks were restored after both runs. Local disk
+images, traces and screenshots are in `build/todo10-compat-2026-11-22/`.
 
 ### Voyage follow-up, 2026-10-24
 

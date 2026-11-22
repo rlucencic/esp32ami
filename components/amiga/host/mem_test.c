@@ -271,6 +271,40 @@ int main(void)
         CHECK(memcmp(pixels, doubled, sizeof(pixels)) == 0, "AGA scan doubling repeats both planes for either window parity");
     }
 
+    m68k_write_memory_16(0x000004, 0x1234);
+    for (int model = AMIGA_A600; model <= AMIGA_A1200; model++) {
+        ami.model = model;
+        ami.ovl = true;
+        cia_reset();
+        mem_update_map();
+        m68k_write_memory_8(0xBFD100, 0xFF);
+        CHECK(amiga_peek16(0x000004) == amiga_peek16(0xF80004), "CIA-B leaves the Gayle reset overlay active");
+        m68k_write_memory_8(0xBFE101, 0xFF);
+        CHECK(amiga_peek16(0x000004) == 0x1234, "The first CIA-A write clears the Gayle reset overlay");
+        m68k_write_memory_8(0xBFE201, 0x01);
+        m68k_write_memory_8(0xBFE001, 0x01);
+        CHECK(amiga_peek16(0x000004) == 0x1234, "Gayle cannot re-enable the overlay through CIA-A port A");
+    }
+    ami.model = AMIGA_A500;
+    ami.cpu_shift = 0;
+    m68k_write_memory_8(0xBFE001, 0x01);
+    CHECK(amiga_peek16(0x000004) == amiga_peek16(0xF80004), "CIA-A port A enables the A500 overlay");
+    m68k_write_memory_8(0xBFE001, 0x00);
+    CHECK(amiga_peek16(0x000004) == 0x1234, "CIA-A port A clears the A500 overlay");
+
+    copper_reset();
+    ami.dmacon = ami.intreq = 0;
+    m68k_write_memory_32(0x1000, 0x009C8020); /* Old list sets the vertical blank request. */
+    m68k_write_memory_32(0x1004, 0xFFFFFFFE);
+    m68k_write_memory_32(0x2000, 0x009C8040); /* New list sets the blitter request. */
+    m68k_write_memory_32(0x2004, 0xFFFFFFFE);
+    copper_write(0x082, 0x1000, 0, false);
+    copper_vblank();
+    copper_write(0x082, 0x2000, 8, false);
+    custom_write(0x096, 0x8280, 16, false);
+    copper_run(28, 28);
+    CHECK(ami.intreq == 0x0040, "Copper reloads the current COP1LC when DMA starts after vertical blank");
+
     puts(failures ? "chip bus checks failed" : "all chip bus checks passed");
     return failures != 0;
 }

@@ -16,16 +16,15 @@ Why: found running the user's demos and game ADFs with `tools/smoke.py`
 Check each with `smoke.py` on its folder (`ONLY=<name>`) and the
 collection for the rest. Roughly a session each, in this order:
 
-- All New World of Lemmings (AGA crack, no fast RAM): an OS hook at
-  $C6720 gets overwritten, then a jump through it every ~14 frames once
-  Space is pressed at the title. Find the writer with
-  `AMI_WATCH=C6720` (host; optional `:<frame>`), then whether a real
-  A1200 without fast RAM would do the same. Needs the title's disk
-  (not on this machine; not on Aminet; not under the WinUAE Hard
-  Disk on WDBLACK1TB — Games/L empty).
-- Pango Fun (a beta): a Guru on every machine; see whether the beta is
-  just broken (another dump, WinUAE's behaviour described anywhere).
-  Needs the title's disk (not on this machine; not on Aminet).
+- All New World of Lemmings (AGA, Hoodlum disks): the Gayle overlay fix
+  clears the title-screen CPU exception loop. The game still fails to
+  reach the map room with Kickstart 3.1 and 2 MiB chip RAM on the host
+  and Tab5. A run without fast RAM hits a read error on block 925 when
+  DF0 is selected with its motor off. FS-UAE reaches the map room with
+  the same configuration and disks. Trace the CIA writes and DMA reads
+  from the last successful track, including the code that changes the
+  motor state. Images and traces are in `build/todo10-compat-2026-11-22/`.
+  See `docs/architecture.md` under "Lemmings and Pango Fun".
 
 ## 9. Waiting on something
 

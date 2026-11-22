@@ -1,6 +1,6 @@
 /*
- * The two 8520 CIAs. CIA-A: the ROM overlay and the power LED, the fire
- * buttons and the drives' status lines, the keyboard's serial port; its
+ * The two 8520 CIAs. CIA-A: the ROM overlay on the A500/A2000, the power
+ * LED, the fire buttons, the drives' status lines and the keyboard; its
  * interrupt is Paula's INT2 (PORTS). CIA-B: the drives' control lines, the
  * serial port's handshake; INT6 (EXTER).
  *
@@ -228,6 +228,12 @@ uint8_t cia_read(cia_t *c, int reg)
 
 void cia_write(cia_t *c, int reg, uint8_t v)
 {
+    bool gayle_overlay = ami.model == AMIGA_A600 || ami.model == AMIGA_A1200;
+    /* Gayle removes the reset overlay on the first CIA-A write. */
+    if (gayle_overlay && c->index == 0 && ami.ovl) {
+        ami.ovl = false;
+        mem_update_map();
+    }
     switch (reg) {
     case PRA:
     case DDRA:
@@ -236,7 +242,7 @@ void cia_write(cia_t *c, int reg, uint8_t v)
         } else {
             c->ddra = v;
         }
-        if (c->index == 0) {
+        if (c->index == 0 && !gayle_overlay) {
             bool ovl = (port_out(c->pra, c->ddra) & 1) != 0;
             if (ovl != ami.ovl) {
                 ami.ovl = ovl;
