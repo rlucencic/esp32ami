@@ -1071,12 +1071,10 @@ the top two bits do nothing, Aerial Racers' race sets them),
   them. Sprites inside the window on lines without bitplanes still show:
   Denise (WinUAE) would want a BPL1DAT write on the line first, which
   wasn't settled for those lines (above and below the window it is).
-- **Titles still failing** (the smoke runs, Testing; 2026-10-23; what to
-  do about them: `TODO.md` 10): Under Pressure (A1200) draws lines past its
-  buffer into the custom registers at frame ~4600 (BPLCON0 $FFFF, then a
-  crash) with the chip waits at 7-8 clocks, not at 5: timing; Killer
-  (A1200, marked for a JIT) quits at once (030 or FPU, likely); All New
-  World of Lemmings (AGA, a crack) without fast RAM jumps through an
+- **Titles still failing** (the smoke runs, Testing; 2026-10-23;
+  `TODO.md` item 10). Killer (A1200, marked for a JIT) quits at once
+  (030 or FPU, likely). All New World of Lemmings (AGA, a crack)
+  without fast RAM jumps through an
   overwritten OS hook every ~14 frames once Space is pressed at its title
   (with 4 MB fast RAM it doesn't); Pango Fun (a beta) shows a Guru on
   every machine. Not faults: The Magician fails only with slow RAM, ECO

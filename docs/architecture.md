@@ -172,7 +172,7 @@ does.
 | A00000-BEFFFF | Nothing (the ST's lesson: unmapped space must behave as the real board's) |
 | BFD000, BFE001 | CIA-B (even addresses: the data bus's high byte), CIA-A (odd addresses: the low byte), each register every 256 bytes |
 | C00000 | Slow RAM (the A500's trapdoor 512 KB) |
-| D80000-DFFFFF | Gayle (A600: DA0000 IDE, DE1000 ID), the A2000's RTC (DC0000), custom chips (DFF000) |
+| D80000-DFFFFF | Gayle (A600/A1200: DA0000 IDE, DE1000 ID), the RTC (DC0000), custom chips (DFF000, or DF0000-DFFFFF on the A1200) |
 | E80000 | Autoconfig space (our hard disk board's ROM, fast RAM boards) |
 | F80000 / FC0000 | Kickstart (512 KB, or 256 KB mirrored) |
 
@@ -831,10 +831,37 @@ Aerial Racers' race on the Tab5 after all of them: 98-102%, core 1
 of the difference the alert detector's false alarms, red titles; Last
 Action Hero, Lionheart, Project-X and Navy Seals now run; Summer Games,
 Cube-X and Neighbours fewer dark pictures; the rest the same scenes at
-other moments). Still failing: `TODO.md` 10 (Under Pressure mechanism
-understood, blocked on a real/WinUAE eyeball; Lemmings and Pango Fun
-need their disks; Killer out of scope — needs a 68040+).
+other moments). The remaining titles are in `TODO.md` item 10.
 
+### Under Pressure follow-up, 2026-11-22
+
+Darkage's A1200 demo (`DKG-UnderP.lha` on Aminet) reaches its credits
+and returns to the Shell on FS-UAE 3.1.66 and on the corrected host
+build. Both used PAL, Kickstart 3.1, 2 MiB Chip RAM and 8 MiB Fast RAM.
+
+- Some cliff-scene line coordinates are negative. The demo multiplies Y
+  as an unsigned word, and the resulting byte stores reach `$CFFxxx`
+  and `$D00xxx`. They hit custom registers in the old A1200 map, setting
+  `BPLCON0` to `$FFFF` and flooding `INTREQ` near frame 9750. The A1200
+  now decodes its custom registers in `$DF0000–$DFFFFF`. The earlier
+  models retain their existing mirror rules. [Commodore A1200 service addendum, memory map](https://www.valoroso.it/file-share/documenti-manuali/Commodore-Amiga-1200-service-addendum-schematics.pdf)
+- The later blue scene programs `FMODE=$4003` and modulos `-40` and `0`.
+  With BSCAN2 enabled, the modulo is selected for all planes by the
+  beam line's parity relative to `DIWSTRT`. The old per-plane selection
+  displayed stripes and stale lines. Both variants of the display
+  window's parity are covered by the host regression, and the blue
+  scene now agrees visually with FS-UAE. [Commodore AA chipset specification](https://shanson.com/spencer/Amiga-AA-Chipset.pdf)
+
+The new memory-map and scan-doubling checks fail on the old host build
+and pass on the corrected one. The eight-title RP9 comparison produced
+identical frames for the five A500 games. The three A1200 titles
+(Christmas Breakdown, Maniac Ball and Tactical Manager 2) reached the
+same screens at different moments.
+
+The Tab5 ran the original executable from a compact bootable HDF with
+the same PAL A1200 configuration. It passed the previous freeze near
+frame 9750, rendered the blue scene, showed the credits, and returned to
+the AmigaDOS prompt by frame 15600. The heavier scenes ran at about 33 fps.
 
 ### Voyage follow-up, 2026-10-24
 

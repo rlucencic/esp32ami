@@ -85,6 +85,7 @@
 #define BPLCON3_BRDRBLNK 0x0020
 #define BPLCON3_BRDSPRT 0x0002
 #define BPLCON0_ECSENA  0x0001
+#define FMODE_BSCAN2    0x4000
 
 /* A colour write: from this pixel of the picture on, colour reg (AGA: of
  * the 256) is rgb
@@ -537,6 +538,10 @@ AMI_HOT void display_fetch(void)
     uint32_t align = ~(uint32_t)(2 * fw - 1);
     const uint8_t *chip = ami.chip;
     uint32_t mask = ami.chip_mask & ~1u;
+    /* Scan doubling selects the modulo by the line's parity relative
+     * to DIWSTRT, with the same modulo for every plane on that line. */
+    bool scan_double = (s.fmode_line & FMODE_BSCAN2) != 0;
+    int line_mod = (ami.line ^ (s.diwstrt >> 8)) & 1;
     for (int p = 0; p < planes; p++) {
         uint32_t ptr = s.pt[p] & align;
         for (int w = 0; w < words; w++) {
@@ -545,7 +550,7 @@ AMI_HOT void display_fetch(void)
             key = (key ^ v) * 0x01000193u;
             *d++ = v;
         }
-        s.pt[p] = ptr + s.mod[p & 1];
+        s.pt[p] = ptr + s.mod[scan_double ? line_mod : p & 1];
     }
     s.data_key = key;
     /* lores planes 5-6, hires planes 3-4 and super-hires plane 2 fetch in

@@ -126,6 +126,40 @@ static int slot_model_mismatches(bool slow)
     return bad;
 }
 
+static void check_scan_doubling(int first, uint16_t pixels[4])
+{
+    display_reset();
+    display_write(0x08E, (first << 8) | 0x81, 0);
+    display_write(0x090, 0x40C1, 0);
+    display_write(0x092, 0x0038, 0);
+    display_write(0x094, 0x00D0, 0);
+    display_write(0x0E2, 0x2000, 0);
+    display_write(0x0E6, 0x3000, 0);
+    display_write(0x100, 0x2000, 0);
+    display_write(0x108, (uint16_t)-40, 0);
+    display_write(0x10A, 0, 0);
+    display_write(0x1FC, 0x4000, 0);
+    ami.line = first - 1;
+    ami.line_start = ami.line * 454;
+    display_line_start();
+    display_write(0x182, 0x0F00, ami.line_start);
+    display_write(0x184, 0x00F0, ami.line_start);
+    display_line_end();
+    for (ami.line = first; ami.line < first + 4; ami.line++) {
+        ami.line_start = ami.line * 454;
+        display_line_start();
+        display_fetch();
+        display_line_end();
+    }
+    display_frame_end();
+    amiga_screen_signature();
+    for (int i = 0; i < 4; i++) {
+        uint16_t line[AMIGA_SCREEN_WIDTH];
+        amiga_render_line_rgb565(2 * (first - 29 + i), line);
+        pixels[i] = line[AMIGA_SCREEN_WIDTH / 2];
+    }
+}
+
 int main(void)
 {
     memset(&ami, 0, sizeof(ami));
@@ -212,6 +246,30 @@ int main(void)
     CHECK(s_watch_hits == 0, "AMI_WATCH ignores other addresses");
     unsetenv("AMI_WATCH");
     mem_watch_reload();
+
+    ami.model = AMIGA_A1200;
+    ami.cpu_shift = 1;
+    ami.slow_size = 0;
+    ami.intreq = 0;
+    mem_update_map();
+    m68k_write_memory_8(0xCFF09C, 0xFF);
+    m68k_write_memory_16(0xD0009C, 0x8020);
+    CHECK(m68k_read_memory_16(0xDFF01E) == 0, "A1200 leaves the C0-D7 ranges off the custom bus");
+    m68k_write_memory_16(0xDF009C, 0x8020);
+    CHECK(m68k_read_memory_16(0xDFF01E) == 0x0020, "A1200 mirrors custom registers throughout DFxxxx");
+
+    ami.aga = ami.ecs = true;
+    memset(chip + 0x2000, 0xFF, 40);
+    memset(chip + 0x2028, 0, 40);
+    memset(chip + 0x3000, 0, 40);
+    memset(chip + 0x3028, 0xFF, 40);
+    const uint16_t doubled[] = { 0xF800, 0xF800, 0x07E0, 0x07E0 };
+    uint16_t pixels[4];
+    display_init(NULL);
+    for (int first = 29; first <= 30; first++) {
+        check_scan_doubling(first, pixels);
+        CHECK(memcmp(pixels, doubled, sizeof(pixels)) == 0, "AGA scan doubling repeats both planes for either window parity");
+    }
 
     puts(failures ? "chip bus checks failed" : "all chip bus checks passed");
     return failures != 0;

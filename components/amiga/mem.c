@@ -6,13 +6,13 @@
  *   $200000-$9FFFFF  fast RAM once autoconfigured (autoconf.c)
  *   $A00000-$BFFFFF  the CIAs: CIA-A while A12 is low (odd bytes), CIA-B
  *                    while A13 is low (even bytes), a register every 256
- *   $C00000-$D7FFFF  slow RAM (the A500's trapdoor); above it, the custom
- *                    chips' mirror Kickstart sizes it by (1.2 takes any
- *                    space that isn't the mirror for RAM)
+ *   $C00000-$D7FFFF  slow RAM (the A500's trapdoor); on earlier models,
+ *                    its unmapped portion mirrors the custom chips
  *   $DA0000-$DAFFFF  Gayle's IDE and its registers, $DE1000 its ID (gayle.c;
  *                    the A600's, the others' with a hard disk in)
  *   $DC0000-$DCFFFF  the battery-backed clock (rtc.c)
- *   $DFF000-$DFFFFF  the custom chips (registers mirrored every $200)
+ *   $DFF000-$DFFFFF  the custom chips (registers mirrored every $200;
+ *                    the A1200 decodes the whole $DF0000 bank)
  *   $E80000-$E8FFFF  autoconfig: the next board to configure
  *   $F80000-$FFFFFF  Kickstart (256 KB ones mirrored)
  *
@@ -316,6 +316,9 @@ static void cia_write8(uint32_t a, uint8_t v)
 /* (slow RAM's banks never get here) */
 static inline bool is_custom(uint32_t a)
 {
+    if (ami.model == AMIGA_A1200) {
+        return a >= 0xDF0000 && a < 0xE00000;
+    }
     return (a >= 0xDFF000 && a < 0xE00000) || (a >= 0xC00000 && a < 0xD80000);
 }
 
