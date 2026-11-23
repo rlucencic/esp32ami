@@ -7,24 +7,8 @@ the others keep their numbers (done: 1, an RP9 setting up its machine;
 2, the blitter's timing slot by slot; 3, the 68000 on the chip bus slot by
 slot; 4, Paula's attach modes; 5, ECS super-hires; 6, writing extended
 ADFs; 7, AGA's untested and missing parts; 8, the 68EC020's instruction
-cache; 11, the Voyage prefetch, CIA and floppy follow-up).
-
-## 10. Titles that still fail (the smoke runs)
-
-Why: found running the user's demos and game ADFs with `tools/smoke.py`
-(CLAUDE.md, Testing and Open items); each could be a fault of ours.
-Check each with `smoke.py` on its folder (`ONLY=<name>`) and the
-collection for the rest. Roughly a session each, in this order:
-
-- All New World of Lemmings (AGA, Hoodlum disks): the Gayle overlay fix
-  clears the title-screen CPU exception loop. The game still fails to
-  reach the map room with Kickstart 3.1 and 2 MiB chip RAM on the host
-  and Tab5. A run without fast RAM hits a read error on block 925 when
-  DF0 is selected with its motor off. FS-UAE reaches the map room with
-  the same configuration and disks. Trace the CIA writes and DMA reads
-  from the last successful track, including the code that changes the
-  motor state. Images and traces are in `build/todo10-compat-2026-11-22/`.
-  See `docs/architecture.md` under "Lemmings and Pango Fun".
+cache; 10, titles from the smoke runs; 11, the Voyage prefetch, CIA and
+floppy follow-up).
 
 ## 9. Waiting on something
 

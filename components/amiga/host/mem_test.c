@@ -258,6 +258,24 @@ int main(void)
     m68k_write_memory_16(0xDF009C, 0x8020);
     CHECK(m68k_read_memory_16(0xDFF01E) == 0x0020, "A1200 mirrors custom registers throughout DFxxxx");
 
+    m68k_write_memory_32(0x1000, 0x12345678);
+    m68k_write_memory_16(0x1004, 0x9ABC);
+    CHECK(m68k_read_memory_16(0x1001) == 0x3456, "68EC020 reads an odd word in big-endian order");
+    CHECK(m68k_read_memory_32(0x1001) == 0x3456789A, "68EC020 reads an odd long in big-endian order");
+    m68k_write_memory_16(0x1001, 0xABCD);
+    CHECK(m68k_read_memory_32(0x1000) == 0x12ABCD78, "68EC020 odd word write preserves adjacent bytes");
+
+    m68k_write_memory_16(0x00FFFE, 0xAB12);
+    m68k_write_memory_32(0x010000, 0x345678CD);
+    CHECK(m68k_read_memory_16(0x00FFFF) == 0x1234, "68EC020 reads an odd word across banks");
+    CHECK(m68k_read_memory_32(0x00FFFF) == 0x12345678, "68EC020 reads an odd long across banks");
+    m68k_write_memory_32(0x00FFFF, 0xDEADBEEF);
+    CHECK(m68k_read_memory_16(0x00FFFE) == 0xABDE &&
+          m68k_read_memory_32(0x010000) == 0xADBEEFCD, "68EC020 odd long write preserves adjacent bytes across banks");
+    rom[sizeof(rom) - 2] = 0xA5;
+    m68k_write_memory_16(0x000000, 0x1234);
+    CHECK(m68k_read_memory_16(0xFFFFFF) == 0xA512, "68EC020 odd word read wraps at the 24-bit address boundary");
+
     ami.aga = ami.ecs = true;
     memset(chip + 0x2000, 0xFF, 40);
     memset(chip + 0x2028, 0, 40);

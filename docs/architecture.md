@@ -831,7 +831,7 @@ Aerial Racers' race on the Tab5 after all of them: 98-102%, core 1
 of the difference the alert detector's false alarms, red titles; Last
 Action Hero, Lionheart, Project-X and Navy Seals now run; Summer Games,
 Cube-X and Neighbours fewer dark pictures; the rest the same scenes at
-other moments). The remaining titles are in `TODO.md` item 10.
+other moments). The remaining smoke-run fixes are described below.
 
 ### Under Pressure follow-up, 2026-11-22
 
@@ -871,11 +871,10 @@ the AmigaDOS prompt by frame 15600. The heavier scenes ran at about 33 fps.
   read ROM contents as vectors. Gayle now handles the overlay on both
   the A600 and the A1200 as a reset latch cleared by the first CIA-A
   write. The older A500 and A2000 keep the port-controlled overlay.
-  The corrected host and Tab5 get past the exception loop. The game
-  still hits a block 925 read error with the tested no-fast-RAM setup.
-  `AMI_DISKLOG` records the retries with no selected spinning drive.
-  FS-UAE 3.1.66 reached the map room with the same images. The remaining
-  disk issue is in `TODO.md`. [WinUAE CIA behavior](https://github.com/tonioni/WinUAE/blob/master/cia.cpp), [MAME Gayle overlay behavior](https://github.com/mamedev/mame/blob/master/src/mame/amiga/amiga_m.cpp)
+  That change cleared the exception loop. The game then hit a block 925
+  read error with no fast RAM. `AMI_DISKLOG` recorded the retries with
+  no selected spinning drive. FS-UAE 3.1.66 reached the map room with the
+  same images. [WinUAE CIA behavior](https://github.com/tonioni/WinUAE/blob/master/cia.cpp), [MAME Gayle overlay behavior](https://github.com/mamedev/mame/blob/master/src/mame/amiga/amiga_m.cpp)
 - **Pango Fun** (Heresy beta, PAL A500, 512 KiB chip and 512 KiB slow
   RAM). The intro turns Copper DMA off while replacing its list.
   On resumption, the Copper fetched from the overwritten list at
@@ -896,6 +895,32 @@ points. Traps 'n Treasures showed the same title and scrolling intro at
 slightly different points in their animations. The Tab5's previous
 Amiga settings and disks were restored after both runs. Local disk
 images, traces and screenshots are in `build/todo10-compat-2026-11-22/`.
+
+#### Lemmings disk error follow-up
+
+The title's post-Space loader uses odd-address 68EC020 data operands.
+For example, at `$05FA16` it reads a word at `$092B73` whose two guest
+bytes are `$3E,$B3`. A native word load at that odd address joins bytes
+from opposite ends of their storage words. The corrupted data led to
+stray CIA writes, a stopped DF0 motor and the misleading block 925
+requester. The 68EC020 callbacks now split odd words into two bytes and
+odd longwords into a byte, an aligned word and a byte. Each piece uses
+its own memory bank and wraps at 24 bits. [Motorola M68020 User's Manual, section 5.2.2](https://www.nxp.com/docs/en/reference-manual/M68020UM.pdf)
+
+The new host checks cover odd reads and writes, adjacent byte
+preservation, the 64 KiB bank boundary and the 24-bit wrap. All seven
+checks fail against the previous callbacks. In the eight-title RP9
+comparison every sampled frame matched. Under Pressure still shows the
+cliff, blue scene and credits before returning to the Shell, now by
+about frame 9900 on the host.
+
+Lemmings reaches the map room with two disk 1 variants, both with and
+without 4 MiB fast RAM on the host. The third variant has a bad OFS
+checksum on block 15 of the image. With the Shadow disk in DF1, the
+first Shadow level loaded on the host. The Tab5 with Kickstart 3.1,
+2 MiB chip RAM and no fast RAM reached the map room and opened the map
+on a mouse click. The board's previous configuration and disks were
+restored.
 
 ### Voyage follow-up, 2026-10-24
 

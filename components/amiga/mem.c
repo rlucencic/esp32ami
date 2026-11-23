@@ -531,7 +531,9 @@ static void AMI_HOT __attribute__((noinline)) write32_000(uint32_t a, unsigned i
 
 /* Each callback: the 68000's access to plain memory inline (off the chip
  * bus, or on it while nothing or only this line's taken slots are in the
- * way), the rest as above; then the 68EC020's.
+ * way), the rest as above; then the 68EC020's. Odd 68EC020 data accesses
+ * split into bytes and aligned words, since RAM is stored in host-endian
+ * words and the pieces can land in different banks.
  */
 unsigned int AMI_HOT m68k_read_memory_8(unsigned int a)
 {
@@ -568,6 +570,10 @@ unsigned int AMI_HOT m68k_read_memory_16(unsigned int a)
         }
         return read16_000(a);
     }
+    if (a & 1) {
+        uint32_t hi = m68k_read_memory_8(a);
+        return (hi << 8) | m68k_read_memory_8((a + 1) & 0xFFFFFF);
+    }
     if (s_m.wait[b]) {
         ami_cpu_wait(s_m.wait[b]);
     }
@@ -588,6 +594,11 @@ unsigned int AMI_HOT m68k_read_memory_32(unsigned int a)
             return ((uint32_t)rd16(p, a) << 16) | lo;
         }
         return read32_000(a);
+    }
+    if (a & 1) {
+        uint32_t hi = m68k_read_memory_8(a);
+        uint32_t middle = m68k_read_memory_16((a + 1) & 0xFFFFFF);
+        return (hi << 24) | (middle << 8) | m68k_read_memory_8((a + 3) & 0xFFFFFF);
     }
     if (p && (a & 0xFFFF) <= 0xFFFC) {
         if (s_m.wait[b]) {
@@ -843,6 +854,11 @@ void AMI_HOT m68k_write_memory_16(unsigned int a, unsigned int v)
         write16_000(a, v);
         return;
     }
+    if (a & 1) {
+        m68k_write_memory_8(a, v >> 8);
+        m68k_write_memory_8((a + 1) & 0xFFFFFF, v & 0xFF);
+        return;
+    }
     if (s_m.wait[b]) {
         ami_cpu_wait(s_m.wait[b]);
     }
@@ -869,6 +885,12 @@ void AMI_HOT m68k_write_memory_32(unsigned int a, unsigned int v)
             return;
         }
         write32_000(a, v);
+        return;
+    }
+    if (a & 1) {
+        m68k_write_memory_8(a, v >> 24);
+        m68k_write_memory_16((a + 1) & 0xFFFFFF, (v >> 8) & 0xFFFF);
+        m68k_write_memory_8((a + 3) & 0xFFFFFF, v & 0xFF);
         return;
     }
     if (p && (a & 0xFFFF) <= 0xFFFC) {

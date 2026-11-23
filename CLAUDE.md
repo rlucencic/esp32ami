@@ -1014,9 +1014,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
 
 ## Open items
 
-- The work still to do, sketched and in order: `TODO.md` (items 1-8 and 11
-  done; 10, titles that still fail, first; 9 is what waits on something). The
-  items below are the state of things; `TODO.md` says what to do next.
+- `TODO.md` tracks work waiting on hardware, media or a reproducible
+  case. Items 1–8, 10 and 11 are complete. The notes below describe
+  other limits and known behavior.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
   (`docs/images`, 2026-10-21): `workbench31.png` (A600, 3.1 from an HDF,
@@ -1071,15 +1071,13 @@ the top two bits do nothing, Aerial Racers' race sets them),
   them. Sprites inside the window on lines without bitplanes still show:
   Denise (WinUAE) would want a BPL1DAT write on the line first, which
   wasn't settled for those lines (above and below the window it is).
-- **Titles still failing** (the smoke runs, Testing; `TODO.md` item 10).
+- **Title compatibility** (the smoke runs, Testing).
   Killer (A1200, marked for a JIT) quits at once (030 or FPU, likely).
-  All New World of Lemmings (Hoodlum AGA disks) still hits a disk read
-  error after the title on the A1200 without fast RAM. The Gayle fix
-  clears its exception loop, and the Copper fix clears the Pango Fun
-  beta's Guru (2026-11-22, `docs/architecture.md`). The Magician fails
-  only with slow RAM, ECO wants 1.2, DarkSide and Primal Rage 2.04 with
-  1 MB; Hardwired wants its
-  disk 2 in DF0 and a right click; the Quartex cracks of Navy Seals and
+  The Gayle and 68EC020 data access fixes let All New World of Lemmings
+  reach the map room. The Copper fix clears the Pango Fun beta's Guru
+  (2026-11-22, `docs/architecture.md`). The Magician fails only with slow
+  RAM. ECO wants 1.2. DarkSide and Primal Rage want 2.04 with 1 MB.
+  Hardwired wants disk 2 in DF0 and a right click. The Quartex cracks of Navy Seals and
   Crime Does Not Pay load through a trace-vector decoder for ~160 s ("the
   game takes a while to load"; not timed on a real one).
 - **Clock** (the clock audit, 2026-10-21: `../esp32emu/CLAUDE.md`, To do):
