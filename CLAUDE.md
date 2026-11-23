@@ -947,8 +947,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
   Workbench2.1, every track's checksum right). In Chrome on the board's
   page (the file staged inside a workspace folder: the browser tool takes
   no others): a .dms and an .adz unpacked, uploaded, downloaded back
-  identical. Modes 2-5 (quick, medium, deep, heavy 1) are written after
-  xDMS but no archive here uses them.
+  identical. The Quick, Medium, Deep, Heavy1 and Heavy2 samples all
+  matched xDMS byte for byte on 2026-11-23. See `docs/architecture.md`
+  under "DMS compression mode validation" for the archives and checks.
 - **The collection before and after a change**: copy the old
   `ami_host` aside, build the new one, then `tools/collection.py <folder
   of RP9s> <out> roms <folder with workbench-135/311.hdf> old=<old>
@@ -1047,7 +1048,7 @@ the top two bits do nothing, Aerial Racers' race sets them),
   to one: Son Shu Shi, the collection's only extended ADF (154 raw
   tracks, 12 AmigaDOS), only reads in its 140 s. A game whose disk turns
   AmigaDOS tracks raw has a pause while the whole image (~2 MB) is
-  written, once. DMS modes 2-5 untested (no archives).
+  written, once.
 - The RP9 games with a hard disk: joined with their system disk (above).
   The six for 1.3 run through our board (host, KS 1.3 with 1 MB fast
   RAM: Hannibal's menu, also on the Tab5; Epsilon 9's intro, Flight of the

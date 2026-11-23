@@ -14,9 +14,6 @@ floppy follow-up).
 
 Nothing here can be done as things are; each says what it waits for.
 
-- DMS modes 2-5 (quick, medium, deep, heavy 1): written after xDMS,
-  untested. Needs an archive packed in one of them (none in the
-  collection; no DMS packer at hand).
 - The clock's saved offset keeps a clock set while the board's time was
   wrong (unlikely with the Tab5's RTC): a remark, nothing to do.
 - The 68000's bus cycles where a real one has them: the slot model takes

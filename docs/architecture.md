@@ -922,6 +922,25 @@ first Shadow level loaded on the host. The Tab5 with Kickstart 3.1,
 on a mouse click. The board's previous configuration and disks were
 restored.
 
+### DMS compression mode validation, 2026-11-23
+
+DiskMasher 1.01 from Fred Fish disk 406 packed two cylinders of a
+synthetic double-density floppy in each of modes 2 (Quick), 3 (Medium)
+and 4 (Deep). The command for each was
+`DMS READ <name>.dms FROM DF0: CMODE <2|3|4> LOW 0 HIGH 1 NOZERO NOVAL`.
+DiskMasher 1.11 also packed all 80 cylinders of a second synthetic
+floppy with `CMODE HEAVY1 NOZERO NOVAL`. The Heavy1 and Heavy2 checks
+also included the full Gory Story and Golden Fleece disks. [DiskMasher 1.01 distribution](https://ftp.funet.fi/pub/amiga/fish/401-500/ff406/), [DiskMasher 1.11 distribution](https://ftp.fau.de/aminet/util/arc/dms111.run), [IF Archive Amiga disks](https://www.ifarchive.org/indexes/if-archive/games/amiga/)
+
+xDMS 1.3.2 and the web converter reproduced the original bytes for
+all generated disks. Both cylinders in each partial archive had the
+continuation flag set. `tools/amifiles_test.js` compared the converter's
+880 KiB ADFs with the xDMS output, padded with zeros for the partial
+disks. The browser registration path produced the same bytes in a Node
+VM. This run did not exercise the Tab5 upload path. Local archives and
+expected ADFs are in `build/dms-validation-2026-11-23/{legacy,packed}/`.
+[xDMS 1.3.2](https://zakalwe.fi/~shd/foss/xdms/)
+
 ### Voyage follow-up, 2026-10-24
 
 The host comparisons exposed two further issues. Hyperion's DMA could
