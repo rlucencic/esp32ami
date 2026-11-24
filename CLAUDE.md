@@ -729,9 +729,10 @@ the top two bits do nothing, Aerial Racers' race sets them),
   bounce buffer per transfer (`sdmmc_cmd: allocate_dma_buf: not enough
   mem`, internal RAM's low point 29 KB). Both are in PSRAM now, aligned
   to the cache line (`sdcard.c`, `web.c`). In the setup screen the
-  console's `R` only sets the machine: press Start (`t 1065 637`); a
-  Start sent in the first seconds after a boot can be lost: check the
-  status and send it again.
+  console's `R` only sets the machine: press Start (`t 1065 637`). (The
+  first console command after a reset by esptool used to be lost: the
+  PC's tty echoed the chip's boot banner into it; fixed in esp32emu,
+  2026-11-24.)
 - **Execute Command keeps the last command in its field**: a second typed
   command was appended to the first ("wrong number of arguments"). Clear
   it with Right-Amiga+X before typing.
