@@ -1086,7 +1086,7 @@ the top two bits do nothing, Aerial Racers' race sets them),
 ## Open items
 
 - [TODO.md](TODO.md) tracks the next Tab5 and host checks and the work
-  waiting on hardware, media or a reproducible case. Items 1–8 and 10–15
+  waiting on hardware, media or a reproducible case. Items 1–8 and 10–16
   are complete.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images

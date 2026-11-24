@@ -1142,6 +1142,44 @@ New host options for finding such places: `AMI_WATCHLOG`, `AMI_STOPDIS`,
 names in `replays.json`) and the references are in `build/replays/`; the
 runs are in `build/todo14-2026-11-24/`.
 
+### Faster Tab5 downloads, 2026-11-24
+
+TODO item 16. A 50 MB image took ~2.5 minutes to download from the Tab5
+(0.35–0.4 MB/s) while uploads took 40 s. The fix is in esp32emu (the Tab5
+board's `sdkconfig.defaults`, `web.c`).
+
+- **Not the card, the pieces or the CPU.** A temporary download sent from
+  memory, with no card reads, ran at the same 0.4 MB/s, chunked or as one
+  raw stream, with the transfer task at priority 5, 10 or 19, and with
+  the cores idle. WiFi modem sleep off and esp_hosted's throttle off made
+  no difference either.
+- **Lost packets.** The PC (wired) queued about one TCP segment in ten
+  out of order. esp_hosted's packet counters showed the host handing the
+  C6 every packet: no drops, ~2.5% resent. So the C6 lost them. It had
+  16 Wi-Fi transmit buffers (`CONFIG_WIFI_RMT_STATIC_TX_BUFFER_NUM`,
+  passed to it at `esp_wifi_init`), while TCP's 64 KB send window keeps
+  ~45 segments in flight.
+- **The fix.** 64 buffers, the most allowed (~100 KB of the C6's RAM;
+  Bluetooth still starts, with both paired devices): 2.3 MB/s from
+  memory, nothing out of order (32 buffers: 0.73 MB/s). Downloads from the
+  card now go in 64 KB pieces on the Tab5 (1.95 MB/s against 1.75 with
+  8 KB ones).
+- **Checked on the Tab5.** 1 MB and 50 MB of random bytes uploaded and
+  downloaded back, identical:
+
+  | | 50 MB down | 50 MB up | 1 MB down |
+  | --- | ---: | ---: | ---: |
+  | Before, A1200 running | 143 s | 40 s | — |
+  | Setup screen | 27.2 s | 45.8 s | 0.77 s |
+  | A1200 running (100% speed) | 27.5 s | 40.8 s | 0.63 s |
+
+  Uploads are unchanged and lose nothing (no resends seen by the PC).
+- **MaTouch.** esp32coco with the new `web.c`: 900 KB up and down,
+  identical, at the same speed as before (its WiFi is the S3's own).
+- **Every esp32emu project** built for both boards; each project's
+  `build-tab5/sdkconfig` had its 16 changed to 64, because defaults don't
+  override a value already there.
+
 ### Voyage follow-up, 2026-10-24
 
 The host comparisons exposed two further issues. Hyperion's DMA could

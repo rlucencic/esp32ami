@@ -10,7 +10,7 @@ ADFs; 7, AGA's untested and missing parts; 8, the 68EC020's instruction
 cache; 10, titles from the smoke runs; 11, the Voyage prefetch, CIA and
 floppy follow-up; 12, Workbench's display changes on the Tab5; 13, DMS
 through the live web page; 14, title replays that tell floppy from memory
-failures; 15, uploads while the A1200 runs).
+failures; 15, uploads while the A1200 runs; 16, faster Tab5 downloads).
 
 ## Next work
 
