@@ -978,6 +978,15 @@ the top two bits do nothing, Aerial Racers' race sets them),
   identical. The Quick, Medium, Deep, Heavy1 and Heavy2 samples all
   matched xDMS byte for byte on 2026-11-23. See `docs/architecture.md`
   under "DMS compression mode validation" for the archives and checks.
+  On the Tab5's live page (2026-11-24, TODO 13): all six of those
+  archives unpacked, uploaded and downloaded back identical, an archive
+  with a bad track checksum refused with nothing uploaded, and Gory
+  Story's ADF booted from DF0: on the A1200 (the frame the host's).
+  On Linux the page runs in a separate headless Chrome (the flatpak,
+  `--headless=new --remote-debugging-port`, its own `--user-data-dir`;
+  files staged under `~/Downloads`, which the sandbox can read), driven
+  over DevTools (`DOM.setFileInputFiles` on `#pick`): the script is in
+  `build/dms-validation-2026-11-23/tab5-2026-11-24/`.
 - **The collection before and after a change**: copy the old
   `ami_host` aside, build the new one, then `tools/collection.py <folder
   of RP9s> <out> roms <folder with workbench-135/311.hdf> old=<old>
@@ -1044,8 +1053,8 @@ the top two bits do nothing, Aerial Racers' race sets them),
 ## Open items
 
 - [TODO.md](TODO.md) tracks the next Tab5 and host checks and the work
-  waiting on hardware, media or a reproducible case. Items 1–8, 10, 11,
-  12 and 15 are complete.
+  waiting on hardware, media or a reproducible case. Items 1–8, 10–13
+  and 15 are complete.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
   (`docs/images`, 2026-10-21): `workbench31.png` (A600, 3.1 from an HDF,

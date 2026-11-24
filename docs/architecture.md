@@ -937,8 +937,10 @@ all generated disks. Both cylinders in each partial archive had the
 continuation flag set. `tools/amifiles_test.js` compared the converter's
 880 KiB ADFs with the xDMS output, padded with zeros for the partial
 disks. The browser registration path produced the same bytes in a Node
-VM. This run did not exercise the Tab5 upload path. Local archives and
-expected ADFs are in `build/dms-validation-2026-11-23/{legacy,packed}/`.
+VM. This run did not exercise the Tab5 upload path; that was checked on
+2026-11-24 ([below](#dms-through-the-live-web-page-2026-11-24)). Local
+archives and expected ADFs are in
+`build/dms-validation-2026-11-23/{legacy,packed}/`.
 [xDMS 1.3.2](https://zakalwe.fi/~shd/foss/xdms/)
 
 ### Workbench display changes on the Tab5, 2026-11-24
@@ -1007,6 +1009,50 @@ mem` from the SD driver. The fix is in esp32emu (`components/emu`).
   same build compared with the old `web.c` gave the same times (8 MB up
   37 s, down 16–18 s) and identical files.
 - **Every esp32emu project** built for both boards.
+
+### DMS through the live web page, 2026-11-24
+
+TODO item 13. The DMS validation archives went through the Tab5's own web
+page in Chrome: the page unpacked each one in the browser and uploaded the
+ADF to the board. Each ADF was then downloaded back from the board and
+compared with the reference.
+
+- **Method.** A separate headless Chrome 158 (the flatpak, with a
+  throwaway profile) opened the board's page. A Node script set each
+  archive on the page's file input over the DevTools protocol
+  (`DOM.setFileInputFiles`), which runs the same path as choosing a file,
+  and read the page's log lines. The archives were renamed with a
+  `dmschk_` prefix so they couldn't replace anything on the card.
+- **Results.** Every good archive was unpacked and uploaded, and every
+  ADF came back from the board identical to its reference:
+
+  | Archive | Tracks | Mode | Page |
+  | --- | ---: | --- | --- |
+  | quick | 2 | Quick | 0.8 s |
+  | medium | 2 | Medium | 1.0 s |
+  | deep | 2 | Deep | 1.3 s |
+  | heavy1 | 80 | Heavy1 | 1.0 s |
+  | Gory Story | 80 | Heavy1 | 1.0 s |
+  | Golden Fleece | 80 | Heavy2 | 1.0 s |
+
+  "Page" is the time from choosing the file to the page's "is on the
+  board" line, unpacking and upload included. The two-track archives
+  give 880 KB ADFs padded with zeros, as on the host.
+- **A bad track checksum.** A copy of heavy1 had track 40's checksum of
+  its unpacked bytes changed by one, and that track header's CRC
+  recomputed, so only the unpacked check could catch it. The page said
+  "track 40 didn't unpack right (mode 5)" and sent nothing: the image
+  isn't on the card (a GET gives 404, `/api/disks` doesn't list it).
+- **Booting.** Gory Story's uploaded ADF in DF0: of the A1200 (Kickstart
+  3.1, 2 MB chip, 8 MB fast, the Workbench HD in DH0:) booted to its
+  title page ("Listing of gory.doc") at 98–100% speed. The emulated frame
+  equals the host A1200's in every pixel (RGB565), and the panel shows
+  it. On the host both bootable disks also boot on an A500 with 1.3
+  (Golden Fleece to its logo).
+- The driver script and the board's pictures are in
+  `build/dms-validation-2026-11-23/tab5-2026-11-24/`. The test images
+  were deleted from the card afterwards and DF0: given back its
+  Workbench 3.1 disk.
 
 ### Voyage follow-up, 2026-10-24
 

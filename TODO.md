@@ -8,17 +8,10 @@ the others keep their numbers (done: 1, an RP9 setting up its machine;
 slot; 4, Paula's attach modes; 5, ECS super-hires; 6, writing extended
 ADFs; 7, AGA's untested and missing parts; 8, the 68EC020's instruction
 cache; 10, titles from the smoke runs; 11, the Voyage prefetch, CIA and
-floppy follow-up; 12, Workbench's display changes on the Tab5; 15,
-uploads while the A1200 runs).
+floppy follow-up; 12, Workbench's display changes on the Tab5; 13, DMS
+through the live web page; 15, uploads while the A1200 runs).
 
 ## Next work
-
-13. **Check DMS through the live web page.** Small. Use the [DMS validation
-    archives](docs/architecture.md#dms-compression-mode-validation-2026-11-23)
-    in the Tab5 browser workflow. Download each resulting ADF, compare its
-    bytes to the host reference and boot a full bootable image from DF0:.
-    Include an archive with a bad track checksum and check that it leaves no
-    uploaded image.
 
 14. **Distinguish floppy and memory failures in title replays.** Medium. Extend
     `tools/smoke.py` replays with a fixed checkpoint for All New World of
