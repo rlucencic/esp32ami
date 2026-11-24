@@ -354,9 +354,10 @@ lessons learned along the way.
   xSysInfo give 1.00 and 1.06 times an A600. The blitter gets the slots
   each line's display leaves it, counted a line at a time. Demos that
   count on exact bus cycles may show it.
-- No IPF (SPS) images. DMS archives in the
-  "quick", "medium", "deep" and "heavy 1" modes are written but untested
-  (no such archives at hand).
+- No IPF (SPS) images. Quick, Medium, Deep and Heavy1 DMS output was
+  compared byte for byte with xDMS in the host-side web converter tests.
+  The [validation notes](docs/architecture.md#dms-compression-mode-validation-2026-11-23)
+  record the fixtures and the remaining Tab5 upload check.
 - No serial or parallel devices, MIDI, or a second mouse.
 - What's planned, in order: [TODO.md](TODO.md).
 

@@ -1015,9 +1015,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
 
 ## Open items
 
-- `TODO.md` tracks work waiting on hardware, media or a reproducible
-  case. Items 1–8, 10 and 11 are complete. The notes below describe
-  other limits and known behavior.
+- [TODO.md](TODO.md) tracks the next Tab5 and host checks and the work
+  waiting on hardware, media or a reproducible case. Items 1–8, 10 and
+  11 are complete.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
   (`docs/images`, 2026-10-21): `workbench31.png` (A600, 3.1 from an HDF,

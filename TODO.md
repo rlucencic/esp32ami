@@ -10,6 +10,27 @@ ADFs; 7, AGA's untested and missing parts; 8, the 68EC020's instruction
 cache; 10, titles from the smoke runs; 11, the Voyage prefetch, CIA and
 floppy follow-up).
 
+## Next work
+
+12. **Replay Workbench display changes on the Tab5.** Medium. Use the A1200
+    with Kickstart 3.1 to switch between AGA lores, interlace and super-hires,
+    then drag a lores screen over Workbench. Capture both the emulated frame
+    and LCD output and compare with the host, including the existing
+    `tools/laceboot.py` and `tools/shresboot.py` probes.
+
+13. **Check DMS through the live web page.** Small. Use the [DMS validation
+    archives](docs/architecture.md#dms-compression-mode-validation-2026-11-23)
+    in the Tab5 browser workflow. Download each resulting ADF, compare its
+    bytes to the host reference and boot a full bootable image from DF0:.
+    Include an archive with a bad track checksum and check that it leaves no
+    uploaded image.
+
+14. **Distinguish floppy and memory failures in title replays.** Medium. Extend
+    `tools/smoke.py` replays with a fixed checkpoint for All New World of
+    Lemmings and a control for Pango Fun. Reproduce The Magician with and
+    without slow RAM and record the first diverging guest event before changing
+    timing or memory decoding.
+
 ## 9. Waiting on something
 
 Nothing here can be done as things are; each says what it waits for.
