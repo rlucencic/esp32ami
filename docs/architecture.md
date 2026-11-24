@@ -959,9 +959,54 @@ was dragged over the super-hires Workbench.
 - **Probes.** `laceboot`, `shresboot` (A600, 2.05) and `agaboot shres`
   passed their checks on the board's frames, identical to the host's.
 - **Uploads.** Web uploads failed while the A1200 ran: the SD driver ran
-  out of internal RAM for its DMA buffer. That is now TODO item 15.
+  out of internal RAM for its DMA buffer. That became TODO item 15, fixed
+  the same day (below).
 
 [Workbench display changes on the Tab5](workbench-modes-tab5-2026-11-24.md)
+
+### Uploads while the A1200 runs, 2026-11-24
+
+TODO item 15. With the A1200 running Workbench 3.1 (2 MB chip, 8 MB fast),
+every web upload failed, even a 900 KB one: "Can't write to the SD card"
+or "Upload failed". The board's log showed `allocate_dma_buf: not enough
+mem` from the SD driver. The fix is in esp32emu (`components/emu`).
+
+- **Cause.** The Amiga's allocations leave about 3.4 MB of PSRAM free.
+  That is below the web server's 4 MB reserve, so no file is taken whole
+  into PSRAM; every transfer goes in 8 KB pieces. Those pieces were
+  internal DMA memory, and the SD driver allocated another internal DMA
+  buffer for each transfer that wasn't aligned to the cache line, which is
+  most of them (FATFS's sector windows and file caches). Internal RAM's
+  low point during a transfer was 29 KB, and the driver's allocation
+  failed outright. The setup screen has the same PSRAM but more internal
+  RAM (158 KB free against 113 KB), which is why uploads worked there.
+  The restart seen once during a 50 MB upload did not happen again in
+  three 50 MB uploads and three downloads; its cause wasn't found.
+- **Fix.** `sdcard.c` reserves the driver's bounce buffer once, at mount,
+  in PSRAM (`host.dma_aligned_buffer`, 8 KB, aligned to 128 bytes): the
+  P4's SD host reads and writes PSRAM directly. `web.c` keeps the pieces
+  in PSRAM too, aligned the same way, and passes them to `read()` and
+  `write()` past stdio, whose 128-byte buffer had FATFS move one sector
+  at a time. An upload's pieces are filled to 8 KB before each write.
+- **Checked on the Tab5.** A 900 KB and a 50 MB image of random bytes,
+  each uploaded and downloaded back, byte for byte the same:
+
+  | Machine | Upload 900 KB | Upload 50 MB | Download 50 MB |
+  | --- | ---: | ---: | ---: |
+  | A1200 running Workbench (before: failed) | 0.8 s | 40 s | 143 s |
+  | A500 running, Kickstart 1.3 | 0.8 s | 39 s | 145 s |
+  | Setup screen | 0.8 s | 39 s | 152 s |
+
+  The machine stayed at 98–100% speed during the transfers. The 50 MB
+  upload took 49 s from the setup screen before the change.
+- **Downloads are limited by WiFi.** A timing log showed that reading
+  50 MB from the card took 4.7 s and sending it took 126 s, about
+  0.4 MB/s. Pieces of 64 KB instead of 8 KB saved about 18%, which was
+  not enough to keep.
+- **MaTouch.** The web change applies to the S3 too. On esp32coco, the
+  same build compared with the old `web.c` gave the same times (8 MB up
+  37 s, down 16–18 s) and identical files.
+- **Every esp32emu project** built for both boards.
 
 ### Voyage follow-up, 2026-10-24
 

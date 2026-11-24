@@ -720,14 +720,16 @@ the top two bits do nothing, Aerial Racers' race sets them),
   those too corrupted 9 Fingers' streaming pictures. The generated-disk
   host test checks mid-line DMA start, repeated/backwards sync and frame
   rebasing; it fails with the start synchronization removed.
-- **Uploads fail while the A1200 runs** (TODO 15): with 2 MB chip and 8 MB
-  fast RAM running Workbench, the SD driver can't allocate its DMA bounce
-  buffer (`sdmmc_cmd: allocate_dma_buf: not enough mem`, internal RAM's
-  largest block 57 KB): every upload says "Upload failed" or "Can't write
-  to the SD card", and a 50 MB one restarted the board. Upload from the
-  setup screen after a restart (`esptool ... --after watchdog_reset
-  read_mac`), where it works. In the setup screen the console's `R` only
-  sets the machine: press Start (`t 1065 637`).
+- **Uploads failed while the A1200 ran** (TODO 15, fixed 2026-11-24 in
+  esp32emu): the Amiga leaves ~3.4 MB of PSRAM free, under the web
+  server's 4 MB reserve, so every transfer goes in 8 KB pieces. Those were
+  internal DMA memory, and the SD driver allocated another internal DMA
+  bounce buffer per transfer (`sdmmc_cmd: allocate_dma_buf: not enough
+  mem`, internal RAM's low point 29 KB). Both are in PSRAM now, aligned
+  to the cache line (`sdcard.c`, `web.c`). In the setup screen the
+  console's `R` only sets the machine: press Start (`t 1065 637`); a
+  Start sent in the first seconds after a boot can be lost: check the
+  status and send it again.
 - **Execute Command keeps the last command in its field**: a second typed
   command was appended to the first ("wrong number of arguments"). Clear
   it with Right-Amiga+X before typing.
@@ -1042,8 +1044,8 @@ the top two bits do nothing, Aerial Racers' race sets them),
 ## Open items
 
 - [TODO.md](TODO.md) tracks the next Tab5 and host checks and the work
-  waiting on hardware, media or a reproducible case. Items 1–8, 10, 11
-  and 12 are complete.
+  waiting on hardware, media or a reproducible case. Items 1–8, 10, 11,
+  12 and 15 are complete.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
   (`docs/images`, 2026-10-21): `workbench31.png` (A600, 3.1 from an HDF,

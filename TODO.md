@@ -8,22 +8,10 @@ the others keep their numbers (done: 1, an RP9 setting up its machine;
 slot; 4, Paula's attach modes; 5, ECS super-hires; 6, writing extended
 ADFs; 7, AGA's untested and missing parts; 8, the 68EC020's instruction
 cache; 10, titles from the smoke runs; 11, the Voyage prefetch, CIA and
-floppy follow-up; 12, Workbench's display changes on the Tab5).
+floppy follow-up; 12, Workbench's display changes on the Tab5; 15,
+uploads while the A1200 runs).
 
 ## Next work
-
-15. **Make uploads work while the A1200 runs.** Medium. With the A1200
-    (2 MB chip, 8 MB fast) running Workbench 3.1 on the Tab5, every web
-    upload fails, even a 900 KB ADF: the SD driver can't get its DMA bounce
-    buffer (`sdmmc_cmd: allocate_dma_buf: not enough mem`; internal RAM's
-    largest block 57 KB). The board restarted once during a 50 MB upload.
-    From the setup screen after a restart (77 KB) uploads work.
-    [The run](docs/workbench-modes-tab5-2026-11-24.md#uploads-failed-with-the-a1200-running)
-    Find who holds internal RAM there (`heap_caps_print_heap_info`), then
-    give the uploads' writes a DMA-capable buffer, or keep one for the
-    driver, in esp32emu's `web.c`/`sdcard.c`. Check 1 MB and 50 MB uploads
-    on the A1200 and the A500, running and from the setup screen, with
-    downloads compared. esp32emu: every project built.
 
 13. **Check DMS through the live web page.** Small. Use the [DMS validation
     archives](docs/architecture.md#dms-compression-mode-validation-2026-11-23)

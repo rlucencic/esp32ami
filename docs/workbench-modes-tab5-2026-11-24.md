@@ -93,8 +93,9 @@ once, during an attempted 50 MB upload. After a restart into the setup
 screen, with 77 KB the largest free block, uploads worked: 50 MB in 49 s.
 `/api/new` made a blank disk while the machine was running.
 
-This is in `TODO.md`. It is likely the runtime's: the SD driver's bounce
-buffers.
+This became TODO item 15 and was fixed the same day in esp32emu: the SD
+driver's bounce buffer and the web server's transfer pieces are now in
+PSRAM. See [the fix](architecture.md#uploads-while-the-a1200-runs-2026-11-24).
 
 ## Afterwards
 
