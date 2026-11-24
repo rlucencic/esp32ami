@@ -130,6 +130,7 @@ images.
 | `tools/shresboot.py` | A boot disk that tests ECS super-hires: colours, scroll, sprites, mixed lines (`check` reads a picture) |
 | `tools/extadf.py` | Extended ADFs from ADFs (AmigaDOS or raw tracks) and back; a boot disk that writes a raw track |
 | `tools/agaboot.py` | Boot disks that test AGA: FMODE 2, super-hires colours, 32-pixel sprites, 35 ns positions, CLXCON2, wide sprites' collisions |
+| `tools/wbmodes.py` | An Extras 3.1 copy with ScreenMode prefs (AGA lores, interlace, super-hires) and a lores ILBM: Workbench's modes switched from Execute Command (TODO 12's check) |
 | `tools/mkinstall.py` | A Workbench floppy that formats DH0: and copies itself onto it (the hard disk test) |
 | `tools/hdrom.py` | Assembles the hard disk board's boot ROM into `components/amiga/hdrom.h` |
 | `tools/collection.py` | Runs a folder of RP9 games on two host builds and compares their pictures (see Testing) |
@@ -719,6 +720,17 @@ the top two bits do nothing, Aerial Racers' race sets them),
   those too corrupted 9 Fingers' streaming pictures. The generated-disk
   host test checks mid-line DMA start, repeated/backwards sync and frame
   rebasing; it fails with the start synchronization removed.
+- **Uploads fail while the A1200 runs** (TODO 15): with 2 MB chip and 8 MB
+  fast RAM running Workbench, the SD driver can't allocate its DMA bounce
+  buffer (`sdmmc_cmd: allocate_dma_buf: not enough mem`, internal RAM's
+  largest block 57 KB): every upload says "Upload failed" or "Can't write
+  to the SD card", and a 50 MB one restarted the board. Upload from the
+  setup screen after a restart (`esptool ... --after watchdog_reset
+  read_mac`), where it works. In the setup screen the console's `R` only
+  sets the machine: press Start (`t 1065 637`).
+- **Execute Command keeps the last command in its field**: a second typed
+  command was appended to the first ("wrong number of arguments"). Clear
+  it with Right-Amiga+X before typing.
 
 ## Testing
 
@@ -909,6 +921,20 @@ the top two bits do nothing, Aerial Racers' race sets them),
   `echo` turns it into a newline, which `$(cat ...)` drops at the end:
   the command then never runs, which first looked like the Overscan
   editor hanging.)
+- **Workbench's display changes on the A1200, host and Tab5**
+  (2026-11-24): `tools/wbmodes.py Extras3.1.adf out.adf` in DF0:, a copy of
+  the Workbench 3.1 HD (`BLANK0003.hdf`, volume HD) in DH0:, A1200 with 3.1
+  and 2 MB chip. Per mode: Right-Amiga+E (`k:67`+`k:12`), Right-Amiga+X
+  (`k:67`+`k:32`: the field keeps the last command), then
+  `t:extras3.1:prefs/screenmode from extras3.1:prefs/input.info use\n`
+  (locale.info interlace, sound.info super-hires), then
+  `sys:utilities/multiview extras3.1:prefs/palette screen` and Left-Amiga
+  (`k:66`) with the mouse dragging the screen 120 down. Every step's frame
+  on the Tab5 equals the host's in every pixel (the console's `K`, `T`,
+  `m`; `emu_console.py`'s `s` and `L`); super-hires on the panel is the
+  frame's columns 84-1363 one to one. laceboot, shresboot (A600) and
+  agaboot shres pass on the board's frames.
+  [The run](docs/workbench-modes-tab5-2026-11-24.md)
 - **NTSC**: `AMI_NTSC`: Workbench 1.3 (640 x 200) and 3.1 from HD at
   720 x 484, interlace too. Kickstart 3.1's **Early Startup Control**:
   both mouse buttons held from power-on (`AMI_INPUT=0:m:0:0:3`, the
@@ -1016,8 +1042,8 @@ the top two bits do nothing, Aerial Racers' race sets them),
 ## Open items
 
 - [TODO.md](TODO.md) tracks the next Tab5 and host checks and the work
-  waiting on hardware, media or a reproducible case. Items 1–8, 10 and
-  11 are complete.
+  waiting on hardware, media or a reproducible case. Items 1–8, 10, 11
+  and 12 are complete.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
   (`docs/images`, 2026-10-21): `workbench31.png` (A600, 3.1 from an HDF,
@@ -1084,8 +1110,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
 - **Clock** (the clock audit, 2026-10-21: `../esp32emu/CLAUDE.md`, To do):
   the saved offset would keep a clock set while the board's time was
   wrong (unlikely with the Tab5's RTC). (HOLD's release: fixed.)
-- **The A1200's rest** (phase 7): Workbench in 256 colours is checked on
-  the host only (640 x 256, FMODE 3). Checked by eye on the host in the
+- **The A1200's rest** (phase 7): Workbench in 256 colours (lores and
+  hires interlaced, FMODE 3) and super-hires checked on the host and the
+  Tab5 alike (2026-11-24). Checked by eye on the host in the
   collection's games that use them (found with a log of each mode's first
   use, 2026-10-22): HAM8 (Deluxe Pacman's Hall of Fame, frame ~6200),
   64-pixel sprites (its score table, Soccer Kid), FMODE 1 (Football Glory

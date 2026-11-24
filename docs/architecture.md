@@ -941,6 +941,28 @@ VM. This run did not exercise the Tab5 upload path. Local archives and
 expected ADFs are in `build/dms-validation-2026-11-23/{legacy,packed}/`.
 [xDMS 1.3.2](https://zakalwe.fi/~shd/foss/xdms/)
 
+### Workbench display changes on the Tab5, 2026-11-24
+
+TODO item 12. On an A1200 with Kickstart 3.1, Workbench 3.1 from the hard
+disk was switched through AGA lores (256 colours), hires interlaced
+(256 colours) and super-hires (16 colours), and MultiView's lores screen
+was dragged over the super-hires Workbench.
+
+- **Method.** `tools/wbmodes.py` makes the Extras disk with the prefs and
+  the picture. The mode changes are `screenmode FROM … USE`, typed into
+  Execute Command, so no clicks are needed.
+- **Frames.** All six steps' emulated frames on the Tab5 equal the host's
+  in every pixel, including the 1440-wide super-hires and mixed frames.
+  The board ran at 49–50 fps with core 1 at 20–40%.
+- **Panel.** Super-hires is the frame's columns 84–1363, one to one. The
+  other frames fill the centred 960 × 720 area.
+- **Probes.** `laceboot`, `shresboot` (A600, 2.05) and `agaboot shres`
+  passed their checks on the board's frames, identical to the host's.
+- **Uploads.** Web uploads failed while the A1200 ran: the SD driver ran
+  out of internal RAM for its DMA buffer. That is now TODO item 15.
+
+[Workbench display changes on the Tab5](workbench-modes-tab5-2026-11-24.md)
+
 ### Voyage follow-up, 2026-10-24
 
 The host comparisons exposed two further issues. Hyperion's DMA could
