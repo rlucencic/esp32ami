@@ -1054,6 +1054,94 @@ compared with the reference.
   were deleted from the card afterwards and DF0: given back its
   Workbench 3.1 disk.
 
+### Title replays: floppy or memory first, 2026-11-24
+
+TODO item 14. A title that dies at its loader can look like a floppy
+fault when the CPU caused it: All New World of Lemmings' "read error on
+disk block 925" came from the 68EC020's odd-address reads (2026-11-22).
+The replays check titles that once failed and say which side parted from
+a good run first.
+
+**The replays** (`tools/smoke.py replay`, `tools/replays.json`). Each
+title runs on its machine with its input to a fixed frame:
+
+| Replay | Machine | Checkpoint |
+| --- | --- | --- |
+| lemmings (Hoodlum, AGA) | A1200, 3.1, 2 MB chip | the map room at 6000 |
+| pango (Heresy beta) | A500, 1.3, 512 + 512 KB | the first level at 5500 |
+| magician (PDX crack) | A500, 1.3, 512 KB | the first room at 5500 |
+| magician-slow (Angels crack) | A500, 1.3, 512 + 512 KB | the first room at 8000 |
+
+A reference run from a good build (`replay record`) keeps the
+checkpoint's picture and three event streams. A check passes when 90% of
+the picture's 8 × 8 blocks are alike. Wherever it parts from the
+reference, the earliest difference by instruction count names the side
+that went wrong first:
+
+- **The CPU's drive commands:** each change of CIA-B's drive lines and
+  each DMA start (cylinder, side, length, destination). Different first:
+  the CPU or memory went wrong, and the floppy did as it was told.
+- **The floppy's data:** a checksum of each DMA's words when it ends.
+  Different with the same commands: the floppy gave other data.
+- **The CPU's path:** an address executed that the reference never ran
+  (`AMI_PCCOVER`), or an exception it never took.
+
+The host build gained the hooks for this: the core calls
+`amiga_disk_end_hook` and `amiga_drive_hook` (NULL on the board), and
+`AMI_DISKLOG` logs both, with the instruction count on each line.
+
+**Checked with one fix reverted at a time.** The current build passes all
+four, each the same as its reference all through:
+
+| Build | Fails | First difference |
+| --- | --- | --- |
+| without the 68EC020's odd-address reads | lemmings (the block 925 requester) | drive commands, frame 2791 (lines `$7F` against `$ED`); the data at 2796; the code at 3722 |
+| without the Copper's deferred reload | pango (Guru `#00000004`) | the CPU's path, frame 2551 (Kickstart's exception code, an illegal instruction at `$000004`); the drive commands at 2912 |
+| without Gayle's overlay latch | none | — |
+
+So the Lemmings failure that looked like a floppy fault is blamed on the
+CPU. Gayle's latch no longer shows in Lemmings, because the stray CIA-A
+write that turned the overlay on came from the odd-address reads.
+`mem_test` still covers the latch.
+
+**The Magician with slow RAM** (the smoke run's "fails only with slow
+RAM"). The PDX crack on an A500 with 1.3 starts the game without slow RAM
+and shows "Software Failure", Guru `#00000003`, with it. The address
+error is at `$06242A`, frame 2146, on the title before any input. Where
+the two runs part:
+
+1. **Both runs:** the boot code at `$030000` reads 100 KB through
+   trackdisk.device into `$35000`. It takes the machine over with TRAP #0,
+   and copies the code to `$57400`. The crack replaced the original
+   `beq` at `$03006C` with `bra`. The original chose the code's address
+   from an OS pointer's high bits (`and.l #$F00000`): `$C13000` in slow
+   RAM, `$A0000` with 1 MB of chip RAM, and `$57400` only on 512 KB.
+2. **The first difference in the game:** at frame 1799 the game checks
+   memory for itself (`cmp.l #$C00000,ExecBase` / `sge $64B7A` at
+   `$06230E`). Kickstart 1.3 puts ExecBase in slow RAM when there is
+   some, so the flag is set.
+3. **Frame 1951:** with the flag set, the game takes its slow-RAM path
+   (`tst.w $64B7A` at `$062404`). A trackloader call at `$062420` loads
+   data over the code after the call, because the crack placed the code
+   there.
+4. **Frame 2146:** the loader returns into the loaded data, which raises
+   the address error, and the Guru follows.
+
+The raw instruction logs first part earlier, at a wait loop's passes in
+frame 1799 (`tools/pcdiff.py`). That's timing, not a different path; the
+code each run alone executes shows the real split.
+
+With the `bra` patched back to `beq` (the boot block's checksum fixed),
+the game runs with slow RAM to its first room. The Angels crack, which
+keeps the original addresses, does too. So this is the PDX crack's fault,
+and a real A500 with trapdoor RAM would fail the same way. The emulator
+is right.
+
+New host options for finding such places: `AMI_WATCHLOG`, `AMI_STOPDIS`,
+`AMI_PCLOG` (`tools/pcdiff.py`) and `AMI_PCCOVER`. The images (TOSEC
+names in `replays.json`) and the references are in `build/replays/`; the
+runs are in `build/todo14-2026-11-24/`.
+
 ### Voyage follow-up, 2026-10-24
 
 The host comparisons exposed two further issues. Hyperion's DMA could

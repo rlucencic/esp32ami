@@ -34,7 +34,14 @@
  * [;...] (the mouse, a key, the joystick at that frame, text typed from
  * then on, "\n" for Return; a mouse move of more than 100 is spread over
  * the frames after), AMI_WAV=<file> (the sound), AMI_DISKLOG
- * (each disk DMA), AMI_DUMP=<addr hex>:<bytes>:<file> (memory at the end).
+ * (each disk DMA's start, its end with a checksum of its words, each
+ * change of the drives' lines on CIA-B), AMI_DUMP=<addr hex>:<bytes>:<file> (memory at the end).
+ * Where two runs part: AMI_WATCHLOG (with AMI_WATCH: every covering write
+ * a line, the run goes on), AMI_STOPDIS=<addr hex>:<n> (disassemble memory
+ * as it is where AMI_STOP or AMI_WATCH stops), AMI_PCLOG=<file>:<frame>
+ * [:<lo>-<hi>] (each instruction's PC and frame: tools/pcdiff.py),
+ * AMI_PCCOVER=<file> (each address executed, at the end, in the order
+ * first run: tools/smoke.py's replays).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,6 +55,9 @@
 
 static uint32_t s_frame;
 static uint64_t s_insns;
+/* AMI_PCCOVER: per even address, the instruction count and frame of its
+ * first execution (0: never); calloc'd, untouched pages cost nothing */
+static uint32_t *s_cover_first, *s_cover_frame;
 
 static void disassemble(uint32_t pc, int count)
 {
@@ -93,17 +103,31 @@ static void stop_here(void)
         printf(" %08x", m68k_get_reg(NULL, r));
     }
     printf("\n");
+    /* AMI_STOPDIS=<addr hex>:<n>: memory as it is now, disassembled (code
+     * a game loaded: AMI_DIS sees memory at power-on) */
+    if (getenv("AMI_STOPDIS")) {
+        unsigned pc = 0, count = 20;
+        sscanf(getenv("AMI_STOPDIS"), "%x:%u", &pc, &count);
+        printf("-- $%06x now:\n", pc);
+        disassemble(pc, count);
+    }
     exit(0);
 }
 
-/* mem.c: AMI_WATCH hit (a CPU write covering the address) */
+/* mem.c: AMI_WATCH hit (a CPU write covering the address); with
+ * AMI_WATCHLOG set each hit is a line (and A7) and the run goes on */
 void ami_host_watch_hit(uint32_t addr, int bytes, uint32_t value)
 {
-    printf("-- write %d bytes %0*x to $%06x at PC $%06x (frame %lu), after:\n",
+    int keep_going = getenv("AMI_WATCHLOG") != NULL;
+    printf("-- write %d bytes %0*x to $%06x at PC $%06x (frame %lu)%s",
            bytes, bytes <= 1 ? 2 : bytes <= 2 ? 4 : 8, (unsigned)value,
            (unsigned)addr,
            m68k_get_reg(NULL, M68K_REG_PPC) & 0xFFFFFF,
-           (unsigned long)s_frame);
+           (unsigned long)s_frame, keep_going ? "" : ", after:\n");
+    if (keep_going) {
+        printf(", A7 $%06x\n", m68k_get_reg(NULL, M68K_REG_A7) & 0xFFFFFF);
+        return;
+    }
     stop_here();
 }
 
@@ -264,6 +288,75 @@ void m68k_host_instruction(unsigned int pc)
         trace_left--;
         disassemble(pc, 1);
     }
+
+    /* AMI_PCLOG=<file>:<frame>[:<lo hex>-<hi hex>]: each instruction's PC
+     * from that frame on (in that range: a game's own code, not the
+     * ROM's) and its frame, two 32-bit words in host order, to compare
+     * two runs and find where they part (tools/pcdiff.py) */
+    static FILE *pclog;
+    static int pclog_from = -1;
+    static uint32_t pclog_lo, pclog_hi = 0xFFFFFFFF;
+    if (pclog_from == -1) {
+        pclog_from = -2;
+        const char *e = getenv("AMI_PCLOG");
+        char path[256];
+        int from = 0;
+        if (e && sscanf(e, "%255[^:]:%d", path, &from) >= 1) {
+            const char *range = strchr(e, ':') ? strchr(strchr(e, ':') + 1, ':') : NULL;
+            if (range) {
+                sscanf(range + 1, "%x-%x", &pclog_lo, &pclog_hi);
+            }
+            pclog = fopen(path, "wb");
+            pclog_from = pclog ? from : -2;
+        }
+    }
+    if (pclog && (int)s_frame >= pclog_from && pc >= pclog_lo && pc < pclog_hi) {
+        uint32_t rec[2] = { pc, (uint32_t)s_frame };
+        fwrite(rec, 4, 2, pclog);
+    }
+
+    /* AMI_PCCOVER=<file>: each address executed, once (tools/smoke.py's
+     * replays) */
+    if (s_cover_first) {
+        uint32_t k = (pc & 0xFFFFFF) >> 1;
+        if (!s_cover_first[k]) {
+            s_cover_first[k] = (uint32_t)s_insns;
+            s_cover_frame[k] = (uint32_t)s_frame;
+        }
+    }
+}
+
+/* At exit: "<pc> <frame> <instruction>" per address, in the order first
+ * executed */
+static int cover_order(const void *a, const void *b)
+{
+    uint32_t x = s_cover_first[*(const uint32_t *)a], y = s_cover_first[*(const uint32_t *)b];
+    return x < y ? -1 : x > y;
+}
+
+static void cover_write(void)
+{
+    FILE *f = fopen(getenv("AMI_PCCOVER"), "w");
+    if (!f) {
+        return;
+    }
+    uint32_t n = 0;
+    for (uint32_t k = 0; k < (1u << 23); k++) {
+        n += s_cover_first[k] != 0;
+    }
+    uint32_t *list = malloc(n * sizeof(uint32_t));
+    n = 0;
+    for (uint32_t k = 0; k < (1u << 23); k++) {
+        if (s_cover_first[k]) {
+            list[n++] = k;
+        }
+    }
+    qsort(list, n, sizeof(uint32_t), cover_order);
+    for (uint32_t i = 0; i < n; i++) {
+        fprintf(f, "%06x %u %u\n", list[i] << 1, s_cover_frame[list[i]], s_cover_first[list[i]]);
+    }
+    fclose(f);
+    free(list);
 }
 
 static void exception(unsigned int vector)
@@ -298,16 +391,38 @@ static void exception(unsigned int vector)
     if (mode == 0 || (mode == 1 && vector >= 24 && vector < 32)) {
         return;
     }
-    printf("-- exception %u at PC $%06x (frame %lu), SR %04x\n", vector,
+    printf("-- exception %u at PC $%06x (frame %lu), SR %04x, #%llu\n", vector,
            m68k_get_reg(NULL, M68K_REG_PPC) & 0xFFFFFF, (unsigned long)s_frame,
-           m68k_get_reg(NULL, M68K_REG_SR));
+           m68k_get_reg(NULL, M68K_REG_SR), (unsigned long long)s_insns);
 }
 
 static void disk_dma(uint16_t len, uint16_t sync, uint16_t adkcon, int cylinder, int side, uint32_t pt)
 {
-    printf("-- disk %s %u words, sync %04x%s, cylinder %d side %d, to $%06x (frame %lu)\n",
+    printf("-- disk %s %u words, sync %04x%s, cylinder %d side %d, to $%06x (frame %lu), #%llu\n",
            (len & 0x4000) ? "write" : "read", len & 0x3FFF, sync, (adkcon & 0x0400) ? "" : " (not used)",
-           cylinder, side, (unsigned)pt, (unsigned long)s_frame);
+           cylinder, side, (unsigned)pt, (unsigned long)s_frame, (unsigned long long)s_insns);
+}
+
+/* A DMA's words (in memory now: read from the disk, or written to it) as
+ * a checksum (FNV-1a), so two runs can tell whether the floppy gave the same */
+static void disk_end(uint32_t pt, uint16_t words, bool write)
+{
+    uint32_t start = (pt - 2u * words) & 0xFFFFFF, sum = 2166136261u;
+    for (uint32_t i = 0; i < words; i++) {
+        uint16_t w = amiga_peek16(start + 2 * i);
+        sum = (sum ^ (w >> 8)) * 16777619u;
+        sum = (sum ^ (w & 0xFF)) * 16777619u;
+    }
+    printf("-- disk end %s %u words at $%06x, sum %08x (frame %lu), #%llu\n", write ? "write" : "read",
+           words, (unsigned)start, (unsigned)sum, (unsigned long)s_frame, (unsigned long long)s_insns);
+}
+
+/* The CPU's commands to the drives: CIA-B's port B (/MTR, /SEL3-0, /SIDE,
+ * DIR, /STEP) as a write changes it */
+static void drive_lines(uint8_t old, uint8_t prb)
+{
+    printf("-- drives %02x (frame %lu), #%llu\n", prb, (unsigned long)s_frame, (unsigned long long)s_insns);
+    (void)old;
 }
 
 static void serial(int ch)
@@ -477,6 +592,13 @@ int main(int argc, char **argv)
     amiga_exception_hook = exception;
     if (getenv("AMI_DISKLOG")) {
         amiga_disk_hook = disk_dma;
+        amiga_disk_end_hook = disk_end;
+        amiga_drive_hook = drive_lines;
+    }
+    if (getenv("AMI_PCCOVER")) {
+        s_cover_first = calloc(1u << 23, sizeof(uint32_t));
+        s_cover_frame = calloc(1u << 23, sizeof(uint32_t));
+        atexit(cover_write);
     }
     if (!amiga_init(&cfg)) {
         return 1;

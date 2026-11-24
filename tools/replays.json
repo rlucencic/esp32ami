@@ -1,0 +1,61 @@
+{
+  "about": "tools/smoke.py's replays: titles that once failed, each on its machine with its input, checked at a fixed frame against a reference run. Disk images are not in git: 'disks' names each image's file in the media folder, its MD5 and the TOSEC archive it came from (amigamuseum.emu-france.info/Fichiers/ADF/).",
+  "replays": [
+    {
+      "name": "lemmings",
+      "title": "All New World of Lemmings (Hoodlum crack, AGA)",
+      "why": "the checkpoint: Gayle's overlay latch and the 68EC020's odd-address data reads (2026-11-22); without them an exception loop, or a misleading block 925 read error",
+      "machine": {"model": 3, "kickstart": "amiga-os-310-a1200.rom", "chip": 2048, "slow": 0, "fast": 0},
+      "disks": [
+        {"drive": 0, "file": "l1.adf", "md5": "72037023733e3f7e920b092d50ce8721",
+         "source": "All New World of Lemmings (1995)(Psygnosis)(AGA)(Disk 1 of 4)[cr HLM].zip"},
+        {"drive": 1, "file": "l2.adf", "md5": "96055052f9292dc6a4ed3eb62bd68bb1",
+         "source": "All New World of Lemmings (1995)(Psygnosis)(AGA)(Disk 2 of 4)[cr HLM].zip"}
+      ],
+      "input": "2500:m:0:0:1;2510:m:0:0:0;3500:k:40:1;3508:k:40:0",
+      "checkpoint": 6000,
+      "expect": "the map room"
+    },
+    {
+      "name": "pango",
+      "title": "Pango Fun (Heresy crack of a beta)",
+      "why": "the control: its Guru was the Copper's (DMA off while its list was replaced, 2026-11-22), not the floppy's",
+      "machine": {"model": 0, "kickstart": "amiga-os-130.rom", "chip": 512, "slow": 512, "fast": 0},
+      "disks": [
+        {"drive": 0, "file": "p1.adf", "md5": "f4f78ce449fc9a59a0bc5301e3c70d23",
+         "source": "Pango Fun (1989)(Proxxima)(beta)(Disk 1 of 2)[cr Heresy].zip"},
+        {"drive": 1, "file": "p2.adf", "md5": "1081d8e25183a86e52f866e4df04b61b",
+         "source": "Pango Fun (1989)(Proxxima)(beta)(Disk 2 of 2)[cr Heresy].zip"}
+      ],
+      "input": "4800:m:0:0:1;4810:m:0:0:0",
+      "checkpoint": 5500,
+      "expect": "the first level"
+    },
+    {
+      "name": "magician",
+      "title": "The Magician (PDX crack), no slow RAM",
+      "why": "with slow RAM this crack fails on any A500: it forces the 512 KB load address, the game's own check then takes its slow-RAM path and loads over its code (2026-11-24)",
+      "machine": {"model": 0, "kickstart": "amiga-os-130.rom", "chip": 512, "slow": 0, "fast": 0},
+      "disks": [
+        {"drive": 0, "file": "mag-pdx.adf", "md5": "5a766292d57cfb4e6b59121138820100",
+         "source": "Magician, The (1990)(Loriciel)[cr PDX].zip"}
+      ],
+      "input": "1500:m:0:0:1;1510:m:0:0:0;3500:j:10;3510:j:0",
+      "checkpoint": 5500,
+      "expect": "the first room"
+    },
+    {
+      "name": "magician-slow",
+      "title": "The Magician (Angels crack), 512 KB slow RAM",
+      "why": "the same game with slow RAM, through a crack that keeps the game's own load addresses",
+      "machine": {"model": 0, "kickstart": "amiga-os-130.rom", "chip": 512, "slow": 512, "fast": 0},
+      "disks": [
+        {"drive": 0, "file": "mag-angels.adf", "md5": "c3367d38cfe5a78b82f6b80afe05bea1",
+         "source": "Magician, The (1990)(Loriciel)[cr Angels - Genesis - Defjam].zip"}
+      ],
+      "input": "1500:m:0:0:1;1510:m:0:0:0;2200:m:0:0:1;2210:m:0:0:0;2800:m:0:0:1;2810:m:0:0:0;3400:m:0:0:1;3410:m:0:0:0;6000:j:10;6010:j:0",
+      "checkpoint": 8000,
+      "expect": "the first room"
+    }
+  ]
+}

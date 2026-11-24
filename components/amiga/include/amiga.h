@@ -277,11 +277,15 @@ bool amiga_rp9_machine(const char *path, amiga_rp9_machine_t *m);
 
 /* Debugging: called as the 68000 takes each exception (vector number), as
  * a disk DMA starts (DSKLEN's value, DSKSYNC, ADKCON, the drive's
- * cylinder and side, DSKPT)
+ * cylinder and side, DSKPT), as it ends (DSKPT past its last word, the
+ * words, a write or not), and as a write to CIA-B's port B changes the
+ * drives' lines (the old and new values: motor, selects, side, step)
  */
 extern void (*amiga_exception_hook)(unsigned int vector);
 extern void (*amiga_disk_hook)(uint16_t dsklen, uint16_t sync, uint16_t adkcon, int cylinder, int side,
                                uint32_t pt);
+extern void (*amiga_disk_end_hook)(uint32_t pt, uint16_t words, bool write);
+extern void (*amiga_drive_hook)(uint8_t old, uint8_t prb);
 
 /* The Kickstart's version (e.g. 34.5) from its header; false if the image
  * isn't one (size, checksum)

@@ -134,7 +134,9 @@ images.
 | `tools/mkinstall.py` | A Workbench floppy that formats DH0: and copies itself onto it (the hard disk test) |
 | `tools/hdrom.py` | Assembles the hard disk board's boot ROM into `components/amiga/hdrom.h` |
 | `tools/collection.py` | Runs a folder of RP9 games on two host builds and compares their pictures (see Testing) |
-| `tools/smoke.py` | Runs a folder of RP9s or ADFs on one host build and flags what looks broken, a contact sheet each (see Testing) |
+| `tools/smoke.py` | Runs a folder of RP9s or ADFs on one host build and flags what looks broken, a contact sheet each; `replay`: titles that once failed, checked at a fixed frame against a reference run, and which side parted first (see Testing) |
+| `tools/replays.json` | The replays: each title's machine, disks (file, MD5, TOSEC archive), input and checkpoint |
+| `tools/pcdiff.py` | Two host PC logs (`AMI_PCLOG`): the first instruction where they differ, and the code each ran that the other never did |
 | `main/web/amifiles.js` | The web page's converters (served as /machine.js): DMS archives, gzipped images |
 | `tools/amifiles_test.js` | Its test: `node tools/amifiles_test.js [folder of DMS+ADF pairs]` |
 | `roms/` | The Kickstarts (copyrighted, not distributed) |
@@ -788,7 +790,15 @@ the top two bits do nothing, Aerial Racers' race sets them),
   every n frames), `AMI_RING=<n>` (the last instructions at the end),
   `AMI_STOP=<pc>[:<frame>]` (the 60 instructions before and the registers),
   `AMI_TRACE=<pc>:<n>`, `AMI_WATCH=<addr>[:<frame>]` (a CPU write that
-  covers the address: the instructions before and the registers),
+  covers the address: the instructions before and the registers;
+  with `AMI_WATCHLOG` every such write a line, the run going on),
+  `AMI_STOPDIS=<addr>:<n>` (memory disassembled where `AMI_STOP` or
+  `AMI_WATCH` stops: code a game loaded), `AMI_PCLOG=<file>:<frame>
+  [:<lo>-<hi>]` (each instruction's PC and frame, `tools/pcdiff.py`),
+  `AMI_PCCOVER=<file>` (each address executed, in the order first run),
+  `AMI_DISKLOG` (each disk DMA's start, its end with a checksum of its
+  words, each change of CIA-B's drive lines; with the exceptions' lines,
+  the instruction count after `#`),
   `AMI_EXC` (exceptions; `all` with interrupts),
   `AMI_EXCSTOP=<vector>[:<frame>]` (stop at that exception, as `AMI_STOP`),
   `AMI_DEBUG=<port>` (the debugger, real time), `AMI_DF0`/`AMI_DF1` (ADF
@@ -1009,6 +1019,29 @@ the top two bits do nothing, Aerial Racers' race sets them),
   click, fire, Space and Help) and 12 AGA ones (A1200, 3.1). Rerun them
   after a change of timing and compare the flags (`diff` of the lists),
   then the sheets.
+- **Replays** (`tools/smoke.py replay`, 2026-11-24, TODO 14): titles that
+  once failed, each on its machine with its input (`tools/replays.json`),
+  run to a fixed frame: All New World of Lemmings to its map room (the
+  checkpoint: Gayle's overlay latch and the 68EC020's odd-address
+  reads), Pango Fun to its first level (the control: the Copper's
+  deferred reload), The Magician with and without slow RAM. `smoke.py
+  replay record tools/replays.json build/replays roms <ami_host>` makes
+  the references from a good build (`build/replays/ref/<name>/`: the
+  checkpoint's picture, the log, the coverage, a sheet); `smoke.py replay
+  tools/replays.json build/replays <out> roms <ami_host>` checks a build:
+  the picture at the checkpoint (90% of 8 x 8 blocks alike) and, where it
+  parts from the reference, which stream did first: the CPU's drive
+  commands (CIA-B's lines, DMA starts: a CPU or memory fault, the floppy
+  did as told), the floppy's data (each DMA's checksum, the commands the
+  same: a floppy fault), or the CPU's path (code or an exception the
+  reference never had). The images aren't in git: `build/replays/`
+  here; `replays.json` names each one's TOSEC archive and MD5. Checked
+  with one fix reverted at a time: without the odd-address reads Lemmings
+  ends on "read error on disk block 925" and the replay blames the CPU's
+  drive commands (frame 2791) before the disk data (2796); without the
+  Copper's reload Pango Fun's Guru shows as the CPU's path first. Gayle's
+  latch no longer shows in Lemmings (the stray CIA-A write came from the
+  odd-address reads): `mem_test` covers it.
 - `say hello` in Workbench 1.3's Shell (narrator.device) as a sound test;
   `AMI_WAV` records it on the host.
 - **On the board**: status via the web API, pictures via the console's
@@ -1053,8 +1086,8 @@ the top two bits do nothing, Aerial Racers' race sets them),
 ## Open items
 
 - [TODO.md](TODO.md) tracks the next Tab5 and host checks and the work
-  waiting on hardware, media or a reproducible case. Items 1–8, 10–13
-  and 15 are complete.
+  waiting on hardware, media or a reproducible case. Items 1–8 and 10–15
+  are complete.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
   (`docs/images`, 2026-10-21): `workbench31.png` (A600, 3.1 from an HDF,
@@ -1113,8 +1146,11 @@ the top two bits do nothing, Aerial Racers' race sets them),
   Killer (A1200, marked for a JIT) quits at once (030 or FPU, likely).
   The Gayle and 68EC020 data access fixes let All New World of Lemmings
   reach the map room. The Copper fix clears the Pango Fun beta's Guru
-  (2026-11-22, `docs/architecture.md`). The Magician fails only with slow
-  RAM. ECO wants 1.2. DarkSide and Primal Rage want 2.04 with 1 MB.
+  (2026-11-22, `docs/architecture.md`). The Magician's PDX crack fails
+  with slow RAM as it would on any A500: it forces the 512 KB load
+  address, and the game's own check (ExecBase at $C00000 or above) then
+  loads over its code; the Angels crack runs with slow RAM (2026-11-24,
+  `docs/architecture.md`). ECO wants 1.2. DarkSide and Primal Rage want 2.04 with 1 MB.
   Hardwired wants disk 2 in DF0 and a right click. The Quartex cracks of Navy Seals and
   Crime Does Not Pay load through a trace-vector decoder for ~160 s ("the
   game takes a while to load"; not timed on a real one).

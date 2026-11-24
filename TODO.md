@@ -9,15 +9,13 @@ slot; 4, Paula's attach modes; 5, ECS super-hires; 6, writing extended
 ADFs; 7, AGA's untested and missing parts; 8, the 68EC020's instruction
 cache; 10, titles from the smoke runs; 11, the Voyage prefetch, CIA and
 floppy follow-up; 12, Workbench's display changes on the Tab5; 13, DMS
-through the live web page; 15, uploads while the A1200 runs).
+through the live web page; 14, title replays that tell floppy from memory
+failures; 15, uploads while the A1200 runs).
 
 ## Next work
 
-14. **Distinguish floppy and memory failures in title replays.** Medium. Extend
-    `tools/smoke.py` replays with a fixed checkpoint for All New World of
-    Lemmings and a control for Pango Fun. Reproduce The Magician with and
-    without slow RAM and record the first diverging guest event before changing
-    timing or memory decoding.
+Nothing queued: what's left waits on something (9, below). New work goes
+here.
 
 ## 9. Waiting on something
 

@@ -90,6 +90,8 @@ static int s_side;
 static int s_at;                    /* the disk's time, in clocks into this frame */
 
 void (*amiga_disk_hook)(uint16_t dsklen, uint16_t sync, uint16_t adkcon, int cylinder, int side, uint32_t pt);
+void (*amiga_disk_end_hook)(uint32_t pt, uint16_t words, bool write);
+void (*amiga_drive_hook)(uint8_t old, uint8_t prb);
 
 /* Paula's side */
 static struct {
@@ -404,6 +406,9 @@ void floppy_reset(void)
 
 void floppy_control(uint8_t old, uint8_t prb)
 {
+    if (amiga_drive_hook && old != prb) {
+        amiga_drive_hook(old, prb);
+    }
     for (int i = 0; i < DRIVES; i++) {
         drive_t *d = &s_drive[i];
         uint8_t sel = 0x08 << i;
@@ -510,6 +515,9 @@ static void end_dma(void)
         d->writes++;
     }
     dk.active = false;
+    if (amiga_disk_end_hook) {
+        amiga_disk_end_hook(dk.pt, dk.len & 0x3FFF, dk.writing);
+    }
     ami_set_intreq(INT_DSKBLK);
 }
 
