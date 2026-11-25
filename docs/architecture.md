@@ -1180,6 +1180,42 @@ board's `sdkconfig.defaults`, `web.c`).
   `build-tab5/sdkconfig` had its 16 changed to 64, because defaults don't
   override a value already there.
 
+### The A1200 load survey, 2026-11-25
+
+TODO item 17. 26 A1200 packages ran on the Tab5, each on its manifest's
+machine, with the host pass's input at the same frames. Item 9's
+assembler waited on a title that falls behind: A1200 titles do.
+
+- **Speed.**
+  - Seven spent most of their run at 53-66%: Deluxe Galaga, Virtual
+    Karting 2, Leading Lap, Black Viper, Tactical Manager 2, Fatman in
+    play and Gea Lux in play.
+  - Six more had stretches at 75-90%.
+  - Thirteen stayed at 93% or above. Aerial Racers' race is at 100%,
+    core 1 ~68%.
+- **Why: wait loops.** Many titles spend 20-99% of their instructions in
+  two-instruction wait loops the poll skip doesn't cover. They test RAM
+  flags and counters (Soccer Kid 82%, Starbase 13 70%, Deluxe Galaga
+  59%), VHPOSR outside the `#$F4` gate (Black Viper's briefing 99%,
+  Fatman 74%) or CIA registers (Black Viper's race: CIA-B's ICR 49%).
+  That is TODO item 18.
+- **Why: the 68EC020 itself.** Other titles run 24-56k instructions a
+  frame with no waiting. Core 1 manages ~15-20k: about 1 µs an
+  instruction, of which Musashi's instruction-word reads through the cache
+  model are 17-36% and its dispatch 10-21%. That is item 19, the
+  assembler's entry with its condition met.
+- **Host and board.** The board's pictures are the host's at the same
+  frames (in play where the input gets there), except Fatman, Tactical
+  Manager 2 and Deluxe Galaga's last picture, which differ in detail. The
+  harness needed:
+  - the exact frame from the console's `i` (presses timed from the fps
+    lines came tens of frames off);
+  - presses keeping their length;
+  - a package's second disk as its own ADF in DF1: (the runtime keeps a
+    file in one drive). For users that is item 20.
+
+[The A1200 load survey on the Tab5](a1200-load-survey-2026-11-25.md)
+
 ### Voyage follow-up, 2026-10-24
 
 The host comparisons exposed two further issues. Hyperion's DMA could
@@ -1241,3 +1277,25 @@ console's PC sampler.
   chip RAM. Collection 96/96 the same. Tab5 title: core 1 load 85–86% →
   53–55% at 100% speed (idle in the profile 6% → 39%;
   `poll-vhpos-experiment-2026-11-11.md`).
+- **The A500 load survey** (2026-11-11, Tab5, KS 1.2, 512 + 512 KB;
+  `build/a500-load-2026-11-11/`): no title fell behind. Speed and core 1
+  (speed / core 1):
+
+  | Title | Speed / core 1 |
+  | --- | --- |
+  | Kick Off 2's menu | ~100% / 45% |
+  | Kid Pool's title | ~100% / 55% |
+  | F1 GP | ~100% / 52–71% |
+  | Toobin | ~100% / 55–69% |
+  | Arkanoid | ~100% / 65% |
+  | Lure | ~100% / 50% |
+  | X-Balls | ~99% / 84–85% |
+
+  X-Balls was the hottest. Its profile: idle 4.9%, `m68k_read_memory_16`
+  15%, `display_fetch` 9%, `bus_take` 8%.
+
+  On the way, Son Shu Shi's RP9 failed to insert on the Tab5 (`no
+  sonshushi1.adf in it`): a one-shot inflate of a ~2 MB extended ADF,
+  next to the image buffer when PSRAM was tight. Floppy RP9s now stream
+  through `rp9_extract` as hard disk ones do (checked on the Tab5: disk 1
+  of 2). The A1200's survey followed on 2026-11-25 (above).

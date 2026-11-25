@@ -1043,6 +1043,24 @@ the top two bits do nothing, Aerial Racers' race sets them),
   Copper's reload Pango Fun's Guru shows as the CPU's path first. Gayle's
   latch no longer shows in Lemmings (the stray CIA-A write came from the
   odd-address reads): `mem_test` covers it.
+- **The A1200 load survey** (2026-11-25, TODO 17,
+  `docs/a1200-load-survey-2026-11-25.md`; the scripts in
+  `build/a1200-load-2026-11-24/`, not in git).
+  - `host_pass.py`: the 26 A1200 packages on the host, 15000 frames, a
+    sheet and the host's time each.
+  - `board_pass.py <out> [name|name]`: the same titles on the Tab5 with
+    the same input at the same frames. It records speed, core 1, pictures
+    and a profile of core 1.
+  - `analyze.py <out> <elf>` makes the table and the profiles; `pair.py`
+    puts the board's pictures beside the host's.
+  - For scripted input on the board:
+    - Take the frame from the console's `i` (`EMUINFO ... frames N`), not
+      from the 5 s fps lines. Use a 10 ms serial timeout.
+    - Keep a press's length.
+    - Release `j` and `m` between titles: they hold until the next one.
+    - Put a package's second disk into DF1: as its own ADF: the runtime
+      keeps a file in one drive, so the package into DF1: empties DF0:.
+  - Rerun it after a speed change (TODO 18, 19).
 - `say hello` in Workbench 1.3's Shell (narrator.device) as a sound test;
   `AMI_WAV` records it on the host.
 - **On the board**: status via the web API, pictures via the console's
@@ -1087,7 +1105,7 @@ the top two bits do nothing, Aerial Racers' race sets them),
 ## Open items
 
 - [TODO.md](TODO.md) tracks the next Tab5 and host checks and the work
-  waiting on hardware, media or a reproducible case. Items 1–8 and 10–16
+  waiting on hardware, media or a reproducible case. Items 1–8 and 10–17
   are complete.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
@@ -1174,7 +1192,16 @@ the top two bits do nothing, Aerial Racers' race sets them),
   only (no stale code, FC2 not in the tags); the A1200's 32-bit trapdoor fast RAM is the
   Zorro II board at $200000. Core 1 is 71-78% busy in Aerial Racers' race
   (100%, with the instruction cache and the poll skip; 90-99% before the
-  speed-ups here). Done: `chip_read16()` inline
+  speed-ups here). The A1200 load survey (2026-11-25): A1200 titles fall
+  behind.
+  - Seven run most of the time at 53-66%: Deluxe Galaga, Virtual Karting
+    2, Leading Lap, Black Viper, Tactical Manager 2, Fatman, Gea Lux.
+  - One cause is two-instruction waits the poll skip misses, on RAM
+    flags, VHPOSR outside its gate and the CIAs: TODO 18.
+  - The other is the 68EC020 at ~1 µs of core 1 an instruction against
+    24-56k a frame: TODO 19.
+
+  Done: `chip_read16()` inline
   (every DMA word) and read directly in `display_fetch()`, `beam()` (VPOSR
   polls) from the current line without a division, `ami_now()` without a
   call, no bus errors in Musashi (see the 68EC020 above).
