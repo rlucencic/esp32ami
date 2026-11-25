@@ -267,6 +267,7 @@ void amiga_reset(void)
     floppy_reset();
     input_reset();
     audio_reset();
+    wait_reset();
     m68k_set_irq(0);
     m68k_pulse_reset();
 }
@@ -290,6 +291,7 @@ static void warm_reset(void)
     floppy_reset();
     input_reset();
     audio_reset();
+    wait_reset();
     m68k_set_irq(0);
     m68k_pulse_reset();
 }
@@ -302,6 +304,8 @@ static inline bool on_cpu_bus(uint32_t pc)
     return pc >= 0xF80000 || (ami.fast_base && pc - ami.fast_base < ami.fast_size) ||
            (ami.ext && pc >= 0xE00000 && pc < 0xE00000 + EXT_ROM_SIZE);
 }
+
+static bool s_wait_check;           /* (run_cpu(): look for a wait loop) */
 
 static void run_cpu(int until)
 {
@@ -322,6 +326,19 @@ static void run_cpu(int until)
         ami.stall -= s;
         if (ami.cycle >= until) {
             return;
+        }
+    }
+    /* a wait loop that will go on looping: its time passes without the CPU
+     * (wait.c; a CIA timer's flag ends it sooner). Looked for as a line
+     * begins, then in its other slices while the CPU is in one: a check
+     * each slice cost an A500 title over a point of core 1 */
+    if (s_wait_check) {
+        int skip = wait_skip(until, &s_wait_check);
+        if (skip > ami.cycle) {
+            ami.cycle = skip;
+            if (skip >= until) {
+                return;
+            }
         }
     }
     /* (the 68EC020 runs two of its clocks a 68000 one: the remainder kept;
@@ -369,6 +386,7 @@ static int next_event(void)
 static void run_line(void)
 {
     int line_end = ami.line_start + 2 * ami_line_cck(ami.line);
+    s_wait_check = true;
     for (;;) {
         int next = next_event();
         if (next >= line_end) {
@@ -418,6 +436,7 @@ void amiga_run_frame(void)
     uint32_t insns_before = ami.insns;
 #endif
 
+    wait_frame();
     for (ami.line = 0; ami.line < ami.lines; ami.line++) {
         ami.line_start = ami_line_start(ami.line);
         if (ami.line == 0) {

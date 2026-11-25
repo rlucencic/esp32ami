@@ -1216,6 +1216,41 @@ assembler waited on a title that falls behind: A1200 titles do.
 
 [The A1200 load survey on the Tab5](a1200-load-survey-2026-11-25.md)
 
+### Wait loops without the CPU, 2026-11-25
+
+TODO item 18. The survey's titles spent up to 99% of their instructions in
+two-instruction waits that the poll skip missed: RAM flags, VHPOSR outside
+its gate and CIA registers.
+
+- **The skip** (`wait.c`). `run_cpu()` checks as a line begins, and in the
+  line's other slices while the CPU is in a loop.
+  - A loop is a test (TST, BTST, CMPI, CMP or MOVE to Dn) and a Bcc back
+    to it, or a branch to itself. It is decoded once and kept with its
+    words.
+  - The test is worked out from memory as it is (`mem_peek()`, the chips'
+    and the CIAs' peeks). If the branch will be taken and no interrupt is
+    due, the slice passes without the CPU.
+  - What these loops read changes only where a slice ends. The exception
+    is a CIA timer with its interrupt off: a skip on ICR, CRA or CRB ends
+    at its next underflow.
+- **Pango Fun.** The replay found `poll_wait()` skipping a wait's exit
+  pass, which made the intro miss line 0 for good. It now skips only while
+  the loop will go on (the lessons in CLAUDE.md).
+- **Host.** `wait_test.c` has four cases, each failing with its part
+  taken out. SysInfo's screens are the same on the A500 and the A1200,
+  and the replays pass 4 of 4. 72 of the collection's 96 games are
+  identical; the rest show the same scenes at other moments.
+- **Tab5.**
+  - Four A500 titles still run at 100%. Their core 1 is within 2 points of
+    before, and Kid Pool's is 4 points lower. The check costs 0.3-0.7%.
+  - In the A1200 survey, the time behind fell from 638 s to 405 s.
+  - Black Viper, Fatman, Soccer Kid and The Lost Prince now run at full
+    speed (they were at 61-86%). Deluxe Galaga in play went from ~60% to
+    81-98%.
+  - The titles that compute are unchanged: they are item 19's.
+
+[Wait loops without the CPU](wait-loops-2026-11-25.md)
+
 ### Voyage follow-up, 2026-10-24
 
 The host comparisons exposed two further issues. Hyperion's DMA could

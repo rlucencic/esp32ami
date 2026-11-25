@@ -82,13 +82,14 @@ static bool tb_counts_ta(const cia_t *c)
     return (c->crb & CRB_INMODE) == 0x40 || (c->crb & CRB_INMODE) == 0x60;
 }
 
-static void plan(cia_t *c)
+/* The next underflow of the timers in mask (ICR_TA, ICR_TB), or NEVER */
+static int next_underflow(const cia_t *c, uint8_t mask)
 {
-    c->next = NEVER;
-    if ((c->icr_mask & ICR_TA) && (c->cra & CR_START) && !(c->cra & 0x20)) {
-        c->next = e_edge(c->last, c->ta + 1);
+    int next = NEVER;
+    if ((mask & ICR_TA) && (c->cra & CR_START) && !(c->cra & 0x20)) {
+        next = e_edge(c->last, c->ta + 1);
     }
-    if ((c->icr_mask & ICR_TB) && (c->crb & CR_START)) {
+    if ((mask & ICR_TB) && (c->crb & CR_START)) {
         int t = NEVER;
         if ((c->crb & CRB_INMODE) == 0) {
             t = e_edge(c->last, c->tb + 1);
@@ -98,10 +99,16 @@ static void plan(cia_t *c)
                 t = e_edge(c->last, (int)n);
             }
         }
-        if (t < c->next) {
-            c->next = t;
+        if (t < next) {
+            next = t;
         }
     }
+    return next;
+}
+
+static void plan(cia_t *c)
+{
+    c->next = next_underflow(c, c->icr_mask);
 }
 
 void cia_sync(cia_t *c, int now)
@@ -223,6 +230,41 @@ uint8_t cia_read(cia_t *c, int reg)
         return c->crb;
     default:
         return 0xFF;
+    }
+}
+
+/* A register as a read would give it, without the read's side effects
+ * (ICR cleared, TOD unlatched), for wait.c's loops: those that change only
+ * at an event or a line's end. The timers' flags (ICR, CRA/CRB's START)
+ * change at an underflow, wherever it falls: *until gets the next one
+ * (NEVER otherwise). The timers' counts change all the time: false.
+ */
+bool cia_peek(cia_t *c, int reg, uint8_t *v, int *until)
+{
+    *until = NEVER;
+    switch (reg) {
+    case PRA:
+        *v = (c->pra & c->ddra) | (port_a_in(c) & ~c->ddra);
+        return true;
+    case TODLO:
+    case TODMID:
+        if (c->tod_latched) {
+            return false;               /* (the read unlatches: TOD moves on) */
+        }
+        *v = (c->tod >> ((reg - TODLO) * 8)) & 0xFF;
+        return true;
+    case SDR:
+        *v = c->sdr;
+        return true;
+    case ICR:
+    case CRA:
+    case CRB:
+        cia_sync(c, ami_now());
+        *v = reg == ICR ? c->icr | (c->irq ? 0x80 : 0) : reg == CRA ? c->cra : c->crb;
+        *until = next_underflow(c, ICR_TA | ICR_TB);
+        return true;
+    default:
+        return false;
     }
 }
 

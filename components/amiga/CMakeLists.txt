@@ -16,6 +16,7 @@ idf_component_register(SRCS "amiga.c"
                             "hdf.c"
                             "hdboard.c"
                             "space.c"
+                            "wait.c"
                        INCLUDE_DIRS "include"
                        PRIV_INCLUDE_DIRS "."
                        REQUIRES musashi

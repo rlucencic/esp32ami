@@ -189,6 +189,13 @@ void ami_cpu_wake(void);            /* an earlier event was scheduled: end the C
 void mem_update_map(void);
 void mem_cacr(uint32_t cacr);
 bool mem_poll_loop(uint32_t pc);
+bool mem_peek(uint32_t a, int size, uint32_t *v, int *until);   /* (wait.c) */
+
+/* wait.c: wait loops pass without the CPU */
+int wait_skip(int until, bool *in_loop);   /* the time the CPU's slice may pass to (ami.cycle: none) */
+bool wait_poll_loops(uint32_t pc);  /* (custom.c: the loop of the test at pc goes on as things are) */
+void wait_reset(void);
+void wait_frame(void);             /* (a frame begins) */
 /* The 68000 on the chip bus: a line's even slots the DMA takes (`at` in
  * clocks into the frame), cleared as a line begins
  */
@@ -271,6 +278,7 @@ void custom_write(uint32_t reg, uint16_t value, int at, bool copper);
 void custom_reset(void);
 uint8_t custom_agnus_id(void);              /* VPOSR's ID */
 uint16_t custom_denise_id(void);            /* DENISEID */
+bool custom_peek(uint32_t reg, uint16_t *value);    /* (wait.c: the registers a wait may test) */
 
 #ifndef ESP_PLATFORM
 /* Host: re-read AMI_WATCH (mem_test); no-op on the board */
@@ -344,6 +352,7 @@ void cia_tod_tick(cia_t *c);
 void cia_flag(cia_t *c);            /* a falling edge on FLAG (CIA-B: the drives' index) */
 void cia_serial_in(cia_t *c, uint8_t value);
 void cia_rebase(cia_t *c, int frame_cycles);
+bool cia_peek(cia_t *c, int reg, uint8_t *value, int *until);   /* (wait.c) */
 
 /* input.c: the keyboard, the mouse, the joystick */
 void input_reset(void);

@@ -11,72 +11,28 @@ cache; 10, titles from the smoke runs; 11, the Voyage prefetch, CIA and
 floppy follow-up; 12, Workbench's display changes on the Tab5; 13, DMS
 through the live web page; 14, title replays that tell floppy from memory
 failures; 15, uploads while the A1200 runs; 16, faster Tab5 downloads;
-17, an A1200 load survey on the Tab5).
+17, an A1200 load survey on the Tab5; 18, wait loops without the CPU).
 
 ## Next work
-
-## 18. Skip the wait loops the poll skip misses
-
-Why: the A1200 survey (item 17, `docs/a1200-load-survey-2026-11-25.md`)
-found titles falling behind while most of their instructions are a
-two-instruction wait:
-
-- Soccer Kid in play, 82%: `tst.w $d05ba.l` / `beq`.
-- Starbase 13 70%, The Lost Prince 42%, Christmas Breakdown 31%:
-  `cmp.l (-$86,A5),D0` / `beq`.
-- Deluxe Galaga in play, 59%: `tst.w ($1742,A6)`.
-- Fatman, 74-99%: `cmpi.b #$EC,(6,A6)` on VHPOSR, and `btst #4,$10043c.l`.
-- Black Viper, 64-99%: `cmpi.b #$64` and `#$F4,$dff006.l` above $20000,
-  and `btst #0,$bfdd00.l` (CIA-B's ICR).
-- Deluxe Pacman 20%, Virtual Karting 2's race 13%.
-- Zero Gravity, 8%: `cmp.b $bfe801.l,D0` (CIA-A's TOD).
-
-What: work as `poll_wait()` does. Memory changes from outside the CPU only
-where a slice ends:
-
-- an interrupt starts a slice;
-- the blitter runs at once at a write, the CPU's or the copper's, and that
-  write ends the slice;
-- disk DMA moves at the line's end and at DSKLEN.
-
-So a loop of a read-only memory test and a Bcc back to it can skip to the
-slice's end while it will loop. Find it at the branch: a taken Bcc to the
-instruction just before it, the test decoded once per PC. Not in the read
-callbacks, where a test is paid on every access (the A500's lesson).
-
-Two cases need care:
-
-- VHPOSR's other compares and addressing modes. First find why the
-  broader gate broke Warm Up, Ziriax and Tactical Manager 2
-  (`docs/poll-vhpos-experiment-2026-11-11.md`).
-- CIA reads. ICR clears as it is read, and a timer whose interrupt is off
-  isn't an event: a loop on one may skip only up to the timer's
-  underflow.
-
-Checked:
-
-- The survey's slow titles again on the board: speed and core 1, with
-  `build/a1200-load-2026-11-24/board_pass.py`.
-- The collection and the replays as before, or the same scenes a frame
-  apart, as when the skip came in item 8.
-- SysInfo the same, Kid Pool's title as before.
-
-Size: a session or two.
 
 ## 19. A faster 68EC020
 
 Why: item 9's assembler waited for a title that falls behind, and item 17
 found several. Titles that compute all frame, without waiting, run 24-56k
 instructions a frame. Core 1 manages ~15-20k at full speed: about 1 µs an
-instruction, with the chipset's ~5 ms. Their speeds:
+instruction, with the chipset's ~5 ms. Since item 18 skips the wait
+loops, these are the titles still behind (the survey's rerun,
+`docs/wait-loops-2026-11-25.md`):
 
-- Deluxe Galaga's instructions screen 48%.
-- Virtual Karting 2 50-54%.
+- Deluxe Galaga's instructions screen 47%; in play 81-98%.
+- Virtual Karting 2 50-60%.
+- AmiBee in play 52-69%.
 - Leading Lap 57-65%.
-- Tactical Manager 2 64%.
-- Gea Lux 65-70%.
-- AmiBee in play 54%.
-- Charr's menu 84%, Metal Kombat's 3D intro 83%.
+- Gea Lux in play 63-74%.
+- Tactical Manager 2 65%.
+- Metal Kombat's 3D intro down to 67%.
+- Charr's menu 83%.
+- Christmas Breakdown and Zero Gravity in play ~91%.
 
 What: shrink the 68020's path, C first as before.
 
@@ -89,14 +45,18 @@ What: shrink the 68020's path, C first as before.
   - Check the cache once per longword or per run of words in one line,
     not per word.
   - Read immediates straight through `s_ic.next_word`.
+  - The wait check's cost in titles that compute: about 1.5 points of
+    Christmas Breakdown's play (`docs/wait-loops-2026-11-25.md`). Try a
+    cheaper first look at the PC as a line begins.
   - Then RISC-V with PIE where C runs out (`../esp32emu/CLAUDE.md`, "To
     do").
 - The chips' share, where AGA titles show many planes:
   - `memcpy` of the line records, up to 18% (Megaball).
   - Collisions while a title reads CLXDAT, 9% (Deluxe Galaga).
-- Do it after 18, so the loops don't hide the gain.
-
 Done so far:
+
+- The wait loops skipped (item 18, 2026-11-25): the titles that only
+  waited run at full speed, so what is left is the CPU's own cost.
 
 - The 68EC020's instruction fetch through a pointer (2026-11-10, ~7%).
 - The 68000's bus cycles inline: Kick Off 2's credits went from 16.7 to

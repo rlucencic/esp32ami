@@ -26,14 +26,18 @@ run: $(BUILD)/ami_host
 $(BUILD)/ami_host: host_main.c $(AMI_OBJS) $(M68K_OBJS)
 	$(CC) $(CFLAGS) $^ -lm -lpthread -lz -o $@
 
-test: $(BUILD)/floppy_test $(BUILD)/mem_test
+test: $(BUILD)/floppy_test $(BUILD)/mem_test $(BUILD)/wait_test
 	./$(BUILD)/floppy_test
 	./$(BUILD)/mem_test
+	./$(BUILD)/wait_test
 
 $(BUILD)/floppy_test: floppy_test.c $(AMI_OBJS) $(M68K_OBJS)
 	$(CC) $(CFLAGS) $^ -lm -lpthread -lz -o $@
 
 $(BUILD)/mem_test: mem_test.c $(AMI_OBJS) $(M68K_OBJS)
+	$(CC) $(CFLAGS) $^ -lm -lpthread -lz -o $@
+
+$(BUILD)/wait_test: wait_test.c $(AMI_OBJS) $(M68K_OBJS)
 	$(CC) $(CFLAGS) $^ -lm -lpthread -lz -o $@
 
 $(BUILD)/ami/%.o: $(AMI)/%.c $(wildcard $(AMI)/*.h $(AMI)/include/*.h)

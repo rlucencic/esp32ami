@@ -944,6 +944,52 @@ uint8_t amiga_peek8(uint32_t a)
     return (a & 1) ? (w & 0xFF) : (w >> 8);
 }
 
+/* What a read of size bytes at a would give, without its side effects or
+ * time, for wait.c's loops: plain memory, and the chips' and CIAs'
+ * registers that change only where the CPU's slice ends (custom_peek(),
+ * cia_peek(): *until, the time a CIA timer's flag may change). False for
+ * anything else.
+ */
+bool mem_peek(uint32_t a, int size, uint32_t *v, int *until)
+{
+    a &= 0xFFFFFF;
+    *until = NEVER;
+    const uint8_t *p = s_m.rmap[a >> 16];
+    if (p) {
+        if (size == 1) {
+            *v = p[a ^ 1];
+        } else if (a & 1) {
+            return false;
+        } else if (size == 2) {
+            *v = rd16(p, a);
+        } else if ((a & 0xFFFF) <= 0xFFFC) {
+            *v = (uint32_t)rd16(p, a) << 16 | rd16(p, a + 2);
+        } else {
+            return false;
+        }
+        return true;
+    }
+    if (is_custom(a)) {
+        uint16_t w;
+        uint32_t reg = a & 0x1FE;
+        if (size > 2 || (size == 2 && (a & 1)) || (reg == 0x006 && (size == 2 || (a & 1))) ||
+            !custom_peek(reg, &w)) {
+            return false;
+        }
+        *v = size == 2 ? w : (a & 1) ? (w & 0xFF) : (w >> 8);
+        return true;
+    }
+    if (is_cia(a) && size == 1) {
+        uint8_t b;
+        int reg = (a >> 8) & 0xF;
+        bool ok = (a & 1) ? !(a & 0x1000) && cia_peek(&cia[0], reg, &b, until)
+                          : !(a & 0x2000) && cia_peek(&cia[1], reg, &b, until);
+        *v = b;
+        return ok;
+    }
+    return false;
+}
+
 /* n bytes of RAM at a (chip, slow or fast; not ROM or I/O) */
 static bool ram_range(uint32_t a, uint32_t n)
 {

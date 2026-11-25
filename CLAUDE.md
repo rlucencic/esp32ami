@@ -164,21 +164,37 @@ images.
   earlier event (COPJMP, a blit, a CIA timer) or raises the interrupt
   level ends the CPU's slice (`ami_cpu_wake()`: Musashi samples the IRQ
   lines only as a slice starts). At the line's end the display records the
-  line; CIA-B's TOD counts lines, CIA-A's frames. **Poll loops**
+  line; CIA-B's TOD counts lines, CIA-A's frames. **Wait loops**
+  (`wait.c`, TODO 18): a test and a Bcc back to it (TST, BTST, CMPI, CMP
+  `<ea>,Dn`, MOVE `<ea>,Dn` on Dn, (An), (d16,An), abs or (d16,PC)), or a
+  branch to itself. What they test changes only where the CPU's slice
+  ends: RAM through the CPU (its interrupts come as a slice starts), the
+  blitter (done at a write that ends the slice), disk DMA (lines' ends);
+  DMACONR, VPOSR, VHPOSR's vertical byte, POTGOR, INTENAR, INTREQR
+  (`custom_peek()`); a CIA's port A, TOD, SDR (`cia_peek()`). So
+  `run_cpu()` checks as a line begins (and in the line's other slices
+  while the CPU is in a loop): near the PC the last check found, the loop
+  decoded once and kept with its words (compared each time: code
+  changes), the test worked out from memory as it is without the reads'
+  side effects (`mem_peek()`); if the branch will be taken and no
+  interrupt is due (IPL above SR's mask, or 7) and no trace bit, the
+  slice passes without the CPU. A CIA timer polled with its interrupt off
+  underflows anywhere: on ICR, CRA or CRB the skip ends at its next
+  underflow. A loop runs a line or two before it's found. **Poll loops**
   (`custom.c`, `poll_wait()`): a read of DMACONR, VPOSR or INTREQR from a
-  loop of two instructions, the read and a Bcc back to it
-  (`mem_poll_loop()`: Musashi's disassembler for its length, cached by PC),
-  lets the slice's rest pass at once: those change only where a slice ends
-  (an event, the line's end), so the loop leaves at most a pass sooner.
-  VHPOSR's vertical byte (`$dff006`, after the read via
-  `custom_read_addr()` / `poll_vhpos_v()`): the same while the Bcc still
-  loops, gated to CMPI.B `# $F4` in low chip RAM (Kid Pool's title;
-  broader gates broke other titles). Its horizontal byte is not skipped.
-  A loop that does more (a speed test counting its passes) runs as it is;
-  SysInfo the same before and after on both CPUs. For the host's time:
-  with the 68EC020's cache Aerial Racers' `btst #0,$dff005 / bne` ran 2.6
-  times the instructions (117 M in the collection's 7000 frames, 33 M with
-  the skip, 45 M before the cache).
+  loop of two instructions (`mem_poll_loop()`) passes the slice's rest
+  before the read, but only while the loop will go on (`wait_poll_loops()`
+  works the test out: on the exit pass the time belongs to the code after
+  the wait, see the lessons); VHPOSR's vertical byte after the read
+  (`poll_vhpos_v()`, gated to CMPI.B `# $F4` in low chip RAM; `wait.c`
+  covers the rest from the next slice). Its horizontal byte is not
+  skipped. A loop that does more (a speed test counting its passes) runs
+  as it is; SysInfo the same before and after on both CPUs. For the
+  host's time: with the 68EC020's cache Aerial Racers' `btst #0,$dff005 /
+  bne` ran 2.6 times the instructions (117 M in the collection's 7000
+  frames, 33 M with the skip, 45 M before the cache); the A1200 survey's
+  titles spent up to 99% of their instructions in waits (Soccer Kid in
+  play 23.0k instructions a frame, 4.3k with `wait.c`).
 - **The 68000 and the chip bus, slot by slot** (`mem.c`): its
   instructions take a multiple of 4 clocks (the cycle table rounded up at
   init: a bus cycle starts on a 2-colour-clock slot). Each line has a map
@@ -518,6 +534,17 @@ the top two bits do nothing, Aerial Racers' race sets them),
   before). Skipping two-instruction poll loops to their slice's end
   (`poll_wait()`) brought it back.
 
+- **A skip on a wait's exit pass makes a program miss its moment**: Pango
+  Fun's intro waits for line 0 with `tst.b 5(a5) / bne` (V8) then `tst.b
+  6(a5) / bne` back (the vertical byte). `poll_wait()` passed the rest of
+  line 0's first slice before the V8 read even when it read 0; the read
+  came at VERTB's clock 40, the interrupt before the second test, and the
+  handler ran past line 0: the intro waited forever, the disk never
+  loaded (replay "pango", 2026-11-25). It had worked only because the
+  frame's last instruction ran past the frame's end and read line 0's V8;
+  `wait.c` passing line 312 exactly took that away. A skip now only while
+  the loop will go on; `host/wait_test.c` checks the case.
+
 - **On the P4 an instruction costs about the same wherever it runs; a call
   is two of them**: inlining the 68020's fetch into Musashi's loop moved 8
   points of core 1 out of `m68k_read_immediate_16` and 8.6 into
@@ -774,7 +801,13 @@ the top two bits do nothing, Aerial Racers' race sets them),
 - `make -C components/amiga/host test`: ROM-free regression checks of
   mid-line floppy DMA, the 68000's floating chip bus and its bus cycles
   (the callbacks' inline paths against `bus_cycle()`'s waits, every start
-  on a line with taken slots, before it and past its end). The shared core's
+  on a line with taken slots, before it and past its end), and wait loops
+  (`wait_test.c`: small programs behind a stub ROM; a RAM flag set by
+  VERTB, Pango Fun's wait for line 0 with a long handler, a CIA timer
+  polled through ICR ending at its underflow, a kept loop's code changed
+  by a blit; each check fails with its part of `wait.c` taken out). `make
+  test` builds the tests, not `build/ami_host`: `make build/ami_host` for
+  that (a comparison once ran an old binary against itself). The shared core's
   `make -C ../esp32emu/components/musashi/test run run-prefetch` checks
   the prefetch option off/on. The 2026-10-24 follow-up and completed
   hardware checks are in `docs/validation-2026-10-24.md`.
@@ -1060,7 +1093,8 @@ the top two bits do nothing, Aerial Racers' race sets them),
     - Release `j` and `m` between titles: they hold until the next one.
     - Put a package's second disk into DF1: as its own ADF: the runtime
       keeps a file in one drive, so the package into DF1: empties DF0:.
-  - Rerun it after a speed change (TODO 18, 19).
+  - Rerun it after a speed change (TODO 19). The rerun after TODO 18 is in
+    `build/waitloop-2026-11-25/survey/`, with the same scripts.
 - `say hello` in Workbench 1.3's Shell (narrator.device) as a sound test;
   `AMI_WAV` records it on the host.
 - **On the board**: status via the web API, pictures via the console's
@@ -1105,7 +1139,7 @@ the top two bits do nothing, Aerial Racers' race sets them),
 ## Open items
 
 - [TODO.md](TODO.md) tracks the next Tab5 and host checks and the work
-  waiting on hardware, media or a reproducible case. Items 1–8 and 10–17
+  waiting on hardware, media or a reproducible case. Items 1–8 and 10–18
   are complete.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
@@ -1196,10 +1230,16 @@ the top two bits do nothing, Aerial Racers' race sets them),
   behind.
   - Seven run most of the time at 53-66%: Deluxe Galaga, Virtual Karting
     2, Leading Lap, Black Viper, Tactical Manager 2, Fatman, Gea Lux.
-  - One cause is two-instruction waits the poll skip misses, on RAM
-    flags, VHPOSR outside its gate and the CIAs: TODO 18.
+  - One cause was two-instruction waits the poll skip missed, on RAM
+    flags, VHPOSR outside its gate and the CIAs. These are skipped now
+    (`wait.c`, TODO 18, 2026-11-25). Black Viper, Fatman, Soccer Kid and
+    The Lost Prince run at full speed, and Deluxe Galaga in play at
+    81-98%. The survey's time behind went from 638 s to 405 s
+    (`docs/wait-loops-2026-11-25.md`).
   - The other is the 68EC020 at ~1 µs of core 1 an instruction against
-    24-56k a frame: TODO 19.
+    24-56k a frame: TODO 19. Still behind: Virtual Karting 2, Leading Lap,
+    Tactical Manager 2, AmiBee, Gea Lux, Deluxe Galaga's instructions
+    screen, Charr's menu, Metal Kombat's 3D intro.
 
   Done: `chip_read16()` inline
   (every DMA word) and read directly in `display_fetch()`, `beam()` (VPOSR

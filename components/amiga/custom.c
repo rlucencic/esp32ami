@@ -35,13 +35,14 @@ static uint16_t read_reg(uint32_t reg);
  * btst #0,$dff005 / bne; Kid Pool: cmpi.b #-$c,$dff006 / bne): DMACONR's
  * busy bit, VPOSR and INTREQR change only where the CPU's slice ends (an
  * event, the line's end), so the slice's rest passes at once (before the
- * read: the value is already the one at that end). VHPOSR's vertical byte
- * is stable within a line too (skip after the read, and only while the
- * branch will loop: skipping on the exit pass would burn the cycles the
- * code after the wait should get). Its horizontal byte changes every
- * colour clock and is not skipped. A loop that does more (counts its
- * passes: a speed test) runs as it is. (Each PC decoded once while it
- * stays in the table: a game reads these from many places.)
+ * read: the value is already the one at that end), while the branch will
+ * loop (wait.c works the test out): skipping on the exit pass would burn
+ * the cycles the code after the wait should get. VHPOSR's vertical byte
+ * is stable within a line too (skip after the read, the same way). Its
+ * horizontal byte changes every colour clock and is not skipped. A loop
+ * that does more (counts its passes: a speed test) runs as it is. (Each
+ * PC's shape decoded once while it stays in the table: a game reads these
+ * from many places.) wait.c passes the slices after the first one whole.
  */
 #define POLL_PCS        32
 static void poll_wait(void)
@@ -57,7 +58,7 @@ static void poll_wait(void)
         s_pc[i] = pc + 1;
         s_loop[i] = mem_poll_loop(pc);
     }
-    if (s_loop[i]) {
+    if (s_loop[i] && wait_poll_loops(pc)) {
         extern int m68ki_remaining_cycles;
         ami_cpu_wait(m68ki_remaining_cycles > 0 ? m68ki_remaining_cycles : 0);
     }
@@ -190,6 +191,27 @@ uint16_t custom_read(uint32_t reg)
     uint16_t v = read_reg(reg);
     ami.bus = v;
     return v;
+}
+
+/* A register a wait loop may test, as a read would give it (none of these
+ * has a side effect), for wait.c: those that change only at an event or a
+ * line's end. VHPOSR as a word changes every colour clock: only its
+ * vertical byte (the caller's byte read at $dff006).
+ */
+bool custom_peek(uint32_t reg, uint16_t *v)
+{
+    switch (reg) {
+    case 0x002:                     /* DMACONR (BBUSY: the blit's end is an event) */
+    case 0x004:                     /* VPOSR */
+    case 0x006:                     /* VHPOSR */
+    case 0x016:                     /* POTGOR: the right and middle buttons */
+    case 0x01C:                     /* INTENAR */
+    case 0x01E:                     /* INTREQR */
+        *v = read_reg(reg);
+        return true;
+    default:
+        return false;
+    }
 }
 
 /* A byte read: a selects the register and which half. VHPOSR's vertical
