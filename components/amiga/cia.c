@@ -260,6 +260,12 @@ bool cia_peek(cia_t *c, int reg, uint8_t *v, int *until)
     case CRA:
     case CRB:
         cia_sync(c, ami_now());
+        if (reg == ICR && (c->icr & 0x1F)) {
+            /* (a flag the read would clear: a loop polling ICR for another
+             * one takes it with its next read, and code after the loop must
+             * not find it still set; so the CPU runs that read) */
+            return false;
+        }
         *v = reg == ICR ? c->icr | (c->irq ? 0x80 : 0) : reg == CRA ? c->cra : c->crb;
         *until = next_underflow(c, ICR_TA | ICR_TB);
         return true;

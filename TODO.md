@@ -20,41 +20,49 @@ failures; 15, uploads while the A1200 runs; 16, faster Tab5 downloads;
 Why: item 9's assembler waited for a title that falls behind, and item 17
 found several. Titles that compute all frame, without waiting, run 24-56k
 instructions a frame. Core 1 manages ~15-20k at full speed: about 1 µs an
-instruction, with the chipset's ~5 ms. Since item 18 skips the wait
-loops, these are the titles still behind (the survey's rerun,
-`docs/wait-loops-2026-11-25.md`):
+instruction, with the chipset's ~5 ms. Since the waits are skipped (item
+18, and this item's first step), these are the titles still behind
+(`docs/faster-020-2026-11-25.md`):
 
-- Deluxe Galaga's instructions screen 47%; in play 81-98%.
-- Virtual Karting 2 50-60%.
-- AmiBee in play 52-69%.
-- Leading Lap 57-65%.
-- Gea Lux in play 63-74%.
-- Tactical Manager 2 65%.
+- Deluxe Galaga's instructions and Game Control screens ~51%.
+- Virtual Karting 2's race 59-68%.
+- AmiBee's 5000-7000 ~68%.
+- Leading Lap 65-75%.
+- Gea Lux in play 76-78%.
 - Metal Kombat's 3D intro down to 67%.
-- Charr's menu 83%.
-- Christmas Breakdown and Zero Gravity in play ~91%.
+- Charr's menu 85%.
 
 What: shrink the 68020's path, C first as before.
 
-- Where the time goes:
-  - Musashi's instruction words through the cache model take 17-36% of
-    core 1: `m68k_read_immediate_16`, and `m68ki_read_imm_16/32` another
-    3-9%.
-  - Its dispatch, `m68k_execute`, takes 10-21%.
-- Candidates:
-  - Check the cache once per longword or per run of words in one line,
-    not per word.
-  - Read immediates straight through `s_ic.next_word`.
-  - The wait check's cost in titles that compute: about 1.5 points of
-    Christmas Breakdown's play (`docs/wait-loops-2026-11-25.md`). Try a
-    cheaper first look at the PC as a line begins.
+- Where the time goes (the titles that compute): the fetch 22-35% of core
+  1, Musashi's dispatch loop 13-23%, the handlers 9-21%, data memory
+  5-23%. The samples spread evenly over the code: the cost is the
+  instruction count, ~150 P4 instructions a 68020 instruction.
+- Candidates, all in esp32emu's Musashi (the ST and the Macs built and
+  checked too):
+  - Musashi's prefetch bookkeeping around each fetch (~10 P4 instructions
+    a word): the 68000 needs it (Voyage), the 68EC020 doesn't.
+  - The dispatch loop's per-instruction work: the trace flag's store and
+    test, the debugger's map, the cycle table's lookup.
+  - The handlers run from flash through the cache ($480xxxxx): the hottest
+    in IRAM, if internal RAM allows (~110 KB free, 40 KB at its low point).
   - Then RISC-V with PIE where C runs out (`../esp32emu/CLAUDE.md`, "To
     do").
 - The chips' share, where AGA titles show many planes:
   - `memcpy` of the line records, up to 18% (Megaball).
   - Collisions while a title reads CLXDAT, 9% (Deluxe Galaga).
+- Not levers: this P4 (revision 1.x) tops out at 360 MHz; a 512 KB L2
+  cache needs 256 KB of internal RAM.
+
 Done so far:
 
+- Longer waits skipped (2026-11-25): loops of up to 16 instructions worked
+  out a pass at a time (the beam wait through VPOSR as a long, compiled
+  flag waits). Tactical Manager 2 65% → 100%, AmiBee in play 53% → 95-99%,
+  Leading Lap and Virtual Karting 2 a few points.
+- A cheaper fetch (2026-11-25, `mem.c`): 17 P4 instructions a second word
+  and 25 a cached first word (19 and 28); 2-4 points of speed in the
+  titles that compute.
 - The wait loops skipped (item 18, 2026-11-25): the titles that only
   waited run at full speed, so what is left is the CPU's own cost.
 
@@ -93,6 +101,35 @@ Checked: Sword's package in DF0: and DF1: on the Tab5 boots to its title
 with disk 2 in DF1:, as the host does with its disk 2.
 
 Size: small, in esp32emu and `floppy.c`.
+
+## 21. Hyperion's reads and the second sync word
+
+Why: Hyperion's loader seeks without end when one of its ~130 track reads
+starts at a sector's header. That happens when DSKLEN is written within the
+sector's second sync word (32 µs): the DMA then syncs on the second
+`$4489`, sector 0 has no sync in the 6656-word buffer, and its copy at the
+end is cut off. The loader starts each read at a phase that drifts
+deterministically, so whether it hits the window is a coin toss on
+clock-level timing: item 18's build fails with a key tapped at frame 208
+and item 19's passes, and the other way round without it
+(`docs/faster-020-2026-11-25.md`). The collection flips on it after any
+timing change.
+
+What: find out what a real Amiga does differently. A real Paula has the
+same window, so look at the drive instead:
+
+- its speed varies (300 rpm within about 1%), which makes each read's
+  phase random rather than locked;
+- WinUAE's DSKLEN and sync handling, compared against ours.
+
+Model the speed variation deterministically (per turn, from the turn's
+number) if that is what makes the window rare.
+
+Checked: Hyperion through its load with key taps at frames 200-208 on the
+host, every one to its title; the collection; the replays; 9 Fingers and
+Lethal Xcess (the other loaders sensitive to the disk's phase).
+
+Size: a session.
 
 ## 9. Waiting on something
 

@@ -235,6 +235,138 @@ static void code_changed(void)
     CHECK(word(0x104) >> 8 == 150, "the changed loop ended at line 150 (VHPOSR %04x)", word(0x104));
 }
 
+/* The beam wait of many games: VPOSR and VHPOSR as a long, the horizontal
+ * byte masked off, compared with a line */
+static void beam_wait_long(void)
+{
+    static const uint16_t main_code[] = {
+        0x33FC, 0x7FFF, 0x00DF, 0xF09A,         /* move.w #$7fff,$dff09a */
+        0x46FC, 0x2700,                         /* move.w #$2700,sr */
+        0x2039, 0x00DF, 0xF004,                 /* $100C: move.l $dff004,d0 */
+        0x0280, 0x0001, 0xFF00,                 /* andi.l #$1ff00,d0 */
+        0xB0BC, 0x0001, 0x2C00,                 /* cmp.l #$12c00,d0 (line 300) */
+        0x66EC,                                 /* bne.s $100c */
+        0x31F9, 0x00DF, 0xF006, 0x0104,         /* move.w $dff006,$104.w */
+        0x60FE,                                 /* bra.s * */
+    };
+    start(main_code, sizeof(main_code) / 2, NULL, 0);
+    for (int f = 0; f < 2; f++) {
+        amiga_run_frame();
+    }
+    CHECK(word(0x104) >> 8 == (300 & 0xFF), "the long beam wait ended at line 300 (VHPOSR %04x)", word(0x104));
+    CHECK(count(0x100C) < 600, "it passed without the CPU (%u passes)", (unsigned)count(0x100C));
+}
+
+/* A compiled wait on a flag the VERTB handler sets, through the stack
+ * (AmiBee's twelve instructions) */
+static void compiled_flag_wait(void)
+{
+    static const uint16_t main_code[] = {
+        VERTB_ON,
+        0x4BF8, 0x0200,                         /* lea $200.w,a5 */
+        0x102D, 0xFF00,                         /* $1020: move.b -$100(a5),d0 ($100) */
+        0x4880,                                 /* ext.w d0 */
+        0x48E7, 0x8000,                         /* movem.l d0,-(a7) */
+        0x7000,                                 /* moveq #0,d0 */
+        0x2200,                                 /* move.l d0,d1 */
+        0x4CDF, 0x0001,                         /* movem.l (a7)+,d0 */
+        0xB041,                                 /* cmp.w d1,d0 */
+        0x57C0,                                 /* seq d0 */
+        0x4880,                                 /* ext.w d0 */
+        0x4A40,                                 /* tst.w d0 */
+        0x6702,                                 /* beq.s $103e */
+        0x60E2,                                 /* bra.s $1020 */
+        0x31F9, 0x00DF, 0xF006, 0x0104,         /* $103E: move.w $dff006,$104.w */
+        0x60FE,                                 /* bra.s * */
+    };
+    static const uint16_t handler[] = {
+        0x5238, 0x0100,                         /* addq.b #1,$100.w */
+        0x33FC, 0x0020, 0x00DF, 0xF09C,         /* move.w #$20,$dff09c */
+        0x4E73,                                 /* rte */
+    };
+    /* (the handler at $1040 would be inside this program: moved to $1080) */
+    start(main_code, sizeof(main_code) / 2, NULL, 0);
+    for (unsigned i = 0; i < sizeof(handler) / 2; i++) {
+        chip_write16(0x1080 + 2 * i, handler[i]);
+    }
+    chip_write16(0x6E, 0x1080);
+    amiga_run_frame();
+    amiga_run_frame();
+    CHECK(word(0x100) >> 8 >= 1, "the VERTB handler ran (flag %04x)", word(0x100));
+    CHECK(word(0x104) >> 8 == 0, "the compiled wait ended in line 0 (VHPOSR %04x)", word(0x104));
+    CHECK(count(0x1020) < 300, "it passed without the CPU (%u passes, a frame's ~800)", (unsigned)count(0x1020));
+}
+
+/* A loop whose registers change each pass isn't a wait: it runs */
+static void not_a_fixed_point(void)
+{
+    static const uint16_t main_code[] = {
+        0x33FC, 0x7FFF, 0x00DF, 0xF09A,         /* move.w #$7fff,$dff09a */
+        0x46FC, 0x2700,                         /* move.w #$2700,sr */
+        0x0C39, 0x0064, 0x00DF, 0xF006,         /* $100C: cmpi.b #100,$dff006 */
+        0x66F6,                                 /* bne.s $100c */
+        0x72FF,                                 /* moveq #-1,d1 */
+        0xE289,                                 /* $1018: lsr.l #1,d1 (32 passes: ~1.4 lines) */
+        0x66FC,                                 /* bne.s $1018 */
+        0x31F9, 0x00DF, 0xF006, 0x0104,         /* move.w $dff006,$104.w */
+        0x60FE,                                 /* bra.s * */
+    };
+    start(main_code, sizeof(main_code) / 2, NULL, 0);
+    chip_write16(0x104, 0xFFFF);
+    amiga_run_frame();
+    CHECK(count(0x1018) == 32, "the shifting loop ran its 32 passes (%u)", (unsigned)count(0x1018));
+    CHECK(word(0x104) >> 8 == 101 || word(0x104) >> 8 == 102, "and went on after it (VHPOSR %04x)", word(0x104));
+}
+
+/* A wait whose pass leaves a register the code after it reads: a skip
+ * sets the CPU to the pass it would run next (the line it read), not
+ * leaves the line from before the skips */
+static void register_after_wait(void)
+{
+    static const uint16_t main_code[] = {
+        VERTB_ON,
+        0x4A38, 0x0100,                         /* $101C: tst.b $100.w */
+        0x660A,                                 /* bne.s $102c */
+        0x3039, 0x00DF, 0xF006,                 /* move.w $dff006,d0 */
+        0xE048,                                 /* lsr.w #8,d0 */
+        0x60F0,                                 /* bra.s $101c */
+        0x31C0, 0x0104,                         /* $102C: move.w d0,$104.w */
+        0x60FE,                                 /* bra.s * */
+    };
+    static const uint16_t handler[] = {
+        0x5238, 0x0100,                         /* addq.b #1,$100.w */
+        0x33FC, 0x0020, 0x00DF, 0xF09C,         /* move.w #$20,$dff09c */
+        0x4E73,                                 /* rte */
+    };
+    start(main_code, sizeof(main_code) / 2, handler, sizeof(handler) / 2);
+    chip_write16(0x104, 0xFFFF);
+    amiga_run_frame();
+    amiga_run_frame();
+    uint16_t line = word(0x104);
+    CHECK(line == 0 || line == (312 & 0xFF), "the line the wait read last: 312 or 0 (%u)", line);
+    CHECK(count(0x101C) < 300, "it passed without the CPU (%u passes)", (unsigned)count(0x101C));
+}
+
+/* A compare that takes the horizontal byte in: no skip, the loop ends at
+ * its position */
+static void horizontal_compare(void)
+{
+    static const uint16_t main_code[] = {
+        0x33FC, 0x7FFF, 0x00DF, 0xF09A,         /* move.w #$7fff,$dff09a */
+        0x46FC, 0x2700,                         /* move.w #$2700,sr */
+        0x3039, 0x00DF, 0xF006,                 /* $100C: move.w $dff006,d0 */
+        0x0C40, 0x6480,                         /* cmpi.w #$6480,d0 (line 100, h $80) */
+        0x65F4,                                 /* bcs.s $100c */
+        0x31F9, 0x00DF, 0xF006, 0x0104,         /* move.w $dff006,$104.w */
+        0x60FE,                                 /* bra.s * */
+    };
+    start(main_code, sizeof(main_code) / 2, NULL, 0);
+    amiga_run_frame();
+    uint16_t v = word(0x104);
+    CHECK(v >> 8 == 100 && (v & 0xFF) >= 0x80 && (v & 0xFF) < 0x80 + 24,
+          "the horizontal compare ended at line 100, h $80 (VHPOSR %04x)", v);
+}
+
 int main(void)
 {
     make_rom();
@@ -242,6 +374,11 @@ int main(void)
     line0_wait();
     cia_timer_polled();
     code_changed();
+    beam_wait_long();
+    compiled_flag_wait();
+    not_a_fixed_point();
+    register_after_wait();
+    horizontal_compare();
     puts(failures ? "wait loop checks failed" : "all wait loop checks passed");
     return failures != 0;
 }

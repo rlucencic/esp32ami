@@ -17,6 +17,7 @@
 #include "esp_log.h"
 #define ami_malloc(n)       heap_caps_malloc((n), MALLOC_CAP_SPIRAM)
 #define AMI_HOT             IRAM_ATTR
+#define AMI_SDATA           __attribute__((section(".sdata.ami")))  /* (reached from gp: no address to build) */
 #define AMI_LOGI(...)       ESP_LOGI("amiga", __VA_ARGS__)
 #define AMI_LOGW(...)       ESP_LOGW("amiga", __VA_ARGS__)
 #else
@@ -24,6 +25,7 @@
 #include <stdlib.h>
 #define ami_malloc(n)       malloc(n)
 #define AMI_HOT
+#define AMI_SDATA
 #define AMI_LOGI(fmt, ...)  printf("I amiga: " fmt "\n", ##__VA_ARGS__)
 #define AMI_LOGW(fmt, ...)  printf("W amiga: " fmt "\n", ##__VA_ARGS__)
 #endif
@@ -189,7 +191,7 @@ void ami_cpu_wake(void);            /* an earlier event was scheduled: end the C
 void mem_update_map(void);
 void mem_cacr(uint32_t cacr);
 bool mem_poll_loop(uint32_t pc);
-bool mem_peek(uint32_t a, int size, uint32_t *v, int *until);   /* (wait.c) */
+bool mem_peek(uint32_t a, int size, uint32_t *v, int *until, uint32_t *unstable);   /* (wait.c) */
 
 /* wait.c: wait loops pass without the CPU */
 int wait_skip(int until, bool *in_loop);   /* the time the CPU's slice may pass to (ami.cycle: none) */

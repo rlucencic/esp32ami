@@ -165,22 +165,31 @@ images.
   level ends the CPU's slice (`ami_cpu_wake()`: Musashi samples the IRQ
   lines only as a slice starts). At the line's end the display records the
   line; CIA-B's TOD counts lines, CIA-A's frames. **Wait loops**
-  (`wait.c`, TODO 18): a test and a Bcc back to it (TST, BTST, CMPI, CMP
-  `<ea>,Dn`, MOVE `<ea>,Dn` on Dn, (An), (d16,An), abs or (d16,PC)), or a
-  branch to itself. What they test changes only where the CPU's slice
-  ends: RAM through the CPU (its interrupts come as a slice starts), the
-  blitter (done at a write that ends the slice), disk DMA (lines' ends);
-  DMACONR, VPOSR, VHPOSR's vertical byte, POTGOR, INTENAR, INTREQR
-  (`custom_peek()`); a CIA's port A, TOD, SDR (`cia_peek()`). So
-  `run_cpu()` checks as a line begins (and in the line's other slices
-  while the CPU is in a loop): near the PC the last check found, the loop
-  decoded once and kept with its words (compared each time: code
-  changes), the test worked out from memory as it is without the reads'
-  side effects (`mem_peek()`); if the branch will be taken and no
-  interrupt is due (IPL above SR's mask, or 7) and no trace bit, the
-  slice passes without the CPU. A CIA timer polled with its interrupt off
-  underflows anywhere: on ICR, CRA or CRB the skip ends at its next
-  underflow. A loop runs a line or two before it's found. **Poll loops**
+  (`wait.c`, TODO 18 and 19): up to 16 instructions ending in a branch
+  back to the first: moves into registers, MOVEQ, pushes and pops on the
+  stack (MOVE, MOVEM.L), EXT, SWAP, AND, OR, ASR/LSR/LSL #n, TST, CMP,
+  CMPI, BTST, Scc, forward branches, NOP; operands Dn, An, (An), (d16,An),
+  abs, (d16,PC), #imm (the beam wait `move.l $dff004,d0 / andi.l
+  #$1ff00,d0 / cmp.l #$12000,d0 / bne`, compiled code's flag waits). What
+  they read changes only where the CPU's slice ends: RAM through the CPU
+  (its interrupts come as a slice starts), the blitter (done at a write
+  that ends the slice), disk DMA (lines' ends); DMACONR, VPOSR, VHPOSR,
+  POTGOR, INTENAR, INTREQR (`custom_peek()`; VHPOSR's horizontal byte is
+  marked unstable by `mem_peek()`, and no branch may rest on it); a CIA's
+  port A, TOD, SDR, ICR while no flag is pending (`cia_peek()`: a read
+  would clear it). So `run_cpu()` checks as a line begins (and in the
+  line's other slices while the CPU is in a loop): near the PC the last
+  check found, the loop decoded once and kept with its words (compared
+  each time: code changes), a pass worked out from the registers and
+  memory as they are (`mem_peek()`: no side effects). If it comes back to
+  the loop's start with the registers and flags it started with (a fixed
+  point; or one pass later, and then the CPU is set to that pass's state
+  and the loop's start: the beam wait's register holds the line before's
+  position as a line begins), wrote nothing but the stack below the stack
+  pointer, and no interrupt is due (IPL above SR's mask, or 7) and no
+  trace bit, the slice passes without the CPU. A CIA timer polled with its
+  interrupt off underflows anywhere: on ICR, CRA or CRB the skip ends at
+  its next underflow. A loop runs a line or two before it's found. **Poll loops**
   (`custom.c`, `poll_wait()`): a read of DMACONR, VPOSR or INTREQR from a
   loop of two instructions (`mem_poll_loop()`) passes the slice's rest
   before the read, but only while the loop will go on (`wait_poll_loops()`
@@ -240,10 +249,13 @@ images.
   before each slice); an instruction word from it costs no wait, from
   outside a longword's wait for both its words; only the time (the words
   always from memory: no stale code). Its words in a row come through a
-  pointer to the next one (`s_ic.next_word`, while in the same bank of
-  plain memory; `mem_update_map()` clears it): no bank lookup or mask, the
-  cache and waits the same (the fetch ~7% cheaper in Aerial Racers' race;
-  the 68000 tested first, its path as before:
+  pointer to the next one (`s_ic.next_word`, valid while `s_ic.next` is
+  even: the same bank of plain memory; `mem_update_map()` makes it odd):
+  no bank lookup or mask, one compare; only a longword's first word looks
+  at the cache, only a second word at the bank's end; the state in
+  `.sdata` (`AMI_SDATA`: reached from gp). 17 P4 instructions a second
+  word, 25 a cached first one (19 and 28 before, TODO 19; the collection
+  the same, 96 of 96; the 68000 tested first, its path as before:
   `docs/fetch-experiment-2026-11-10.md`). Instruction reads come apart from
   data through `CONFIG_M68K_PROGRAM_READS` (esp32emu; `-DM68K_PROGRAM_READS`
   in the host build): `m68k_read_immediate_16/32()`, the 68000 straight to
@@ -749,6 +761,18 @@ the top two bits do nothing, Aerial Racers' race sets them),
   those too corrupted 9 Fingers' streaming pictures. The generated-disk
   host test checks mid-line DMA start, repeated/backwards sync and frame
   rebasing; it fails with the start synchronization removed.
+- **Hyperion's load is a coin toss on clock-level timing**: its loader
+  writes DSKLEN at a phase of the disk that drifts from read to read;
+  when one of its ~130 reads lands within a sector's second sync word
+  (32 µs; a real Paula has the window too), the DMA syncs on the second
+  `$4489`, sector 0 has no sync in its buffer, and it seeks without end
+  (the drive lines toggling $70/$71 thousands of times). TODO 18's build
+  fails with a key tapped at frame 208 and TODO 19's passes; the other
+  way round without the key. A collection difference in Hyperion after a
+  timing change isn't the change by itself: decode its buffer
+  (`AMI_DUMP=1000:13312:...` after the read) and try a perturbation
+  (TODO 21).
+
 - **Uploads failed while the A1200 ran** (TODO 15, fixed 2026-11-24 in
   esp32emu): the Amiga leaves ~3.4 MB of PSRAM free, under the web
   server's 4 MB reserve, so every transfer goes in 8 KB pieces. Those were
@@ -805,7 +829,10 @@ the top two bits do nothing, Aerial Racers' race sets them),
   (`wait_test.c`: small programs behind a stub ROM; a RAM flag set by
   VERTB, Pango Fun's wait for line 0 with a long handler, a CIA timer
   polled through ICR ending at its underflow, a kept loop's code changed
-  by a blit; each check fails with its part of `wait.c` taken out). `make
+  by a blit, the long beam wait, a compiled flag wait through the stack,
+  a shifting loop that must run (not a fixed point), a register read after
+  a wait (the committed pass), a compare on the horizontal byte (unstable
+  bits); each check fails with its part of `wait.c` taken out). `make
   test` builds the tests, not `build/ami_host`: `make build/ami_host` for
   that (a comparison once ran an old binary against itself). The shared core's
   `make -C ../esp32emu/components/musashi/test run run-prefetch` checks
@@ -1236,10 +1263,14 @@ the top two bits do nothing, Aerial Racers' race sets them),
     The Lost Prince run at full speed, and Deluxe Galaga in play at
     81-98%. The survey's time behind went from 638 s to 405 s
     (`docs/wait-loops-2026-11-25.md`).
+  - Longer waits too (TODO 19's first step, 2026-11-25): the beam wait
+    through VPOSR as a long and compiled flag waits. Tactical Manager 2
+    and AmiBee in play now run at full speed
+    (`docs/faster-020-2026-11-25.md`).
   - The other is the 68EC020 at ~1 µs of core 1 an instruction against
-    24-56k a frame: TODO 19. Still behind: Virtual Karting 2, Leading Lap,
-    Tactical Manager 2, AmiBee, Gea Lux, Deluxe Galaga's instructions
-    screen, Charr's menu, Metal Kombat's 3D intro.
+    24-56k a frame: TODO 19. Still behind: Virtual Karting 2's race,
+    Leading Lap, Gea Lux, Deluxe Galaga's instructions screen, Charr's
+    menu, Metal Kombat's 3D intro.
 
   Done: `chip_read16()` inline
   (every DMA word) and read directly in `display_fetch()`, `beam()` (VPOSR

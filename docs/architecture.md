@@ -1251,6 +1251,31 @@ its gate and CIA registers.
 
 [Wait loops without the CPU](wait-loops-2026-11-25.md)
 
+### A faster 68EC020, the first steps, 2026-11-25
+
+TODO item 19, under way. Three of the slow titles were waiting after all,
+in loops longer than two instructions.
+
+- **Longer waits** (`wait.c`). Loops of up to 16 instructions are
+  decoded, and a pass is worked out from the registers and the peeks.
+  - Moves, stack pushes and pops, EXT, SWAP, AND, OR, shifts, tests,
+    Scc and forward branches are covered.
+  - VHPOSR's horizontal byte is marked unstable, and no branch may rest
+    on it.
+  - A pass that comes back to the same state (a fixed point) skips the
+    slice. One pass later counts too, and then the CPU is set to it.
+  - ICR isn't peeked while a flag is pending.
+  - Results: Tactical Manager 2 65% → 100%, AmiBee in play 53% → 95-99%.
+- **A cheaper fetch** (`mem.c`). One compare a word, the state reached
+  from gp: 17 P4 instructions a second word and 25 a cached first word
+  (19 and 28). 2-4 points of speed in the titles that compute; the host
+  collection the same, 96 of 96.
+- **Hyperion** turned out to be a coin toss on timing in every build: a
+  read whose DSKLEN lands within a sector's second sync word loses
+  sector 0 (TODO 21).
+
+[A faster 68EC020, the first steps](faster-020-2026-11-25.md)
+
 ### Voyage follow-up, 2026-10-24
 
 The host comparisons exposed two further issues. Hyperion's DMA could

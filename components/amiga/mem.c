@@ -621,20 +621,20 @@ unsigned int AMI_HOT m68k_read_memory_32(unsigned int a)
  */
 #define IC_LINES        64
 static struct {
-    uint32_t tag[IC_LINES];                 /* its longword's address | 1 (0: empty); line n
-                                             * at byte n * 4: the address's bits 7-2 */
-    uint32_t next;                          /* the last instruction word fetched + 2 (odd: none) */
-    const uint16_t *next_word;              /* that word in host memory, while it's in the same
-                                             * bank of plain memory (NULL: the general path) */
-    uint32_t next_wait;                     /* (its bank's s_m.wait, while next_word is set) */
+    uint32_t next;                          /* the word after the last one fetched, while it's in
+                                             * the same bank of plain memory (odd: none) */
+    const uint16_t *next_word;              /* that word in host memory (while next is even) */
+    uint32_t next_wait;                     /* (its bank's s_m.wait) */
     uint32_t cacr;
     uint32_t cpu020;                        /* ami.cpu_shift (the 68000: m68k_read_memory_16()) */
-} s_ic = { .next = 1 };
+    uint32_t tag[IC_LINES];                 /* its longword's address | 1 (0: empty); line n
+                                             * at byte n * 4: the address's bits 7-2 */
+} s_ic AMI_SDATA = { .next = 1 };
 
 /* (the next word's host address may be another's now: the general path) */
 static void ic_map_changed(void)
 {
-    s_ic.next_word = NULL;
+    s_ic.next = 1;
     s_ic.cpu020 = ami.cpu_shift;
 }
 
@@ -666,55 +666,43 @@ static inline void ic_longword(uint32_t a, const uint32_t *wait_at)
     }
 }
 
-static inline void ic_word(uint32_t a)
-{
-    uint32_t next = s_ic.next;
-    s_ic.next = a + 2;
-    s_ic.next_word = NULL;
-    if (a == next && (a & 2)) {
-        return;                     /* the longword's second word: read with the first */
-    }
-    uint32_t wait = s_m.wait[a >> 16];
-    ic_longword(a, &wait);
-}
-
-/* An instruction word (its wait already taken) */
-static inline uint16_t program16(uint32_t a)
-{
-    const uint8_t *p = s_m.rmap[a >> 16];
-    return p ? rd16(p, a) : slow_read16(a);
-}
-
 /* The 68EC020 runs on through the words after the last one: those come
- * through next_word (no bank, no mask), the cache and the waits as in
- * ic_word(). Any other word (a branch, a new bank, the slow path's) the
- * general way, which sets next_word up again for plain memory;
- * mem_update_map() clears it. (The 68000 first: its path as it was.)
+ * through next_word (no bank, no mask). A longword's second word was read
+ * with its first; a first word is the cache's or the bus's. Only a second
+ * word can end a bank (its next is then none). Any other word (a branch,
+ * a new bank, a map change: mem_update_map(), the slow path's) the general
+ * way, which sets next up again for plain memory. (The words the slow path
+ * gives, and the first after a map change, count as first words: no code
+ * runs there, and a map change is rare.) (The 68000 first: its path as it
+ * was.)
  */
 unsigned int AMI_HOT m68k_read_immediate_16(unsigned int a)
 {
     if (!s_ic.cpu020) {
         return m68k_read_memory_16(a);
     }
-    const uint16_t *w = s_ic.next_word;
-    if (__builtin_expect(a == s_ic.next && w, 1)) {
-        uint32_t next = a + 2;
-        s_ic.next = next;
-        s_ic.next_word = __builtin_expect(next << 16 != 0, 1) ? w + 1 : NULL;  /* (a bank's end) */
-        if (!(a & 2)) {             /* (a longword's second word: read with the first) */
+    if (__builtin_expect(a == s_ic.next, 1)) {
+        const uint16_t *w = s_ic.next_word;
+        if (a & 2) {
+            s_ic.next = __builtin_expect((a + 2) << 16 != 0, 1) ? a + 2 : 1;   /* (a bank's end) */
+            s_ic.next_word = w + 1;
+        } else {
+            s_ic.next = a + 2;
+            s_ic.next_word = w + 1;
             ic_longword(a, &s_ic.next_wait);
         }
         return *w;
     }
-    ic_word(a);
+    uint32_t wait = s_m.wait[a >> 16];
+    ic_longword(a, &wait);
     const uint8_t *p = s_m.rmap[a >> 16];
     if (p) {
-        if ((a + 2) & 0xFFFF) {
-            s_ic.next_word = (const uint16_t *)(p + a + 2);
-            s_ic.next_wait = s_m.wait[a >> 16];
-        }
+        s_ic.next = (a + 2) << 16 ? a + 2 : 1;
+        s_ic.next_word = (const uint16_t *)(p + a + 2);
+        s_ic.next_wait = wait;
         return rd16(p, a);
     }
+    s_ic.next = 1;
     return slow_read16(a);
 }
 
@@ -726,13 +714,8 @@ unsigned int AMI_HOT m68k_read_immediate_32(unsigned int a)
     if (!ami.cpu_shift) {
         return m68k_read_memory_32(a);
     }
-    ic_word(a);
-    ic_word((a + 2) & 0xFFFFFF);
-    const uint8_t *p = s_m.rmap[a >> 16];
-    if (p && (a & 0xFFFF) <= 0xFFFC) {
-        return ((uint32_t)rd16(p, a) << 16) | rd16(p, a + 2);
-    }
-    return ((uint32_t)program16(a) << 16) | program16((a + 2) & 0xFFFFFF);
+    uint32_t hi = m68k_read_immediate_16(a);
+    return hi << 16 | m68k_read_immediate_16((a + 2) & 0xFFFFFF);
 }
 
 /* The instruction at pc, then a conditional branch back to it: a loop of
@@ -947,13 +930,16 @@ uint8_t amiga_peek8(uint32_t a)
 /* What a read of size bytes at a would give, without its side effects or
  * time, for wait.c's loops: plain memory, and the chips' and CIAs'
  * registers that change only where the CPU's slice ends (custom_peek(),
- * cia_peek(): *until, the time a CIA timer's flag may change). False for
- * anything else.
+ * cia_peek(): *until, the time a CIA timer's flag may change), and in
+ * *unstable the bits of *v that may change before then: VHPOSR's
+ * horizontal byte, alone, in the word or in the long from VPOSR (the beam
+ * wait `move.l $dff004,d0 / andi.l #$1ff00,d0`). False for anything else.
  */
-bool mem_peek(uint32_t a, int size, uint32_t *v, int *until)
+bool mem_peek(uint32_t a, int size, uint32_t *v, int *until, uint32_t *unstable)
 {
     a &= 0xFFFFFF;
     *until = NEVER;
+    *unstable = 0;
     const uint8_t *p = s_m.rmap[a >> 16];
     if (p) {
         if (size == 1) {
@@ -970,13 +956,24 @@ bool mem_peek(uint32_t a, int size, uint32_t *v, int *until)
         return true;
     }
     if (is_custom(a)) {
-        uint16_t w;
+        uint16_t w, w2;
         uint32_t reg = a & 0x1FE;
-        if (size > 2 || (size == 2 && (a & 1)) || (reg == 0x006 && (size == 2 || (a & 1))) ||
-            !custom_peek(reg, &w)) {
+        if ((size > 1 && (a & 1)) || !custom_peek(reg, &w)) {
             return false;
         }
-        *v = size == 2 ? w : (a & 1) ? (w & 0xFF) : (w >> 8);
+        if (size == 4) {
+            if (reg == 0x1FE || !custom_peek(reg + 2, &w2)) {
+                return false;
+            }
+            *v = (uint32_t)w << 16 | w2;
+            *unstable = reg == 0x004 ? 0x000000FF : reg == 0x006 ? 0x00FF0000 : 0;
+        } else if (size == 2) {
+            *v = w;
+            *unstable = reg == 0x006 ? 0x00FF : 0;
+        } else {
+            *v = (a & 1) ? (w & 0xFF) : (w >> 8);
+            *unstable = reg == 0x006 && (a & 1) ? 0xFF : 0;
+        }
         return true;
     }
     if (is_cia(a) && size == 1) {
