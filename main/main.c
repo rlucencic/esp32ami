@@ -541,6 +541,15 @@ static bool disk_insert(int drive, const char *path)
     return ok;
 }
 
+/* An RP9 package with several floppies in DF0: and DF1: at once: each
+ * drive gets a disk of its own (amiga_floppy_insert()); in two hard disk
+ * drives the unpacked image would be one file */
+static bool disk_shared(int drive, int other, const char *path)
+{
+    return drive < AMIGA_FLOPPIES && other < AMIGA_FLOPPIES && has_ext(path, ".rp9") &&
+           amiga_rp9_floppies(path) > 1;
+}
+
 static void disk_eject(int drive)
 {
     s_has_wants[drive] = false;
@@ -682,6 +691,7 @@ static const disks_config_t disks = {
     .takes_blank = disk_takes_blank,
     .default_size = disk_default_size,
     .extension_for = disk_extension_for,
+    .shared = disk_shared,
 };
 
 static void flush(void *arg)

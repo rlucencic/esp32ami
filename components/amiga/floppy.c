@@ -877,6 +877,8 @@ static bool load_rp9(int drive, const char *path, int n, const rp9_t *r)
     return true;
 }
 
+_Static_assert(AMIGA_FLOPPIES == 2, "amiga_floppy_insert(): the other drive is 1 - drive");
+
 bool amiga_floppy_insert(int drive, const char *path)
 {
     if (drive < 0 || drive >= AMIGA_FLOPPIES) {
@@ -900,8 +902,23 @@ bool amiga_floppy_insert(int drive, const char *path)
         AMI_LOGW("DF%d: %s has no floppy disks (a hard disk image: not yet)", drive, path);
         return false;
     }
-    /* the same package again: its next disk */
-    int n = d->data && d->rp9_disks && strcmp(d->shown, path) == 0 ? (d->rp9_disk + 1) % r.disks : 0;
+    /* The same package again: its next disk. The package in the other drive
+     * too: the disk after that drive's, and never the one it has (each
+     * drive writes its own unpacked copy); with one disk only it moves
+     * here (the runtime's disks.c moved it already on the board) */
+    int o = 1 - drive;
+    drive_t *other = &s_drive[o];
+    bool in_other = other->data && other->rp9_disks && strcmp(other->shown, path) == 0;
+    if (in_other && r.disks < 2) {
+        amiga_floppy_eject(o);
+        in_other = false;
+    }
+    int n = d->data && d->rp9_disks && strcmp(d->shown, path) == 0 ? (d->rp9_disk + 1) % r.disks
+            : in_other                                                ? (other->rp9_disk + 1) % r.disks
+                                                                      : 0;
+    if (in_other && n == other->rp9_disk) {
+        n = (n + 1) % r.disks;
+    }
     amiga_floppy_eject(drive);
     if (!load_rp9(drive, path, n, &r)) {
         return false;

@@ -11,7 +11,8 @@ cache; 10, titles from the smoke runs; 11, the Voyage prefetch, CIA and
 floppy follow-up; 12, Workbench's display changes on the Tab5; 13, DMS
 through the live web page; 14, title replays that tell floppy from memory
 failures; 15, uploads while the A1200 runs; 16, faster Tab5 downloads;
-17, an A1200 load survey on the Tab5; 18, wait loops without the CPU).
+17, an A1200 load survey on the Tab5; 18, wait loops without the CPU; 20,
+an RP9's disks in two drives).
 
 ## Next work
 
@@ -43,10 +44,9 @@ What: fewer P4 instructions per 68020 instruction.
   (internal RAM: 1-2 points; the TCM: 25-40% slower). So the cost is the
   instruction count.
 - The C side is near its floor (the handlers' document, "What is left").
-  Small items left: `mem.c`'s `s_m` within gp's reach (one instruction a
-  data access; 3 KB, where the window has ~1.5 KB free); DBcc's
-  extension word read inline (`m68ki_read_imm_16()` is out of line in
-  224 handlers).
+  Its two small items are done: the extension-word reads always inline
+  (no change beyond the spread); `mem.c`'s `s_m` can't be reached from gp
+  (the linker wants the whole 3 KB object in the window).
 - Next, if the titles above are worth it: a translating core for the
   68EC020's hot code (RISC-V, PIE where it helps; `../esp32emu/CLAUDE.md`,
   "To do"), a project of its own. Handlers are esp32emu's Musashi: the ST
@@ -135,25 +135,6 @@ Checked:
 - The collection's pictures the same.
 
 Size: a project, each step measured on its own.
-
-## 20. An RP9's disks in two drives
-
-Why: the runtime keeps a file in one drive (esp32emu's `disks.c`).
-Inserting a package into DF1: to get its second disk takes it out of DF0:,
-and the boot then comes from disk 2 (Sword's Shell, Leading Lap's insert
-screen, item 17). Inserting the package again in the same drive gives its
-next disk, so one drive works.
-
-What: let a package be in two drives, each with its own disk. The disk
-number is already per drive (`d->rp9_disk`), and the unpacked copies are
-separate files (`.<name>.rp9.<n>.adf`). An exception to the one-file rule
-in `disks.c` for packages would do it; check how the other projects use
-the rule first.
-
-Checked: Sword's package in DF0: and DF1: on the Tab5 boots to its title
-with disk 2 in DF1:, as the host does with its disk 2.
-
-Size: small, in esp32emu and `floppy.c`.
 
 ## 21. Hyperion's reads and the second sync word
 

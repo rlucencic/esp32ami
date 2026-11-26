@@ -521,6 +521,12 @@ bool amiga_rp9_hard_disk(const char *path)
     return rp9_read(path, &r) && r.harddrive;
 }
 
+int amiga_rp9_floppies(const char *path)
+{
+    rp9_t r;
+    return rp9_read(path, &r) ? r.disks : 0;
+}
+
 void hdf_close(hdf_t *h)
 {
     for (int i = 0; i < 2; i++) {

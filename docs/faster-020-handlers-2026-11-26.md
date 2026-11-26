@@ -161,13 +161,42 @@ The C side is near its floor:
 Smaller items left: `s_m` within gp's reach (one instruction per data
 access; it is 3 KB, and the window holds ~1.5 KB more); DBcc's extension
 word read inline (GCC left `m68ki_read_imm_16()` out of line in 224
-handlers, the DBcc ones among them). A bigger step would change how
+handlers, the DBcc ones among them); both taken up below. A bigger step would change how
 instructions run: a translating core for the 68EC020's hot code, a project
 of its own.
 
+## The two small items, afterwards
+
+- **`s_m` within gp's reach: not possible.** Placed 652 bytes above gp
+  (in `.gnu.linkonce.s.*`, which ESP-IDF's script puts after every
+  `.sdata.*`, so Musashi's state stayed where it was), none of its 39
+  references were relaxed. The linker relaxes a reference only if the
+  whole object, its size plus a margin for alignment, lies within the
+  window: `s_m` is 3 KB, the window has ~1.4 KB left. Splitting it gains
+  nothing (the callbacks need its 2 KB of bank tables). The same rule
+  explains plain `.sdata` above. Reverted.
+- **The extension-word reads always inline** (esp32emu,
+  `M68KI_IMM_INLINE`, without the prefetch): GCC had left
+  `m68ki_read_imm_16/32()` out of line in 268 handlers (the DBcc ones
+  among them), a call more per extension word. Now none; ~24 KB more
+  code. On the Tab5 (`small`, against `13-16`):
+
+  | Title | 13-16 | small |
+  | --- | ---: | ---: |
+  | Charr (core 1) | 81% | 80% |
+  | Christmas Breakdown (core 1) | 83% | 84% |
+  | Deluxe Galaga | 98.1 (66.6) | 97.8 (67.1) |
+  | Gea Lux (play slowest) | 99.6 (95.1) | 100.0 (94.4) |
+  | Leading Lap | 99.5 (88.0) | 98.8 (87.9) |
+  | Virtual Karting 2 | 81.0 (75.6) | 81.1 (76.5) |
+
+  No change beyond the runs' spread (the A500's core 1 the same within a
+  point); kept, no slower. The collection the same, 96 of 96.
+
 ## Files
 
-`build/handlers-2026-11-26/` (not in git): each build's firmware and ELF
+`build/small-2026-11-26/` (the inline reads: firmware, host binary,
+collection, board run). `build/handlers-2026-11-26/` (not in git): each build's firmware and ELF
 (`frames` step 13, `state` 13-14, `ix` 13-15, `aerr` 13-16) and host binary,
 the collection runs and the replays, the board runs (`board-<build>/`,
 `ab500-<build>.log`).

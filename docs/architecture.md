@@ -1375,7 +1375,39 @@ TODO item 19, still under way.
   average, and the handlers' time is spread thin. A translating core for
   the 68EC020's hot code would be the next step, a project of its own.
 
+- Afterwards, its two small items: the extension-word reads always inline
+  (GCC had left them out of line in 268 handlers; no change beyond the
+  runs' spread, kept), and `mem.c`'s `s_m` within gp's reach, which the
+  linker refuses (it relaxes only a whole object in the window; `s_m` is
+  3 KB).
+
 [A faster 68EC020, the handlers' side](faster-020-handlers-2026-11-26.md)
+
+### An RP9's disks in two drives, 2026-11-26
+
+TODO item 20. The runtime kept a file in one drive (esp32emu's
+`disks_insert()` ejected it from any other), so a package inserted into
+DF1: for its second disk left DF0: empty and the boot came from disk 2
+(Sword's Shell, Leading Lap's insert screen in the A1200 survey, which
+uploaded each title's disk 2 as an ADF instead).
+
+- esp32emu: an optional `disks_config_t.shared(drive, other, path)` lets
+  an image stay in another drive where the machine gives each drive its
+  own copy; without it (every other project) the image moves as before.
+- The Amiga (`main.c`'s `disk_shared()`): a package with more than one
+  floppy, floppy drive to floppy drive (in two hard disk drives the
+  unpacked image would be one file).
+- `amiga_floppy_insert()`: the second drive gets the disk after the
+  first drive's, and a drive never gets the one the other has (each
+  writes its own `.<name>.rp9.<n>.adf`). A package with one disk moves.
+- Checked on the host: Sword with the package in both drives (DF1: disk
+  2 of 4) gives the same 25 pictures over 12000 frames as with disk 2 as
+  an ADF; inserting it again into DF1: gives disks 3, 4, then 2 (disk 1
+  is in DF0:), into DF0: then 3; AmiBee (one disk) moves to DF1:. The
+  collection the same, 96 of 96. On the Tab5 through the web API: DF0:
+  disk 1 of 4, DF1: disk 2 of 4; the boot read DF0: and looked at DF1:,
+  and Sword reached play with the survey's presses (not the Shell).
+- All esp32emu projects build (18 for the Tab5, 14 for the MaTouch).
 
 ### Voyage follow-up, 2026-10-24
 

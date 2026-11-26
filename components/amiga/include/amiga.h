@@ -262,6 +262,11 @@ bool amiga_hd_create(const char *path, uint32_t bytes);
 /* An RP9 package with a hard disk image (else floppies) */
 bool amiga_rp9_hard_disk(const char *path);
 
+/* The floppy disks in an RP9 package (0: none, or not a package). One with
+ * more than one can be in DF0: and DF1: at once, each drive with a disk of
+ * its own (amiga_floppy_insert()) */
+int amiga_rp9_floppies(const char *path);
+
 /* The machine an RP9 package's manifest names: its system (a-500, a-500plus,
  * a-2000, a-600, a-1200, a-4000 as an A1200), Kickstart and RAM (the
  * system's own unless it says). False if it isn't a package or names none.

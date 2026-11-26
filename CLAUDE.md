@@ -407,7 +407,12 @@ images.
   or deflated: miniz's `tinfl` on the board, its 10 KB state on the heap,
   zlib on the host) into hidden `.<name>.rp9.<n>.adf` beside it and used
   as ADFs; inserting the same package again gives its next disk (the drive
-  detail says which). **The machine a package names**
+  detail says which). A package with several floppies goes in DF0: and
+  DF1: at once (since 2026-11-26, TODO 20): the second drive gets the disk
+  after the first's, and a drive never gets the disk the other has (each
+  writes its own copy; esp32emu's `disks_config_t.shared()`, `main.c`'s
+  `disk_shared()`); one with a single disk moves as any image does.
+  **The machine a package names**
   (`amiga_rp9_machine()`: `<system>`, the Kickstart as `<systemrom>` or
   `<rom type="system">`, `<ram type="chip|fast|z3">`): a-500 an A500 with
   512 + 512 KB, a-500plus one with 1 MB chip RAM (ECS follows), a-2000
@@ -602,11 +607,14 @@ the top two bits do nothing, Aerial Racers' race sets them),
   2026-11-26: out of line now (`read16_odd()` and the like). Look at a
   callback's first instructions after changing it.
 
-- **The linker reaches gp's window only with a margin**: on the P4 a
-  symbol within 2 KB of the global pointer costs one instruction instead
-  of `lui` and `addi`, but below gp only with room left for alignment.
-  Musashi's state in plain `.sdata` (the window's first bytes) got none of
-  its 2104 references relaxed; in `.sdata.m68k` (168 bytes below gp) all
+- **The linker reaches gp's window only with the whole object in it**: on
+  the P4 data within 2 KB of the global pointer costs one instruction
+  instead of `lui` and `addi`, but the linker relaxes a reference only if
+  the object, its full size plus a margin for alignment, lies in the
+  window. Musashi's state in plain `.sdata` (from the window's first byte)
+  got none of its 2104 references relaxed; in `.sdata.m68k` (168 bytes
+  below gp, 560 bytes) all. `mem.c`'s 3 KB `s_m` placed 652 bytes above gp
+  got none (the window has ~1.4 KB left): it stays where it was
   (`docs/faster-020-handlers-2026-11-26.md`). Count the references left
   with `lui` after moving data there.
 
@@ -1166,8 +1174,10 @@ the top two bits do nothing, Aerial Racers' race sets them),
       from the 5 s fps lines. Use a 10 ms serial timeout.
     - Keep a press's length.
     - Release `j` and `m` between titles: they hold until the next one.
-    - Put a package's second disk into DF1: as its own ADF: the runtime
-      keeps a file in one drive, so the package into DF1: empties DF0:.
+    - A package's second disk went into DF1: as its own ADF: the runtime
+      kept a file in one drive then. Since 2026-11-26 the package itself
+      into DF1: gives its disk 2 (the board_pass.py there still uploads
+      the ADF).
   - Rerun it after a speed change (TODO 19). The rerun after TODO 18 is in
     `build/waitloop-2026-11-25/survey/`, with the same scripts.
 - `say hello` in Workbench 1.3's Shell (narrator.device) as a sound test;
@@ -1214,8 +1224,8 @@ the top two bits do nothing, Aerial Racers' race sets them),
 ## Open items
 
 - [TODO.md](TODO.md) tracks the next Tab5 and host checks and the work
-  waiting on hardware, media or a reproducible case. Items 1–8 and 10–18
-  are complete.
+  waiting on hardware, media or a reproducible case. Items 1–8, 10–18
+  and 20 are complete.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
   (`docs/images`, 2026-10-21): `workbench31.png` (A600, 3.1 from an HDF,
