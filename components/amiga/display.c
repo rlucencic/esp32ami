@@ -111,7 +111,15 @@ typedef struct {
     uint8_t spr_num[8];             /* the sprite (bit 7: attached to the one before) */
     int16_t spr_x[8];               /* super-hires pixels from the picture's left edge */
     uint16_t spr_a[8][SPR_WORDS], spr_b[8][SPR_WORDS];      /* DATA, DATB */
-    uint32_t color[NCOLORS];        /* as the line began (ncolors of them) */
+    /* The colours as the line began (ncolors of them): this row's own
+     * color[], or an earlier row's of the same frame with the same palette
+     * (a copy each line was 1 KB with AGA's 256 colours, 70-80% of what
+     * the records took)
+     */
+    const uint32_t *pal;
+    uint32_t color_hash;            /* the palette's hash in color[] */
+    bool color_set;                 /* color[] holds one */
+    uint32_t color[NCOLORS];
     change_t change[MAX_CHANGES];
     uint16_t data[MAX_WORDS];       /* plane after plane */
 } row_t;
@@ -149,6 +157,9 @@ static struct {
     int ncolors;                    /* 32, AGA 256 */
     uint32_t color[NCOLORS];        /* 24-bit, as the line began */
     uint32_t pal_hash;              /* their hash (each colour's, XORed) */
+    const row_t *pal_row;           /* this frame's last row with its own copy of the colours */
+    uint32_t pal_row_hash;          /* (their hash) */
+    int sure_rows;                  /* rows every frame of the standard has (a short one a line fewer) */
 
     /* collisions */
     uint16_t clxcon, clxcon2, clxdat;
@@ -247,6 +258,7 @@ void display_reset(void)
     s.fetch_at = NEVER;
     s.writing[0] = s.writing[1] = 1;
     s.first_line = ami.ntsc ? FIRST_LINE_NTSC : FIRST_LINE_PAL;
+    s.sure_rows = (ami.ntsc ? 262 : 312) - s.first_line;
     s.hash = 0x811C9DC5u;
     s.ncolors = ami.aga ? NCOLORS : 32;
     for (int i = 0; i < s.ncolors; i++) {
@@ -786,7 +798,7 @@ void amiga_get_screen(amiga_screen_t *st)
         st->lines = best_len;
     }
     for (int i = 0; i < 32; i++) {
-        st->color[i] = r->color[i];
+        st->color[i] = r->pal ? r->pal[i] : 0;
     }
 }
 
@@ -819,45 +831,6 @@ void display_clxcon(uint16_t v)
     s.clxcon2 = 0;
 }
 
-/* 16 pixels of plane p's line from pixel idx on (outside it, or a plane
- * not fetched: 0)
- */
-static uint16_t plane16(int p, int planes, int idx)
-{
-    int n = s.words * 16;
-    if (p >= planes || idx <= -16 || idx >= n) {
-        return 0;
-    }
-    const uint16_t *d = s.data + p * s.words;
-    int w = idx >= 0 ? idx >> 4 : -1, sh = idx - w * 16;
-    uint32_t a = w >= 0 ? d[w] : 0, b = (w + 1) * 16 < n ? d[w + 1] : 0;
-    return (uint16_t)(((a << 16) | b) >> (16 - sh));
-}
-
-/* Where 16 pixels match the odd (*odd) and even (*even) playfield; idx_o
- * and idx_e: their first pixel in the odd and the even planes
- */
-static void matches16(int planes, int idx_o, int idx_e, uint16_t *odd, uint16_t *even)
-{
-    int enbp = ((s.clxcon >> 6) & 63) | ((s.clxcon2 >> 6) & 3) << 6;
-    int mvbp = (s.clxcon & 63) | (s.clxcon2 & 3) << 6;
-    uint16_t mo = 0xFFFF, me = 0xFFFF;
-    for (int p = 0; p < MAX_PLANES; p++) {
-        if (!(enbp & (1 << p))) {
-            continue;
-        }
-        uint16_t w = plane16(p, planes, (p & 1) ? idx_e : idx_o);
-        w = (mvbp & (1 << p)) ? w : (uint16_t)~w;
-        if (p & 1) {
-            me &= w;
-        } else {
-            mo &= w;
-        }
-    }
-    *odd = mo;
-    *even = me;
-}
-
 /* 32 hires pixels to their 16 lores ones (either of the two) */
 static uint16_t lores16(uint32_t v)
 {
@@ -871,38 +844,95 @@ static uint16_t lores16(uint32_t v)
 /* Lores pixels L..L+15 inside the window (bit 15: L) */
 static uint16_t win16(int L, int hstart, int hstop)
 {
-    uint16_t m = 0;
-    for (int i = 0; i < 16; i++) {
-        if (L + i >= hstart && L + i < hstop) {
-            m |= (uint16_t)(0x8000 >> i);
-        }
-    }
-    return m;
+    int a = hstart - L, b = hstop - L;
+    a = a < 0 ? 0 : a;
+    b = b > 16 ? 16 : b;
+    return a < b ? (uint16_t)((0xFFFFu >> a) & ~(0xFFFFu >> b)) : 0;
 }
 
-/* The playfields' matches at lores pixels L..L+15 */
-static void pf_matches(int L, uint16_t *odd, uint16_t *even)
+/* 32 pixels of a line of n words from pixel x on (bit 31: x), fill
+ * outside it
+ */
+static uint32_t bits32(const uint16_t *d, int n, uint32_t fill, int x)
 {
-    int planes = s.fetched ? s.planes : 0;
-    int d1 = s.con1 & 15, d2 = (s.con1 >> 4) & 15;
-    if (planes && (s.con0 & BPLCON0_SHRES)) {
-        uint16_t o[4], e[4];
-        int at = 4 * (L - s.first);
-        for (int k = 0; k < 4; k++) {
-            matches16(planes, at - 4 * d1 + 16 * k, at - 4 * d2 + 16 * k, &o[k], &e[k]);
+    int w = x >> 4, sh = x & 15;
+    uint32_t a = (unsigned)w < (unsigned)n ? d[w] : fill;
+    uint32_t b = (unsigned)(w + 1) < (unsigned)n ? d[w + 1] : fill;
+    uint32_t c = (unsigned)(w + 2) < (unsigned)n ? d[w + 2] : fill;
+    return ((a << 16 | b) << sh) | (c >> (16 - sh));
+}
+
+#define CLX_WORDS       32      /* the window's lores pixels / 16, at most */
+
+/* The playfields' matches over the window, a word each 16 lores pixels
+ * from hstart (bit 15 first). A playfield matches where its planes that
+ * CLXCON enables (ENBP) have the values it asks for (MVBP; a plane not
+ * fetched, or outside the fetch, is 0): each pixel by itself, so the
+ * planes' words are matched in their own places once (raw), then moved
+ * to the window by the playfield's scroll; hires and super-hires pixels
+ * count for the lores pixel they're in.
+ */
+static void pf_line(int hstart, int n, uint16_t *odd, uint16_t *even)
+{
+    int planes = s.fetched ? s.planes : 0, words = s.words;
+    int enbp = ((s.clxcon >> 6) & 63) | ((s.clxcon2 >> 6) & 3) << 6;
+    int mvbp = (s.clxcon & 63) | (s.clxcon2 & 3) << 6;
+    int r = !planes ? 1 : (s.con0 & BPLCON0_SHRES) ? 4 : (s.con0 & BPLCON0_HIRES) ? 2 : 1;
+    int delay[2] = { s.con1 & 15, (s.con1 >> 4) & 15 };
+    uint16_t *out[2] = { odd, even };
+    for (int side = 0; side < 2; side++) {
+        uint16_t raw[MAX_PLANE_WORDS];
+        uint32_t fill = 0xFFFF;         /* outside the fetch */
+        bool any = false;
+        for (int p = side; p < MAX_PLANES; p += 2) {
+            if (!(enbp & (1 << p))) {
+                continue;
+            }
+            uint16_t inv = (mvbp & (1 << p)) ? 0 : 0xFFFF;
+            fill &= inv;
+            if (p >= planes) {          /* 0 all along */
+                for (int w = 0; w < words && any; w++) {
+                    raw[w] &= inv;
+                }
+                if (!any) {
+                    for (int w = 0; w < words; w++) {
+                        raw[w] = inv;
+                    }
+                    any = true;
+                }
+                continue;
+            }
+            const uint16_t *d = s.data + p * words;
+            if (!any) {
+                for (int w = 0; w < words; w++) {
+                    raw[w] = d[w] ^ inv;
+                }
+                any = true;
+            } else {
+                for (int w = 0; w < words; w++) {
+                    raw[w] &= d[w] ^ inv;
+                }
+            }
         }
-        *odd = lores16((uint32_t)lores16((uint32_t)o[0] << 16 | o[1]) << 16 | lores16((uint32_t)o[2] << 16 | o[3]));
-        *even = lores16((uint32_t)lores16((uint32_t)e[0] << 16 | e[1]) << 16 | lores16((uint32_t)e[2] << 16 | e[3]));
-    } else if (planes && (s.con0 & BPLCON0_HIRES)) {
-        uint16_t o1, e1, o2, e2;
-        int at = 2 * (L - s.first);
-        matches16(planes, at - 2 * d1, at - 2 * d2, &o1, &e1);
-        matches16(planes, at - 2 * d1 + 16, at - 2 * d2 + 16, &o2, &e2);
-        *odd = lores16((uint32_t)o1 << 16 | o2);
-        *even = lores16((uint32_t)e1 << 16 | e2);
-    } else {
-        matches16(planes, L - s.first - d1, L - s.first - d2, odd, even);
+        int n_raw = any ? words : 0;    /* none enabled: all match */
+        int x = r * (hstart - s.first - delay[side]);
+        for (int k = 0; k < n; k++, x += 16 * r) {
+            uint32_t v = bits32(raw, n_raw, fill, x);
+            if (r == 1) {
+                out[side][k] = (uint16_t)(v >> 16);
+            } else if (r == 2) {
+                out[side][k] = lores16(v);
+            } else {
+                out[side][k] = lores16((uint32_t)lores16(v) << 16 | lores16(bits32(raw, n_raw, fill, x + 32)));
+            }
+        }
     }
+}
+
+/* 16 of the window's match bits from lores pixel off (from hstart) on */
+static uint16_t pf16(const uint16_t *m, int n, int off)
+{
+    return (uint16_t)(bits32(m, n, 0, off) >> 16);
 }
 
 static void collide(void)
@@ -913,12 +943,19 @@ static void collide(void)
         return;
     }
     uint16_t clx = s.clxdat;
+    int nwin = (hstop - hstart + 15) >> 4;
+    nwin = nwin > CLX_WORDS ? CLX_WORDS : nwin;
+    uint16_t mo[CLX_WORDS], me[CLX_WORDS];
+    bool pf = false;                    /* mo, me worked out */
     /* odd planes against even ones */
-    for (int L = hstart; L < hstop && !(clx & 1); L += 16) {
-        uint16_t o, e;
-        pf_matches(L, &o, &e);
-        if (o & e & win16(L, hstart, hstop)) {
-            clx |= 1;
+    if (!(clx & 1)) {
+        pf_line(hstart, nwin, mo, me);
+        pf = true;
+        for (int k = 0; k < nwin; k++) {
+            if (mo[k] & me[k] & win16(hstart + 16 * k, hstart, hstop)) {
+                clx |= 1;
+                break;
+            }
         }
     }
     /* the sprite pairs (their sprites' pixels in spans of 16 lores ones: a
@@ -959,10 +996,15 @@ static void collide(void)
             sx[g][spans[g]] = L;
             sm[g][spans[g]] = mk;
             spans[g]++;
-            uint16_t o, e;
-            pf_matches(L, &o, &e);
-            clx |= (uint16_t)((mk & o) ? 2 << g : 0);
-            clx |= (uint16_t)((mk & e) ? 0x20 << g : 0);
+            if ((clx & (0x22 << g)) == (0x22 << g)) {
+                continue;               /* (both found already) */
+            }
+            if (!pf) {
+                pf_line(hstart, nwin, mo, me);
+                pf = true;
+            }
+            clx |= (uint16_t)((mk & pf16(mo, nwin, L - hstart)) ? 2 << g : 0);
+            clx |= (uint16_t)((mk & pf16(me, nwin, L - hstart)) ? 0x20 << g : 0);
         }
     }
     /* pairs against pairs: bits 9-14 (0-1, 0-2, 0-3, 1-2, 1-3, 2-3) */
@@ -1082,6 +1124,24 @@ AMI_HOT void display_line_end(void)
     s.shres_seen |= bpl && (s.con0 & BPLCON0_SHRES);
 
     row_t *r = &buffer(s.field, s.writing[s.field])[row];
+    /* The palette, on every line (an unchanged row's earlier one may have
+     * changed): the frame's last copy if it's this one, else this row's
+     * own (copied unless it holds it already). A row a short frame doesn't
+     * reach keeps its own: it may be shown from an earlier frame, whose
+     * rows have changed since.
+     */
+    if (row < s.sure_rows && s.pal_row && s.pal_row_hash == s.pal_hash) {
+        r->pal = s.pal_row->color;
+    } else {
+        if (!r->color_set || r->color_hash != s.pal_hash) {
+            memcpy(r->color, s.color, s.ncolors * sizeof(uint32_t));
+            r->color_hash = s.pal_hash;
+            r->color_set = true;
+        }
+        r->pal = r->color;
+        s.pal_row = r;
+        s.pal_row_hash = s.pal_hash;
+    }
     if (r->key != key) {
         r->key = key;
         r->con0 = s.con0;
@@ -1110,7 +1170,6 @@ AMI_HOT void display_line_end(void)
         if (!bpl) {
             r->con2 = s.bplcon2;
         }
-        memcpy(r->color, s.color, s.ncolors * sizeof(uint32_t));
         memcpy(r->change, s.change, s.changes * sizeof(change_t));
         if (bpl) {
             memcpy(r->data, s.data, s.planes * s.words * sizeof(uint16_t));
@@ -1150,6 +1209,7 @@ bool display_frame_end(void)
             break;
         }
     }
+    s.pal_row = NULL;
     s.lace_seen = (s.bplcon0 & BPLCON0_LACE) != 0;
     return lace;
 }
@@ -1160,7 +1220,9 @@ bool display_frame_end(void)
 void display_next_field(bool lace)
 {
     s.field = lace && !ami.lof ? 1 : 0;
-    s.first_line = ami_ntsc_beam() ? FIRST_LINE_NTSC : FIRST_LINE_PAL;
+    bool ntsc = ami_ntsc_beam();
+    s.first_line = ntsc ? FIRST_LINE_NTSC : FIRST_LINE_PAL;
+    s.sure_rows = (ntsc ? 262 : 312) - s.first_line;
 }
 
 /* ---- The presenter's side: drawing the records ---- */
@@ -1563,7 +1625,7 @@ static void draw(const row_t *r, uint16_t *out, bool wide)
     d.ehb = !d.aga || (r->planes == 6 && !(r->con0 & (BPLCON0_HAM | BPLCON0_DPF)) && !(r->con2 & BPLCON2_KILLEHB));
     d.bplam = d.aga && !d.ehb ? (uint8_t)(r->con4 >> 8) : 0;
     for (int i = 0; i < ncolors; i++) {
-        set_color(i, r->color[i]);
+        set_color(i, r->pal[i]);
     }
     if (r->planes) {
         memset(d.odd + MARGIN, 0, d.filled);

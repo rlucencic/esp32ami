@@ -22,41 +22,47 @@ found several. Titles that compute all frame, without waiting, run 24-56k
 instructions a frame. Core 1 manages ~15-20k at full speed: about 1 µs an
 instruction, with the chipset's ~5 ms. Since the waits are skipped (item
 18, and this item's first step), these are the titles still behind
-(`docs/faster-020-2026-11-25.md`):
+(`docs/faster-020-2026-11-26.md`):
 
-- Deluxe Galaga's instructions screen ~53%.
-- Virtual Karting 2's race 61-66%.
-- AmiBee's 5000-7000 ~68% (not measured again since step 2).
-- Leading Lap 68-79%.
+- Virtual Karting 2's race 66-70%.
+- Deluxe Galaga's credits and instructions 61-66% (its median 91%).
+- AmiBee's 5000-7000 ~68% (not measured again since 2026-11-25's step 2).
 - Metal Kombat's 3D intro down to 67% (not measured again).
-- Gea Lux in play ~85%.
-- Charr's menu 93-95%.
+- Leading Lap 80-91%.
+- Gea Lux in play 83-85%.
 
-What: shrink the 68020's path, C first as before.
+What: fewer P4 instructions per 68020 instruction.
 
 - Where the time goes now (the titles that compute):
-  - the fetch 16-24% of core 1;
-  - the handlers 13-22%;
-  - Musashi's dispatch loop 10-18%;
-  - `memcpy` of the line records 7-13%;
-  - Lisa's fetch 4-8%.
-- The samples spread evenly over the code, so the cost is the
+  - the fetch 18-26% of core 1;
+  - the handlers 14-25%;
+  - Musashi's dispatch loop 11-20%;
+  - Lisa's fetch 5-8%;
+  - `memcpy` of the line records 1-4%.
+- Core 1 retires 0.62-0.78 P4 instructions a clock, the same in the slow
+  stretches as elsewhere, and where the code lives barely matters
+  (internal RAM: 1-2 points; the TCM: 25-40% slower). So the cost is the
   instruction count.
-- Candidates:
-  - The handlers run from flash through the cache ($480xxxxx). The
-    hottest could go in IRAM if internal RAM allows (~110 KB free, 40 KB
-    at its low point). This is in esp32emu's Musashi: the ST and the Macs
-    must be built and checked too.
-  - Then RISC-V with PIE for the fetch and the dispatch, where C runs out
-    (`../esp32emu/CLAUDE.md`, "To do").
-- The chips' share, where AGA titles show many planes:
-  - `memcpy` of the line records, up to 18% (Megaball).
-  - Collisions while a title reads CLXDAT, 14% in Deluxe Galaga
-    (`matches16`, `collide`).
+- Next: RISC-V with PIE for the fetch and the dispatch, where C has run
+  out (`../esp32emu/CLAUDE.md`, "To do"). The dispatch is in esp32emu's
+  Musashi: the ST and the Macs must be built and checked too.
 - Not levers: this P4 (revision 1.x) tops out at 360 MHz; a 512 KB L2
-  cache needs 256 KB of internal RAM.
+  cache needs 256 KB of internal RAM; code in internal RAM or the TCM.
 
 Done so far:
+
+- The chips' share (2026-11-26, `display.c`,
+  `docs/faster-020-2026-11-26.md`).
+  - Collisions: each line's playfield matches worked out once, not for
+    every 16 pixels of every sprite (Deluxe Galaga 11-15% of core 1 →
+    5-6%).
+  - The line records point to an earlier record's copy of the palette
+    while it is the same (`memcpy` 7-13% → 1-4%).
+  - Charr's menu → 100% (core 1 88%), Leading Lap 79% → 90-91%, Deluxe
+    Galaga's median 82% → 91%, Virtual Karting 2 66% → 70%. The A500
+    titles no slower.
+  - Tried and not kept: the hottest 13 KB in internal RAM (1-2 points),
+    7.9 KB in the TCM (25-40% slower).
 
 - Musashi's work around each instruction (2026-11-25, esp32emu).
   - The 68000's prefetch moved into `mem.c`, so the 68EC020 no longer

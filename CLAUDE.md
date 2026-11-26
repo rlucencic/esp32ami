@@ -462,8 +462,11 @@ images.
   +5; whole units: `(stop - start + 7) / 8 + 1`), modulos after it. ECS
   DIWHIGH (written after DIWSTRT/DIWSTOP) gives the window's high bits.
   Each line becomes a **record** (`row_t`): the fetched words, BPLCON0-2,
-  the window, the colours as the line began, each colour write with the
-  pixel the beam was at (`4h - 210` in picture pixels). Three frames of
+  the window, the colours as the line began (`pal`: an earlier record's
+  copy in the same frame while the palette's hash is the same, else its
+  own; rows a short frame doesn't write always their own), each colour
+  write with the pixel the beam was at (`4h - 210` in picture pixels).
+  Three frames of
   records, latest/pinned as the PC's pictures; a record with the same key
   (hash of its inputs) as the one already in that slot isn't rewritten,
   the frame's signature is the keys' hash. The presenter (core 0) draws
@@ -484,7 +487,8 @@ images.
   fetched is 0), odd planes against even, inside the window; AGA's
   planes 7-8 through CLXCON2 (cleared by a CLXCON write), wide sprites
   all their pixels, hires and super-hires sprite pixels (SPRES) to the
-  lores pixel they're in. Sprite DMA:
+  lores pixel they're in; each line's playfield matches worked out once
+  (`pf_line()`), a word a 16 window pixels. Sprite DMA:
   control words on the line before the first bitplane line (25 PAL) and
   at each VSTOP, data words from VSTART (also a VSTART written while the
   DMA was off at line 25: Aerial Racers' cars). **Interlace**: a frame with
@@ -1284,9 +1288,15 @@ the top two bits do nothing, Aerial Racers' race sets them),
     - extension words inline.
     That brought Christmas Breakdown to full speed, Charr's menu to
     93-95% and Gea Lux to 85%.
-  - Still behind: Virtual Karting 2's race (~66%), Leading Lap (~79%),
-    Deluxe Galaga's instructions screen (~53%) and Metal Kombat's 3D
-    intro.
+  - The chips' share (2026-11-26, `docs/faster-020-2026-11-26.md`):
+    collisions worked out once a line, and the line records pointing to
+    an earlier record's palette while it is the same (`memcpy` 7-13% of
+    core 1 → 1-4%). Charr at full speed, Leading Lap 90%. Code in
+    internal RAM gained 1-2 points and code in the TCM lost 25-40%:
+    neither kept. Core 1 retires 0.62-0.78 instructions a clock.
+  - Still behind: Virtual Karting 2's race (~66-70%), Deluxe Galaga's
+    credits and instructions (~61-66%), Leading Lap (~80-91%), Gea Lux
+    in play (~83-85%) and Metal Kombat's 3D intro.
 
   Done: `chip_read16()` inline
   (every DMA word) and read directly in `display_fetch()`, `beam()` (VPOSR

@@ -1294,6 +1294,32 @@ in loops longer than two instructions.
 
 [A faster 68EC020, the first steps](faster-020-2026-11-25.md)
 
+### A faster 68EC020, the chips' share, 2026-11-26
+
+TODO item 19, still under way.
+
+- **Collisions** (`display.c`): each line's playfield matches are worked
+  out once and shared by the odd/even test and every sprite. In Deluxe
+  Galaga they took 11-15% of core 1, now 5-6%. Checked against the old
+  code on 2 million random lines and on every line of the 96-game
+  collection.
+- **The line records' colours**: a record points to an earlier record's
+  copy of the palette while it is the same. The copies were 70-83% of
+  what the records took. `memcpy` falls from 7-13% of core 1 to 1-4%;
+  the collection's pictures are the same.
+- Results on the Tab5:
+  - Charr's menu 95% → 100%.
+  - Leading Lap 79% → 90-91%.
+  - Deluxe Galaga's median 82% → 91%, its slow stretch 61% → 66%.
+  - Virtual Karting 2 66% → 70%.
+  - The A500's titles no slower.
+- **Not kept**: the hottest 13 KB of code in internal RAM (1-2 points)
+  and 7.9 KB in the TCM (25-40% slower).
+- Core 1 retires 0.62-0.78 instructions a clock: the instruction count is
+  what's left, so assembly for the fetch and the dispatch comes next.
+
+[A faster 68EC020, the chips' share](faster-020-2026-11-26.md)
+
 ### Voyage follow-up, 2026-10-24
 
 The host comparisons exposed two further issues. Hyperion's DMA could
