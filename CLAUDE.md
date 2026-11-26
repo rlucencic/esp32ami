@@ -596,7 +596,19 @@ the top two bits do nothing, Aerial Racers' race sets them),
   is 29, but only once the out-of-line helpers return `unsigned int` like
   the callbacks: with `uint16_t` GCC called them and kept the frame. Kick
   Off 2's credits went from 16.7 to 9.9 ms of core 1 a frame
-  (`docs/bus-cycle-experiment-2026-11-10.md`).
+  (`docs/bus-cycle-experiment-2026-11-10.md`). The 68EC020's odd-address
+  splits (a byte and a word call to come back from) brought the frame back
+  to the word and long callbacks, the 68000's paths included, until
+  2026-11-26: out of line now (`read16_odd()` and the like). Look at a
+  callback's first instructions after changing it.
+
+- **The linker reaches gp's window only with a margin**: on the P4 a
+  symbol within 2 KB of the global pointer costs one instruction instead
+  of `lui` and `addi`, but below gp only with room left for alignment.
+  Musashi's state in plain `.sdata` (the window's first bytes) got none of
+  its 2104 references relaxed; in `.sdata.m68k` (168 bytes below gp) all
+  (`docs/faster-020-handlers-2026-11-26.md`). Count the references left
+  with `lui` after moving data there.
 
 - **ECS's DIWHIGH matters**: Kickstart 3.1's copper list opens a window at
   line 1 with VSTOP 2 through DIWHIGH = 0 (OCS rules would make VSTOP 258):
@@ -1322,9 +1334,17 @@ the top two bits do nothing, Aerial Racers' race sets them),
     `mem.c`'s `m68k_host_run()`, branches within a bank too, Lisa's fetch
     two words a step. Virtual Karting 2 70% → 78%, Leading Lap 91% →
     97%, Gea Lux's slowest 83% → 93%.
-  - Still behind: Virtual Karting 2's race (~73-78%), Deluxe Galaga's
-    credits and instructions (~64%), Leading Lap (~85-97%), Gea Lux in
-    play (~93% at its slowest) and Metal Kombat's 3D intro.
+  - The handlers' side (2026-11-26,
+    `docs/faster-020-handlers-2026-11-26.md`): ~400 handlers share the
+    samples, no handful to special-case; the data callbacks without a
+    stack frame, Musashi's state within gp's reach, the index helper's
+    brief format and the address-error check cheaper. Virtual Karting 2
+    78% → 81%, Leading Lap → 99.5%, Deluxe Galaga 95% → 98%; the A500's
+    core 1 up to 4 points lower.
+  - Still behind: Virtual Karting 2's race (~76-81%), Deluxe Galaga's
+    credits and instructions (~67%), Leading Lap at its slowest (~88%),
+    Gea Lux in play (~95% at its slowest) and Metal Kombat's 3D intro. The
+    C side is near its floor; a translating core would be next.
 
   Done: `chip_read16()` inline
   (every DMA word) and read directly in `display_fetch()`, `beam()` (VPOSR

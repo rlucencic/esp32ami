@@ -529,11 +529,54 @@ static void AMI_HOT __attribute__((noinline)) write32_000(uint32_t a, unsigned i
     m68k_write_memory_16((a + 2) & 0xFFFFFF, v & 0xFFFF);
 }
 
+/* The 68EC020's odd accesses and longwords across a bank's end, in pieces.
+ * Out of line, returning the callbacks' type: a call the callback has to
+ * come back from would cost every access a stack frame (the lessons).
+ */
+static unsigned int AMI_HOT __attribute__((noinline)) read16_odd(uint32_t a)
+{
+    uint32_t hi = m68k_read_memory_8(a);
+    return (hi << 8) | m68k_read_memory_8((a + 1) & 0xFFFFFF);
+}
+
+static unsigned int AMI_HOT __attribute__((noinline)) read32_odd(uint32_t a)
+{
+    uint32_t hi = m68k_read_memory_8(a);
+    uint32_t middle = m68k_read_memory_16((a + 1) & 0xFFFFFF);
+    return (hi << 24) | (middle << 8) | m68k_read_memory_8((a + 3) & 0xFFFFFF);
+}
+
+static unsigned int AMI_HOT __attribute__((noinline)) read32_split(uint32_t a)
+{
+    uint32_t hi = m68k_read_memory_16(a);
+    return (hi << 16) | m68k_read_memory_16((a + 2) & 0xFFFFFF);
+}
+
+static void AMI_HOT __attribute__((noinline)) write16_odd(uint32_t a, unsigned int v)
+{
+    m68k_write_memory_8(a, v >> 8);
+    m68k_write_memory_8((a + 1) & 0xFFFFFF, v & 0xFF);
+}
+
+static void AMI_HOT __attribute__((noinline)) write32_odd(uint32_t a, unsigned int v)
+{
+    m68k_write_memory_8(a, v >> 24);
+    m68k_write_memory_16((a + 1) & 0xFFFFFF, (v >> 8) & 0xFFFF);
+    m68k_write_memory_8((a + 3) & 0xFFFFFF, v & 0xFF);
+}
+
+static void AMI_HOT __attribute__((noinline)) write32_split(uint32_t a, unsigned int v)
+{
+    m68k_write_memory_16(a, v >> 16);
+    m68k_write_memory_16((a + 2) & 0xFFFFFF, v & 0xFFFF);
+}
+
 /* Each callback: the 68000's access to plain memory inline (off the chip
  * bus, or on it while nothing or only this line's taken slots are in the
  * way), the rest as above; then the 68EC020's. Odd 68EC020 data accesses
  * split into bytes and aligned words, since RAM is stored in host-endian
- * words and the pieces can land in different banks.
+ * words and the pieces can land in different banks. Every call in them a
+ * tail call: no stack frame.
  */
 unsigned int AMI_HOT m68k_read_memory_8(unsigned int a)
 {
@@ -571,8 +614,7 @@ unsigned int AMI_HOT m68k_read_memory_16(unsigned int a)
         return read16_000(a);
     }
     if (a & 1) {
-        uint32_t hi = m68k_read_memory_8(a);
-        return (hi << 8) | m68k_read_memory_8((a + 1) & 0xFFFFFF);
+        return read16_odd(a);
     }
     if (s_m.wait[b]) {
         ami_cpu_wait(s_m.wait[b]);
@@ -596,9 +638,7 @@ unsigned int AMI_HOT m68k_read_memory_32(unsigned int a)
         return read32_000(a);
     }
     if (a & 1) {
-        uint32_t hi = m68k_read_memory_8(a);
-        uint32_t middle = m68k_read_memory_16((a + 1) & 0xFFFFFF);
-        return (hi << 24) | (middle << 8) | m68k_read_memory_8((a + 3) & 0xFFFFFF);
+        return read32_odd(a);
     }
     if (p && (a & 0xFFFF) <= 0xFFFC) {
         if (s_m.wait[b]) {
@@ -606,8 +646,7 @@ unsigned int AMI_HOT m68k_read_memory_32(unsigned int a)
         }
         return ((uint32_t)rd16(p, a) << 16) | rd16(p, a + 2);
     }
-    uint32_t hi = m68k_read_memory_16(a);
-    return (hi << 16) | m68k_read_memory_16((a + 2) & 0xFFFFFF);
+    return read32_split(a);
 }
 
 /* ---- The 68EC020's instruction cache ----
@@ -968,8 +1007,7 @@ void AMI_HOT m68k_write_memory_16(unsigned int a, unsigned int v)
         return;
     }
     if (a & 1) {
-        m68k_write_memory_8(a, v >> 8);
-        m68k_write_memory_8((a + 1) & 0xFFFFFF, v & 0xFF);
+        write16_odd(a, v);
         return;
     }
     if (s_m.wait[b]) {
@@ -1001,9 +1039,7 @@ void AMI_HOT m68k_write_memory_32(unsigned int a, unsigned int v)
         return;
     }
     if (a & 1) {
-        m68k_write_memory_8(a, v >> 24);
-        m68k_write_memory_16((a + 1) & 0xFFFFFF, (v >> 8) & 0xFFFF);
-        m68k_write_memory_8((a + 3) & 0xFFFFFF, v & 0xFF);
+        write32_odd(a, v);
         return;
     }
     if (p && (a & 0xFFFF) <= 0xFFFC) {
@@ -1014,8 +1050,7 @@ void AMI_HOT m68k_write_memory_32(unsigned int a, unsigned int v)
         wr16(p, a + 2, v & 0xFFFF);
         return;
     }
-    m68k_write_memory_16(a, v >> 16);
-    m68k_write_memory_16((a + 2) & 0xFFFFFF, v & 0xFFFF);
+    write32_split(a, v);
 }
 
 /* ---- Bytes to and from the 68000's memory (byte n of a word at n ^ 1) ---- */

@@ -22,40 +22,58 @@ found several. Titles that compute all frame, without waiting, run 24-56k
 instructions a frame. Core 1 manages ~15-20k at full speed: about 1 µs an
 instruction, with the chipset's ~5 ms. Since the waits are skipped (item
 18, and this item's first step), these are the titles still behind
-(`docs/faster-020-loop-2026-11-26.md`):
+(`docs/faster-020-handlers-2026-11-26.md`):
 
-- Virtual Karting 2's race 73-78%.
-- Deluxe Galaga's credits and instructions ~64% (its median 95%).
+- Virtual Karting 2's race 76-81%.
+- Deluxe Galaga's credits and instructions ~67% (its median 98%).
 - AmiBee's 5000-7000 ~68% (not measured again since 2026-11-25's step 2).
 - Metal Kombat's 3D intro down to 67% (not measured again).
-- Leading Lap 85-97%.
-- Gea Lux in play 93% at its slowest.
+- Leading Lap 88% at its slowest (its median 99.5%).
+- Gea Lux in play 95% at its slowest.
 
 What: fewer P4 instructions per 68020 instruction.
 
-- Where the time goes now (the titles that compute):
-  - the instruction loop and the fetch 27-40% of core 1 (the loop's
-    common path is 28 P4 instructions, the handler's indirect jump
-    included);
-  - the handlers 18-25%;
-  - the data callbacks and Musashi's helpers 8-12%;
-  - Lisa's fetch 4-6%;
-  - `memcpy` of the line records 1-4%.
+- Where the time goes now (the titles that compute): the loop 18-36% of
+  core 1 (28 P4 instructions around an instruction), the handlers and
+  Musashi's helpers 20-32% (spread over ~400 handlers: no handful worth
+  special-casing), the extension words 4-11%, the data callbacks 5-12%,
+  Lisa's fetch 5-7%.
 - Core 1 retires 0.62-0.78 P4 instructions a clock, the same in the slow
   stretches as elsewhere, and where the code lives barely matters
   (internal RAM: 1-2 points; the TCM: 25-40% slower). So the cost is the
   instruction count.
-- Next: the handlers' side. Count which handlers and effective-address
-  helpers take the samples in the four titles, then try the commonest
-  ones' handlers in the loop (no indirect jump) or the next opcode
-  fetched before the jump; RISC-V with PIE where C runs out
-  (`../esp32emu/CLAUDE.md`, "To do"). Handlers are esp32emu's Musashi: the
-  ST and the Macs must be built and checked too.
+- The C side is near its floor (the handlers' document, "What is left").
+  Small items left: `mem.c`'s `s_m` within gp's reach (one instruction a
+  data access; 3 KB, where the window has ~1.5 KB free); DBcc's
+  extension word read inline (`m68ki_read_imm_16()` is out of line in
+  224 handlers).
+- Next, if the titles above are worth it: a translating core for the
+  68EC020's hot code (RISC-V, PIE where it helps; `../esp32emu/CLAUDE.md`,
+  "To do"), a project of its own. Handlers are esp32emu's Musashi: the ST
+  and the Macs must be built and checked too.
 - Not levers: this P4 (revision 1.x) tops out at 360 MHz; a 512 KB L2
   cache needs 256 KB of internal RAM; code in internal RAM or the TCM;
-  extension words read inline through a window (step 10, a wash).
+  extension words read inline (step 10's window, a wash; reading the
+  loop's own state instead saves ~3 instructions a word on average, at
+  695 call sites).
+- Board runs take 40 minutes a build: measure steps too small to show
+  above the runs' spread (a point or two) together, and tell them apart
+  by the profiles.
 
 Done so far:
+
+- The handlers' side (2026-11-26, `mem.c`, esp32emu's Musashi,
+  `docs/faster-020-handlers-2026-11-26.md`).
+  - The data callbacks without a stack frame (the 68EC020's odd-address
+    splits out of line): a fast RAM word write 29 → 21 P4 instructions.
+  - Musashi's state within the global pointer's reach (`.sdata.m68k`,
+    the 68030 MMU's page cache apart): one instruction, not two, to reach
+    it in every handler.
+  - `m68ki_get_ea_ix()`'s brief format saves three registers, not five;
+    the address-error check tests the address before the CPU type.
+  - Virtual Karting 2 78% → 81%, Leading Lap 97% → 99.5%, Deluxe Galaga
+    95% → 98%, Gea Lux's slowest 93% → 95%. The A500's core 1 up to 4
+    points lower (X-Balls 84% → 80%).
 
 - The 68EC020's own loop (2026-11-26, `mem.c`, esp32emu's
   `CONFIG_M68K_HOST_LOOP`, `docs/faster-020-loop-2026-11-26.md`).

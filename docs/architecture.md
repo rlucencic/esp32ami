@@ -1348,6 +1348,35 @@ TODO item 19, still under way.
 
 [A faster 68EC020, its own loop](faster-020-loop-2026-11-26.md)
 
+### A faster 68EC020, the handlers' side, 2026-11-26
+
+TODO item 19, still under way.
+
+- **The count**: in the four titles that compute, 419 handlers share 21%
+  of core 1, each title its own few; the commonest across them (`dbf`)
+  takes 1.9%. Not worth special-casing in the loop. What every handler
+  pays was cut instead:
+  - the data callbacks' stack frame, back on every word and long access
+    since the 68EC020's odd-address splits (out of line now): a fast RAM
+    word write 29 → 21 P4 instructions, the 68000's paths too;
+  - Musashi's state within the global pointer's reach (esp32emu,
+    `.sdata.m68k`, the 68030 MMU's page cache apart): one instruction to
+    reach it in every handler and helper, not two;
+  - `m68ki_get_ea_ix()`'s brief format saves three registers, not five;
+  - the address-error check tests the address before the CPU type.
+- Results on the Tab5:
+  - Virtual Karting 2 78% → 81%.
+  - Leading Lap 97% → 99.5%, its slowest 85% → 88%.
+  - Deluxe Galaga 95% → 98%, its slow stretch 64% → 67%.
+  - Gea Lux's slowest 5 s 93% → 95%.
+  - The A500's core 1 up to 4 points lower (X-Balls 84% → 80%).
+- The C side is near its floor: the loop is what Musashi's interface
+  asks for, inline extension words save ~3 instructions a word on
+  average, and the handlers' time is spread thin. A translating core for
+  the 68EC020's hot code would be the next step, a project of its own.
+
+[A faster 68EC020, the handlers' side](faster-020-handlers-2026-11-26.md)
+
 ### Voyage follow-up, 2026-10-24
 
 The host comparisons exposed two further issues. Hyperion's DMA could
