@@ -545,7 +545,7 @@ AMI_HOT void display_fetch(void)
     s.planes = planes;
     s.words = words;
 
-    uint32_t key = 0x811C9DC5u;
+    uint32_t key = 0x811C9DC5u, key2 = 0x9E3779B9u;     /* (apart: a word moved between them changes it) */
     uint16_t *d = s.data;
     uint32_t align = ~(uint32_t)(2 * fw - 1);
     const uint8_t *chip = ami.chip;
@@ -556,15 +556,38 @@ AMI_HOT void display_fetch(void)
     int line_mod = (ami.line ^ (s.diwstrt >> 8)) & 1;
     for (int p = 0; p < planes; p++) {
         uint32_t ptr = s.pt[p] & align;
-        for (int w = 0; w < words; w++) {
-            uint16_t v = *(const uint16_t *)(chip + (ptr & mask));
-            ptr += 2;
-            key = (key ^ v) * 0x01000193u;
-            *d++ = v;
+        if (__builtin_expect((ptr & mask) == ptr && ptr + 2 * (uint32_t)words <= ami.chip_size, 1)) {
+            /* (no wrap: two words a step, each into its own hash, a word at
+             * a time as before: a 32-bit word's top bit would only ever
+             * flip the hash's, and two such pixels cancel; the two hashes
+             * don't wait for each other's multiply)
+             */
+            const uint16_t *src = (const uint16_t *)(chip + ptr);
+            int w = 0;
+            for (; w + 1 < words; w += 2) {
+                uint16_t a = src[w], b = src[w + 1];
+                key = (key ^ a) * 0x01000193u;
+                key2 = (key2 ^ b) * 0x01000193u;
+                d[w] = a;
+                d[w + 1] = b;
+            }
+            if (w < words) {
+                key = (key ^ src[w]) * 0x01000193u;
+                d[w] = src[w];
+            }
+            d += words;
+            ptr += 2 * words;
+        } else {
+            for (int w = 0; w < words; w++) {
+                uint16_t v = *(const uint16_t *)(chip + (ptr & mask));
+                ptr += 2;
+                key = (key ^ v) * 0x01000193u;
+                *d++ = v;
+            }
         }
         s.pt[p] = ptr + s.mod[scan_double ? line_mod : p & 1];
     }
-    s.data_key = key;
+    s.data_key = (key ^ key2) * 0x01000193u ^ key2;
     /* lores planes 5-6, hires planes 3-4 and super-hires plane 2 fetch in
      * the 68000's (even) slots (mem.c), in each 8-clock unit from DDFSTRT
      * (the HRM's order: lores - 4 6 2 - 3 5 1, hires 4 2 3 1 4 2 3 1); AGA's
@@ -1027,9 +1050,15 @@ static void collide(void)
 
 /* ---- The line's record ---- */
 
+/* (the top half folded back: a multiply carries bits only upward, so a
+ * value's bit 31 alone would only ever flip the key's bit 31, and two
+ * such changes cancel: Deluxe Pacman's 64-pixel sprites, a DATA word's
+ * leftmost pixel at the top of DATA << 16 | DATB, left lines undrawn)
+ */
 static inline uint32_t mix(uint32_t h, uint32_t v)
 {
-    return (h ^ v) * 0x01000193u;
+    h = (h ^ v) * 0x01000193u;
+    return h ^ (h >> 16);
 }
 
 static void window(int *x0, int *x1)

@@ -256,7 +256,18 @@ images.
   `.sdata` (`AMI_SDATA`: reached from gp). 17 P4 instructions a second
   word, 25 a cached first one (19 and 28 before, TODO 19; the collection
   the same, 96 of 96; the 68000 tested first, its path as before:
-  `docs/fetch-experiment-2026-11-10.md`). Instruction reads come apart from
+  `docs/fetch-experiment-2026-11-10.md`). Runs of its instructions go
+  through `mem.c`'s own loop (`m68k_host_run()`: Musashi's
+  `CONFIG_M68K_HOST_LOOP`, esp32emu; `-DM68K_HOST_LOOP` in the host
+  build): the opcode at `s_ic.next` inline, a branch's target in the last
+  word's bank too (`s_ic.bank`, `s_ic.base`, forgotten by
+  `mem_update_map()` and a reset), the rest through
+  `m68k_read_immediate_16()`, an odd PC back to Musashi (the address
+  error); it stops where Musashi's quick loop would (the slice's end, the
+  trace mark). 28 P4 instructions around an instruction from a second
+  word, 36 from a cached first one (42 and 50 in Musashi's quick loop,
+  `docs/faster-020-loop-2026-11-26.md`); the 68000 stays in Musashi's
+  loop (its prefetch). Instruction reads come apart from
   data through `CONFIG_M68K_PROGRAM_READS` (esp32emu; `-DM68K_PROGRAM_READS`
   in the host build): `m68k_read_immediate_16/32()`. The 68000's prefetch
   (Voyage, the lessons) is `mem.c`'s own (`prefetch16()`, behind the test
@@ -798,6 +809,17 @@ the top two bits do nothing, Aerial Racers' race sets them),
 - **Execute Command keeps the last command in its field**: a second typed
   command was appended to the first ("wrong number of arguments"). Clear
   it with Right-Amiga+X before typing.
+- **A multiply-only hash can't see a value's top bit**: the line records'
+  keys are FNV-1a (`(h ^ v) * P`), and a multiply carries bits only
+  upward: a 32-bit value's bit 31 alone flips only the key's bit 31, two
+  such changes cancel, and the line keeps its key and isn't drawn again.
+  Lisa's fetch hashing two words as one gave nine games stale lines;
+  Deluxe Pacman's 64-pixel sprites (`DATA << 16 | DATB`) had them all
+  along. Hash 16-bit values, or fold the top half back (`mix()`'s
+  `h ^ (h >> 16)`). The truth to compare with: a host build that rewrites
+  every record (`display.c`'s `if (r->key != key)` made `if (1)`), the
+  collection at a picture every 100 frames (`SHOTS=100
+  tools/collection.py ... truth=<it> new=<build>`): 96 of 96 now.
 
 ## Testing
 
@@ -848,8 +870,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
   68EC020 and after a branch, fails without `prefetch16()`). `make
   test` builds the tests, not `build/ami_host`: `make build/ami_host` for
   that (a comparison once ran an old binary against itself). The shared core's
-  `make -C ../esp32emu/components/musashi/test run run-prefetch run-020`
-  checks the prefetch option off/on and trace through the quick loop. The 2026-10-24 follow-up and completed
+  `make -C ../esp32emu/components/musashi/test run run-prefetch run-020
+  run-hostloop` checks the prefetch option off/on, trace through the quick
+  loop and everything through a machine's own loop. The 2026-10-24 follow-up and completed
   hardware checks are in `docs/validation-2026-10-24.md`.
 
 - **Host build**: `make -C components/amiga/host run` (the ROM defaults to
@@ -1294,9 +1317,14 @@ the top two bits do nothing, Aerial Racers' race sets them),
     core 1 → 1-4%). Charr at full speed, Leading Lap 90%. Code in
     internal RAM gained 1-2 points and code in the TCM lost 25-40%:
     neither kept. Core 1 retires 0.62-0.78 instructions a clock.
-  - Still behind: Virtual Karting 2's race (~66-70%), Deluxe Galaga's
-    credits and instructions (~61-66%), Leading Lap (~80-91%), Gea Lux
-    in play (~83-85%) and Metal Kombat's 3D intro.
+  - The 68EC020's own loop (2026-11-26,
+    `docs/faster-020-loop-2026-11-26.md`): the opcode's fetch inline in
+    `mem.c`'s `m68k_host_run()`, branches within a bank too, Lisa's fetch
+    two words a step. Virtual Karting 2 70% → 78%, Leading Lap 91% →
+    97%, Gea Lux's slowest 83% → 93%.
+  - Still behind: Virtual Karting 2's race (~73-78%), Deluxe Galaga's
+    credits and instructions (~64%), Leading Lap (~85-97%), Gea Lux in
+    play (~93% at its slowest) and Metal Kombat's 3D intro.
 
   Done: `chip_read16()` inline
   (every DMA word) and read directly in `display_fetch()`, `beam()` (VPOSR

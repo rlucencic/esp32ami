@@ -625,16 +625,19 @@ static struct {
                                              * the same bank of plain memory (odd: none) */
     const uint16_t *next_word;              /* that word in host memory (while next is even) */
     uint32_t next_wait;                     /* (its bank's s_m.wait) */
+    uint32_t bank;                          /* that bank (none: 0x100), */
+    const uint8_t *base;                    /* its s_m.rmap: branches within it (m68k_host_run()) */
     uint32_t cacr;
     uint32_t cpu020;                        /* ami.cpu_shift (the 68000: m68k_read_memory_16()) */
     uint32_t tag[IC_LINES];                 /* its longword's address | 1 (0: empty); line n
                                              * at byte n * 4: the address's bits 7-2 */
-} s_ic AMI_SDATA = { .next = 1 };
+} s_ic AMI_SDATA = { .next = 1, .bank = 0x100 };
 
 /* (the next word's host address may be another's now: the general path) */
 static void ic_map_changed(void)
 {
     s_ic.next = 1;
+    s_ic.bank = 0x100;
     s_ic.cpu020 = ami.cpu_shift;
 }
 
@@ -691,6 +694,8 @@ static struct {
 void mem_cpu_reset(void)
 {
     s_pref.addr = 0x1000;                   /* (Musashi's: the first fetch is from 0) */
+    s_ic.next = 1;                          /* (and the 68EC020's: the general path) */
+    s_ic.bank = 0x100;
 }
 
 static unsigned int prefetch16(uint32_t a);
@@ -735,22 +740,27 @@ static unsigned int AMI_HOT __attribute__((noinline)) prefetch16(uint32_t a)
     return prefetch_slow(a);
 }
 
+/* The 68EC020's word at s_ic.next */
+static inline uint32_t fetch_next(uint32_t a)
+{
+    const uint16_t *w = s_ic.next_word;
+    s_ic.next_word = w + 1;
+    if (a & 2) {
+        s_ic.next = __builtin_expect((a + 2) << 16 != 0, 1) ? a + 2 : 1;   /* (a bank's end) */
+    } else {
+        s_ic.next = a + 2;
+        ic_longword(a, &s_ic.next_wait);
+    }
+    return *w;
+}
+
 unsigned int AMI_HOT m68k_read_immediate_16(unsigned int a)
 {
     if (!s_ic.cpu020) {
         return prefetch16(a);
     }
     if (__builtin_expect(a == s_ic.next, 1)) {
-        const uint16_t *w = s_ic.next_word;
-        if (a & 2) {
-            s_ic.next = __builtin_expect((a + 2) << 16 != 0, 1) ? a + 2 : 1;   /* (a bank's end) */
-            s_ic.next_word = w + 1;
-        } else {
-            s_ic.next = a + 2;
-            s_ic.next_word = w + 1;
-            ic_longword(a, &s_ic.next_wait);
-        }
-        return *w;
+        return fetch_next(a);
     }
     uint32_t wait = s_m.wait[a >> 16];
     ic_longword(a, &wait);
@@ -759,9 +769,12 @@ unsigned int AMI_HOT m68k_read_immediate_16(unsigned int a)
         s_ic.next = (a + 2) << 16 ? a + 2 : 1;
         s_ic.next_word = (const uint16_t *)(p + a + 2);
         s_ic.next_wait = wait;
+        s_ic.bank = a >> 16;
+        s_ic.base = p;
         return rd16(p, a);
     }
     s_ic.next = 1;
+    s_ic.bank = 0x100;
     return slow_read16(a);
 }
 
@@ -777,6 +790,63 @@ unsigned int AMI_HOT m68k_read_immediate_32(unsigned int a)
     uint32_t hi = m68k_read_immediate_16(a);
     return hi << 16 | m68k_read_immediate_16((a + 2) & 0xFFFFFF);
 }
+
+#ifdef M68K_HOST_LOOP
+/* The 68EC020's runs of instructions (Musashi's M68K_HOST_LOOP): its quick
+ * loop with the opcode's fetch inline. The word after the last one fetched
+ * (s_ic.next: even, so the PC is even and needs no mask) as
+ * m68k_read_immediate_16() has it; another even PC through it; an odd one
+ * is Musashi's (the address error). The 68000's slices stay in Musashi's
+ * loop (its prefetch).
+ */
+#ifdef M68K_HOST_HOOK
+#define HOST_HOOK(pc)   m68k_host_instruction(pc)
+#else
+#define HOST_HOOK(pc)
+#endif
+int AMI_HOT m68k_host_run(void)
+{
+    if (!s_ic.cpu020) {
+        return 0;
+    }
+    unsigned int *pc = m68k_loop.pc, *ppc = m68k_loop.ppc, *ir = m68k_loop.ir;
+    void (**handlers)(void) = *m68k_loop.handlers;
+    const uint8_t *cycles = *m68k_loop.cycles;
+    int *remaining = m68k_loop.remaining;
+    const unsigned int *tracing = m68k_loop.tracing;
+    do {
+        uint32_t a = *pc, op;
+        if (__builtin_expect(a == s_ic.next, 1)) {
+            HOST_HOOK(a);
+            *ppc = a;
+            *pc = a + 2;
+            op = fetch_next(a);
+        } else if (__builtin_expect((a >> 16) == s_ic.bank && !(a & 1), 1)) {
+            /* a branch within the bank of the last word: the general
+             * path's with that bank's pointer and wait */
+            HOST_HOOK(a);
+            *ppc = a;
+            *pc = a + 2;
+            ic_longword(a, &s_ic.next_wait);
+            const uint16_t *w = (const uint16_t *)(s_ic.base + a);
+            op = *w;
+            s_ic.next_word = w + 1;
+            s_ic.next = (a + 2) << 16 ? a + 2 : 1;
+        } else if (a & 1) {
+            return 1;
+        } else {
+            HOST_HOOK(a);
+            *ppc = a;
+            *pc = a + 2;
+            op = m68k_read_immediate_16(a & 0xFFFFFF);
+        }
+        *ir = op;
+        handlers[op]();
+        *remaining -= cycles[op];
+    } while (*remaining > 0 && !*tracing);
+    return 1;
+}
+#endif
 
 /* The instruction at pc, then a conditional branch back to it: a loop of
  * the two (custom.c's polls)

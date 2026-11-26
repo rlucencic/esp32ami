@@ -1320,6 +1320,34 @@ TODO item 19, still under way.
 
 [A faster 68EC020, the chips' share](faster-020-2026-11-26.md)
 
+### A faster 68EC020, its own loop, 2026-11-26
+
+TODO item 19, still under way.
+
+- **The instruction loop** (`mem.c`'s `m68k_host_run()`, esp32emu's
+  `CONFIG_M68K_HOST_LOOP`): Musashi's quick loop hands the 68EC020's runs
+  of instructions to the Amiga's own loop, with the opcode's fetch inline
+  and a branch's target in the same bank too. 28 P4 instructions around
+  an instruction instead of 42 (36 instead of 50 from a cached first
+  word). The 68000 stays in Musashi's loop. Musashi's tests run through a
+  plain machine loop as well (`run-hostloop`).
+- **Lisa's fetch** copies two words a step into two hashes. Hashing them
+  as one 32-bit value left stale lines in nine games: a multiply-only hash
+  can't see a value's top bit. The same flaw had always left stale lines
+  under Deluxe Pacman's 64-pixel sprites; `mix()` now folds its top half
+  back. A build that rewrites every record agrees with ours on all 96
+  games at every 100th frame.
+- Results on the Tab5:
+  - Virtual Karting 2 70% → 78%.
+  - Leading Lap 91% → 97%.
+  - Deluxe Galaga 91% → 95%, its slow stretch 61% → 64%.
+  - Gea Lux's slowest 5 s 83% → 93%.
+  - The A500's titles no slower.
+- **Not kept**: extension words read inline through a window of the
+  machine's (no faster on the board, slower on the host).
+
+[A faster 68EC020, its own loop](faster-020-loop-2026-11-26.md)
+
 ### Voyage follow-up, 2026-10-24
 
 The host comparisons exposed two further issues. Hyperion's DMA could
