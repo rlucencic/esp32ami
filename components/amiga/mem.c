@@ -676,10 +676,69 @@ static inline void ic_longword(uint32_t a, const uint32_t *wait_at)
  * runs there, and a map change is rare.) (The 68000 first: its path as it
  * was.)
  */
+/* The 68000's prefetch (Musashi's M68K_EMULATE_PREFETCH, done here so the
+ * 68EC020 doesn't pay for it): each instruction word comes from the word
+ * fetched ahead when it's that one, and fetches the word after it. An
+ * instruction writing over the next one then runs the old word, as on a
+ * 68000 (Voyage's trace decoder). The same reads in the same order as
+ * Musashi's; m68k_pulse_reset() invalidated it (mem_cpu_reset()).
+ */
+static struct {
+    uint32_t addr;                          /* the word fetched ahead's address */
+    uint32_t data;                          /* and the word */
+} s_pref AMI_SDATA = { .addr = 0x1000 };
+
+void mem_cpu_reset(void)
+{
+    s_pref.addr = 0x1000;                   /* (Musashi's: the first fetch is from 0) */
+}
+
+static unsigned int prefetch16(uint32_t a);
+
+/* (the word fetched ahead, the next one read through the slow path) */
+static unsigned int AMI_HOT __attribute__((noinline)) prefetch_slow(uint32_t a)
+{
+    unsigned int w = s_pref.data;
+    s_pref.data = read16_000(a);
+    return w;
+}
+
+/* (another word than the one fetched ahead: a branch; read it first) */
+static unsigned int AMI_HOT __attribute__((noinline)) prefetch_miss(uint32_t a)
+{
+    s_pref.data = m68k_read_memory_16(a);
+    s_pref.addr = a;
+    return prefetch16(a);
+}
+
+/* The word fetched ahead, and the next one read: m68k_read_memory_16()'s
+ * 68000 path inline, so the common case needs no stack frame */
+static unsigned int AMI_HOT __attribute__((noinline)) prefetch16(uint32_t a)
+{
+    if (__builtin_expect(a != s_pref.addr, 0)) {
+        return prefetch_miss(a);
+    }
+    a = (a + 2) & 0xFFFFFF;
+    s_pref.addr = a;
+    uint32_t b = a >> 16;
+    const uint8_t *p = s_m.rmap[b];
+    int kind = s_m.kind[b];
+    if (p && bus_cycles_quick(kind, 1)) {
+        unsigned int w = s_pref.data;
+        uint16_t v = rd16(p, a);
+        if (kind) {
+            ami.bus = v;
+        }
+        s_pref.data = v;
+        return w;
+    }
+    return prefetch_slow(a);
+}
+
 unsigned int AMI_HOT m68k_read_immediate_16(unsigned int a)
 {
     if (!s_ic.cpu020) {
-        return m68k_read_memory_16(a);
+        return prefetch16(a);
     }
     if (__builtin_expect(a == s_ic.next, 1)) {
         const uint16_t *w = s_ic.next_word;
@@ -711,8 +770,9 @@ unsigned int AMI_HOT m68k_read_immediate_16(unsigned int a)
  */
 unsigned int AMI_HOT m68k_read_immediate_32(unsigned int a)
 {
-    if (!ami.cpu_shift) {
-        return m68k_read_memory_32(a);
+    if (!s_ic.cpu020) {
+        uint32_t hi = prefetch16(a);
+        return hi << 16 | prefetch16((a + 2) & 0xFFFFFF);
     }
     uint32_t hi = m68k_read_immediate_16(a);
     return hi << 16 | m68k_read_immediate_16((a + 2) & 0xFFFFFF);

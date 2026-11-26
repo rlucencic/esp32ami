@@ -24,38 +24,49 @@ instruction, with the chipset's ~5 ms. Since the waits are skipped (item
 18, and this item's first step), these are the titles still behind
 (`docs/faster-020-2026-11-25.md`):
 
-- Deluxe Galaga's instructions and Game Control screens ~51%.
-- Virtual Karting 2's race 59-68%.
-- AmiBee's 5000-7000 ~68%.
-- Leading Lap 65-75%.
-- Gea Lux in play 76-78%.
-- Metal Kombat's 3D intro down to 67%.
-- Charr's menu 85%.
+- Deluxe Galaga's instructions screen ~53%.
+- Virtual Karting 2's race 61-66%.
+- AmiBee's 5000-7000 ~68% (not measured again since step 2).
+- Leading Lap 68-79%.
+- Metal Kombat's 3D intro down to 67% (not measured again).
+- Gea Lux in play ~85%.
+- Charr's menu 93-95%.
 
 What: shrink the 68020's path, C first as before.
 
-- Where the time goes (the titles that compute): the fetch 22-35% of core
-  1, Musashi's dispatch loop 13-23%, the handlers 9-21%, data memory
-  5-23%. The samples spread evenly over the code: the cost is the
-  instruction count, ~150 P4 instructions a 68020 instruction.
-- Candidates, all in esp32emu's Musashi (the ST and the Macs built and
-  checked too):
-  - Musashi's prefetch bookkeeping around each fetch (~10 P4 instructions
-    a word): the 68000 needs it (Voyage), the 68EC020 doesn't.
-  - The dispatch loop's per-instruction work: the trace flag's store and
-    test, the debugger's map, the cycle table's lookup.
-  - The handlers run from flash through the cache ($480xxxxx): the hottest
-    in IRAM, if internal RAM allows (~110 KB free, 40 KB at its low point).
-  - Then RISC-V with PIE where C runs out (`../esp32emu/CLAUDE.md`, "To
-    do").
+- Where the time goes now (the titles that compute):
+  - the fetch 16-24% of core 1;
+  - the handlers 13-22%;
+  - Musashi's dispatch loop 10-18%;
+  - `memcpy` of the line records 7-13%;
+  - Lisa's fetch 4-8%.
+- The samples spread evenly over the code, so the cost is the
+  instruction count.
+- Candidates:
+  - The handlers run from flash through the cache ($480xxxxx). The
+    hottest could go in IRAM if internal RAM allows (~110 KB free, 40 KB
+    at its low point). This is in esp32emu's Musashi: the ST and the Macs
+    must be built and checked too.
+  - Then RISC-V with PIE for the fetch and the dispatch, where C runs out
+    (`../esp32emu/CLAUDE.md`, "To do").
 - The chips' share, where AGA titles show many planes:
   - `memcpy` of the line records, up to 18% (Megaball).
-  - Collisions while a title reads CLXDAT, 9% (Deluxe Galaga).
+  - Collisions while a title reads CLXDAT, 14% in Deluxe Galaga
+    (`matches16`, `collide`).
 - Not levers: this P4 (revision 1.x) tops out at 360 MHz; a 512 KB L2
   cache needs 256 KB of internal RAM.
 
 Done so far:
 
+- Musashi's work around each instruction (2026-11-25, esp32emu).
+  - The 68000's prefetch moved into `mem.c`, so the 68EC020 no longer
+    pays for it.
+  - A quick dispatch loop runs while no trace bit and no debugger is
+    active.
+  - Extension words are read inline.
+  - The dispatch loop went from 34 to 24 P4 instructions an instruction.
+  - Speed gains of 4-16%: Charr 85% → 95%, Christmas Breakdown → 100%,
+    Gea Lux in play 73% → 85%. The A500 is unchanged.
 - Longer waits skipped (2026-11-25): loops of up to 16 instructions worked
   out a pass at a time (the beam wait through VPOSR as a long, compiled
   flag waits). Tactical Manager 2 65% → 100%, AmiBee in play 53% → 95-99%,

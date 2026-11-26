@@ -1270,6 +1270,24 @@ in loops longer than two instructions.
   from gp: 17 P4 instructions a second word and 25 a cached first word
   (19 and 28). 2-4 points of speed in the titles that compute; the host
   collection the same, 96 of 96.
+- **Musashi's work around each instruction** (esp32emu). Each part was
+  checked on the other Musashi hosts too.
+  - The 68000's prefetch moves into `mem.c`, behind the existing test
+    for the 68000. `CONFIG_M68K_PREFETCH` is off, so the 68EC020 skips
+    it. The OCS and ECS games match bit for bit.
+  - A quick dispatch loop runs while no trace bit and no debugger is
+    active.
+  - Extension words are read inline.
+  - Musashi's dispatch loop went from 34 to 24 P4 instructions per 68020
+    instruction.
+  - Results on the Tab5:
+    - Charr's menu 85% → 95%.
+    - Christmas Breakdown 95% → 100%.
+    - Gea Lux in play 73% → 85%.
+    - Leading Lap 73% → 79%.
+    - Virtual Karting 2 60% → 66%.
+    - Deluxe Galaga's instructions 49% → 53%.
+    - The A500's titles are unchanged.
 - **Hyperion** turned out to be a coin toss on timing in every build: a
   read whose DSKLEN lands within a sector's second sync word loses
   sector 0 (TODO 21).

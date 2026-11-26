@@ -269,6 +269,7 @@ void amiga_reset(void)
     audio_reset();
     wait_reset();
     m68k_set_irq(0);
+    mem_cpu_reset();
     m68k_pulse_reset();
 }
 
@@ -293,6 +294,7 @@ static void warm_reset(void)
     audio_reset();
     wait_reset();
     m68k_set_irq(0);
+    mem_cpu_reset();
     m68k_pulse_reset();
 }
 

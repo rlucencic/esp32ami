@@ -190,6 +190,7 @@ void ami_cpu_wake(void);            /* an earlier event was scheduled: end the C
 /* mem.c */
 void mem_update_map(void);
 void mem_cacr(uint32_t cacr);
+void mem_cpu_reset(void);               /* before m68k_pulse_reset(): the 68000's prefetch */
 bool mem_poll_loop(uint32_t pc);
 bool mem_peek(uint32_t a, int size, uint32_t *v, int *until, uint32_t *unstable);   /* (wait.c) */
 

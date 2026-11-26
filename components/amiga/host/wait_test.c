@@ -6,7 +6,8 @@
 #include "amiga_internal.h"
 #include "m68k.h"
 
-static uint8_t chip[512 * 1024], kick[256 * 1024], rom[256 * 1024];
+static uint8_t chip[2048 * 1024], kick[256 * 1024], rom[256 * 1024];
+static amiga_model_t s_model = AMIGA_A500;  /* start()'s machine: an A500, or an A1200 (2 MB chip RAM) */
 static uint32_t s_count[0x100];         /* instructions run at $1000-$11FF, by word */
 static int failures;
 
@@ -77,7 +78,7 @@ static void start(const uint16_t *main_code, int main_words, const uint16_t *han
     memset(chip, 0, sizeof(chip));
     memset(s_count, 0, sizeof(s_count));
     amiga_config_t cfg = {
-        .model = AMIGA_A500, .chip = chip, .chip_size = sizeof(chip),
+        .model = s_model, .chip = chip, .chip_size = s_model == AMIGA_A1200 ? 2048 * 1024 : 512 * 1024,
         .kickstart = kick, .kickstart_size = sizeof(kick), .rom = rom, .opcode_tables = opcode_tables,
     };
     if (!amiga_init(&cfg)) {
@@ -367,9 +368,46 @@ static void horizontal_compare(void)
           "the horizontal compare ended at line 100, h $80 (VHPOSR %04x)", v);
 }
 
+/* The 68000's prefetch (mem.c's, for the 68000 only): an instruction that
+ * writes over the next one runs the old word, also when the write follows
+ * an extension word; a taken branch fetches the new one. The 68EC020 runs
+ * the new word (Voyage's trace decoder needs the 68000's way) */
+static void prefetch(amiga_model_t model)
+{
+    static const uint16_t main_code[] = {
+        0x33FC, 0x7FFF, 0x00DF, 0xF09A,         /* move.w #$7fff,$dff09a */
+        0x46FC, 0x2700,                         /* move.w #$2700,sr */
+        0x43F8, 0x0100,                         /* lea $100.w,a1 */
+        0x41F8, 0x101A,                         /* lea $101a.w,a0 */
+        0x303C, 0x7202,                         /* move.w #$7202,d0 */
+        0x3080,                                 /* $1018: move.w d0,(a0) */
+        0x7201,                                 /* $101A: moveq #1,d1 (becomes moveq #2,d1) */
+        0x32C1,                                 /* move.w d1,(a1)+ */
+        0xB2FC, 0x0104,                         /* cmpa.w #$104,a1 */
+        0x66F6,                                 /* bne.s $101a */
+        0x41F8, 0x102C,                         /* lea $102c.w,a0 */
+        0x30BC, 0x7403,                         /* $1028: move.w #$7403,(a0) */
+        0x7401,                                 /* $102C: moveq #1,d2 (becomes moveq #3,d2) */
+        0x31C2, 0x0104,                         /* move.w d2,$104.w */
+        0x60FE,                                 /* bra.s * */
+    };
+    s_model = model;
+    start(main_code, sizeof(main_code) / 2, NULL, 0);
+    s_model = AMIGA_A500;
+    amiga_run_frame();
+    const char *cpu = model == AMIGA_A1200 ? "68EC020" : "68000";
+    uint16_t old = model == AMIGA_A1200 ? 2 : 1;
+    CHECK(word(0x100) == old, "%s: the word after a write over it (%u, expected %u)", cpu, word(0x100), old);
+    CHECK(word(0x102) == 2, "%s: after a branch back to it (%u, expected 2)", cpu, word(0x102));
+    old = model == AMIGA_A1200 ? 3 : 1;
+    CHECK(word(0x104) == old, "%s: written after an extension word (%u, expected %u)", cpu, word(0x104), old);
+}
+
 int main(void)
 {
     make_rom();
+    prefetch(AMIGA_A500);
+    prefetch(AMIGA_A1200);
     flag_set_by_interrupt();
     line0_wait();
     cia_timer_polled();

@@ -258,9 +258,16 @@ images.
   the same, 96 of 96; the 68000 tested first, its path as before:
   `docs/fetch-experiment-2026-11-10.md`). Instruction reads come apart from
   data through `CONFIG_M68K_PROGRAM_READS` (esp32emu; `-DM68K_PROGRAM_READS`
-  in the host build): `m68k_read_immediate_16/32()`, the 68000 straight to
-  its usual reads; `CONFIG_M68K_PREFETCH` (`-DM68K_PREFETCH`) fetches the
-  next instruction word ahead (the 68000's prefetch: Voyage, the lessons). SysInfo 4.4: 1.04 times an A1200 (1270 Dhrystones,
+  in the host build): `m68k_read_immediate_16/32()`. The 68000's prefetch
+  (Voyage, the lessons) is `mem.c`'s own (`prefetch16()`, behind the test
+  for the 68000 the fetch already had: Musashi's `CONFIG_M68K_PREFETCH` is
+  off since 2026-11-25, so the 68EC020 skips its bookkeeping): each word
+  comes from the word fetched ahead when it's that one and reads the next,
+  the same reads in the same order as Musashi's (the A500, A2000 and A600
+  games bit for bit), the common case without a stack frame;
+  `mem_cpu_reset()` before `m68k_pulse_reset()` as Musashi invalidated it;
+  `host/wait_test.c`'s `prefetch` checks the old word on the 68000 and the
+  new one on the 68EC020. SysInfo 4.4: 1.04 times an A1200 (1270 Dhrystones,
   14.60 MHz; with the cache and the old wait of 5: 1.38; without the
   cache: 1.03, 11.30 MHz, the instruction waits making up for the cheap
   data ones). No bus errors on the Amiga: `CONFIG_M68K_NO_BUS_ERRORS`
@@ -832,11 +839,13 @@ the top two bits do nothing, Aerial Racers' race sets them),
   by a blit, the long beam wait, a compiled flag wait through the stack,
   a shifting loop that must run (not a fixed point), a register read after
   a wait (the committed pass), a compare on the horizontal byte (unstable
-  bits); each check fails with its part of `wait.c` taken out). `make
+  bits); each check fails with its part of `wait.c` taken out; and the
+  68000's prefetch: the old word after a write over it, the new one on the
+  68EC020 and after a branch, fails without `prefetch16()`). `make
   test` builds the tests, not `build/ami_host`: `make build/ami_host` for
   that (a comparison once ran an old binary against itself). The shared core's
-  `make -C ../esp32emu/components/musashi/test run run-prefetch` checks
-  the prefetch option off/on. The 2026-10-24 follow-up and completed
+  `make -C ../esp32emu/components/musashi/test run run-prefetch run-020`
+  checks the prefetch option off/on and trace through the quick loop. The 2026-10-24 follow-up and completed
   hardware checks are in `docs/validation-2026-10-24.md`.
 
 - **Host build**: `make -C components/amiga/host run` (the ROM defaults to
@@ -1267,10 +1276,17 @@ the top two bits do nothing, Aerial Racers' race sets them),
     through VPOSR as a long and compiled flag waits. Tactical Manager 2
     and AmiBee in play now run at full speed
     (`docs/faster-020-2026-11-25.md`).
-  - The other is the 68EC020 at ~1 µs of core 1 an instruction against
-    24-56k a frame: TODO 19. Still behind: Virtual Karting 2's race,
-    Leading Lap, Gea Lux, Deluxe Galaga's instructions screen, Charr's
-    menu, Metal Kombat's 3D intro.
+  - The other cause is the 68EC020 itself, at ~1 µs of core 1 an
+    instruction against 24-56k instructions a frame: TODO 19.
+  - Musashi's work around each instruction (2026-11-25, esp32emu):
+    - the prefetch moved into `mem.c`;
+    - a quick dispatch loop;
+    - extension words inline.
+    That brought Christmas Breakdown to full speed, Charr's menu to
+    93-95% and Gea Lux to 85%.
+  - Still behind: Virtual Karting 2's race (~66%), Leading Lap (~79%),
+    Deluxe Galaga's instructions screen (~53%) and Metal Kombat's 3D
+    intro.
 
   Done: `chip_read16()` inline
   (every DMA word) and read directly in `display_fetch()`, `beam()` (VPOSR
