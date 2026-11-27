@@ -24,12 +24,12 @@ instructions a frame; the interpreter managed ~15-20k at full speed. With
 the translating core (`docs/jit-design-2026-11-27.md`) these still fall
 behind in their slowest stretches (median, slowest; `board_pass.py`):
 
-- Deluxe Galaga 99.7% (90.4%: its later windows, the chips'; its
+- Deluxe Galaga 99.5% (88.9%: its later windows, the chips'; its
   credits, an idle loop that polls the joystick and keyboard through the
-  OS, 90-92%).
-- Leading Lap 99.6% (94.5%).
-- Gea Lux 100% (96.8%), AmiBee 99.9% (99.5%), Virtual Karting 2 99.9%
-  (99.4%).
+  OS, 90-94%, collisions 12% of core 1 there).
+- Leading Lap 99.6% (94.3%).
+- Gea Lux 100% (97.1%), AmiBee 99.9% (99.5%), Virtual Karting 2 99.9%
+  (99.6%).
 - (Metal Kombat's 82.8% was the board pass's own: a screenshot and a
   profile in that window, a disk insert in the next slowest; otherwise
   99.4% or more.)
@@ -59,11 +59,12 @@ What: fewer P4 instructions per 68020 instruction.
   (24-61% of the translated code's, 54% in Deluxe Galaga's credits at
   3.9 instructions a block run) plus the C dispatcher's 8-10% of core 1,
   and 60-84% of the exits go to a fixed PC whose block exists (linked
-  since: see "Done so far"). Next, in that order:
-  - Computed exits (RTS, JMP (An): 3-24% of the exits, now most of what
-    reaches the dispatcher) through a small cache of targets in the code.
+  since: see "Done so far"; the computed exits keep their targets too).
+  Next, in that order:
   - Leading Lap's `jit_written()` (4.1% of core 1 in its profile): its
-    writes land in pages with code; finer pages or a cheaper walk.
+    writes land in pages with code; finer pages or a cheaper walk. Its
+    link exits that keep coming back unlinked (~33 a frame) may be the
+    same story (their target dropped and made again).
   - Denser code (Leading Lap still flushes its 2 MB arena 25 times in
     15000 frames on the host: the exits' table in 8 bytes, the P4's
     compressed instructions).
@@ -71,9 +72,12 @@ What: fewer P4 instructions per 68020 instruction.
     (~350 a frame), Leading Lap's DIVS.W and DIVU.W (~160). Handlers are
     esp32emu's Musashi: the ST and the Macs must be built and checked if
     it changes.
-  - Deluxe Galaga's later slow windows (88-89%) run ~6700 instructions a
-    frame: the chips' (its collisions on every line while it reads
-    CLXDAT), not the CPU's; profile them on the board first.
+  - Deluxe Galaga: collisions are 12% of core 1 in its credits (worked
+    out on every line while it reads CLXDAT: `pf_line()`, `bits32()`,
+    `collide()`), and its later slow windows (~89-91%) run ~6700
+    instructions a frame: the chips', not the CPU's. A line with no
+    sprite armed and the playfields' bit already set (or not enabled)
+    needs no work; profile the later windows on the board first.
 - PSRAM: with the A1200's 8 MB of fast RAM and the 2 MB arena ~2.2 MB are
   free with two floppies in. A high-density ADF's 1.72 MB buffer fits; an
   extended ADF's 2.5 MB may not in one piece, even with the arena given
@@ -91,6 +95,17 @@ What: fewer P4 instructions per 68020 instruction.
   by the profiles.
 
 Done so far:
+
+- The computed exits' targets (2026-11-27, `jit.c`, `jit_rv.c`,
+  `docs/jit-design-2026-11-27.md`, "The computed exits' targets" and
+  "kept targets"): RTS and JSR/JMP (An) compare the PC with their last
+  two targets (kept after their record by the dispatcher) and jump into
+  the matching block. Measured first: Deluxe Galaga's credits 99% the
+  last target, elsewhere RTS 53-76% the last, 84-94% one of two. The
+  dispatcher's trips a frame in the credits 2292 → 625 (615 of them
+  slice ends), 43.5 M → 24.8 M over the board's pass; the credits' windows
+  2-3 points faster (90.1-92.2% → 92.8-94.4%), the dispatcher there 4.1%
+  → 2.2% of core 1; the other titles the same within the runs' spread.
 
 - Blocks reaching each other (2026-11-27, `jit.c`, `jit_rv.c`,
   `docs/jit-design-2026-11-27.md`, "Blocks reaching each other").

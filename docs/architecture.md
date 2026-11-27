@@ -1496,6 +1496,24 @@ TODO item 19: the 68EC020's blocks in RISC-V on the board
   input lands within a frame there), so exactness rests on the host,
   which runs the same code.
 
+### The computed exits' targets, 2026-11-27
+
+TODO item 19 (`jit-design-2026-11-27.md`, "The computed exits' targets"
+and "The computed exits' kept targets").
+
+- **Measured first**: how often RTS and JSR/JMP (An) go where they went
+  last time: Deluxe Galaga's credits 99%, elsewhere RTS 53-76% (84-94%
+  one of the last two), JSR (An) 82-91%.
+- **The code**: each such exit compares the PC with its last two targets
+  (data after its record, kept by the dispatcher) and jumps into the
+  matching block's entry; else the dispatcher as before.
+- **Results**: the dispatcher's trips in Deluxe Galaga's credits 2292 →
+  625 a frame (615 of them slice ends), its windows there 2-3 points
+  faster (90.1-92.2% → 92.8-94.4%); the other titles the same within the
+  runs' spread. What is left there is the chips', collisions 12% of core
+  1. The host: the collection, the survey and the replays the same as the
+  interpreter.
+
 ### Blocks reaching each other, 2026-11-27
 
 TODO item 19 (`jit-design-2026-11-27.md`, "Where the slow stretches spend

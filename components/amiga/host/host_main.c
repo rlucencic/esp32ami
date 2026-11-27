@@ -174,7 +174,7 @@ static void opstat_write(void)
 
 #ifdef AMI_JIT
 /* (AMI_JITSTAT=<frame>) the translated code's counters from here on */
-extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills; } jit_stats;
+extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills, fills; } jit_stats;
 static void jitstat_reset(void)
 {
     extern uint32_t jit_fb_count[65536], jit_interp_count[65536];
@@ -184,8 +184,9 @@ static void jitstat_reset(void)
     memset(jit_fb_count, 0, sizeof(jit_fb_count));
     memset(jit_interp_count, 0, sizeof(jit_interp_count));
     rvsim_steps = rvsim_calls = 0;
-    extern unsigned long jit_lookups, jit_probes, jit_exits[4][2];
+    extern unsigned long jit_lookups, jit_probes, jit_exits[4][2], jit_dyn[3][6];
     jit_lookups = jit_probes = 0;
+    memset(jit_dyn, 0, sizeof(jit_dyn));
     memset(jit_exits, 0, sizeof(jit_exits));
     jit_t_decode = jit_t_emit = 0;
 }
@@ -964,11 +965,19 @@ int main(int argc, char **argv)
             printf("jit: %llu RISC-V instructions run in the arena, %llu calls out of it\n",
                    (unsigned long long)rvsim_steps, (unsigned long long)rvsim_calls);
             extern unsigned long jit_lookups, jit_probes, jit_exits[4][2];
+            printf("jit: %lu computed exits' targets kept\n", jit_stats.fills);
             printf("jit: %lu lookups, %lu chain steps; %lu links made, %lu blocks' entries killed; exits to the dispatcher "
                    "(the slice going on / over): a link's %lu / %lu, the slice's or a write's %lu / %lu, computed %lu / %lu, "
                    "after a handler %lu / %lu\n",
                    jit_lookups, jit_probes, jit_stats.links, jit_stats.kills, jit_exits[3][0], jit_exits[3][1],
                    jit_exits[0][0], jit_exits[0][1], jit_exits[1][0], jit_exits[1][1], jit_exits[2][0], jit_exits[2][1]);
+            extern unsigned long jit_dyn[3][6];
+            static const char *const dk[3] = { "RTS", "JSR", "JMP" };
+            for (int k = 0; k < 3; k++) {
+                printf("jit: computed exits %s: %lu (the slice going on), %lu the first at their exit; the target the last "
+                       "one %lu, among the last 2 %lu, the last 4 %lu; the last one with a block there %lu\n",
+                       dk[k], jit_dyn[k][0], jit_dyn[k][1], jit_dyn[k][2], jit_dyn[k][3], jit_dyn[k][4], jit_dyn[k][5]);
+            }
             for (int op = 0; op < 65536; op++) {
                 if (s_opstat[op] || jit_fb_count[op] || jit_interp_count[op]) {
                     char text[100] = "";

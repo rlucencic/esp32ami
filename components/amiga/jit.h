@@ -40,6 +40,14 @@ enum {
                                          * words 12 bytes before the record a jump to pc's
                                          * block once linked (jit_rv_link()) */
 };
+/* A computed exit's (JIT_EXIT_DYN) last two targets, after its record: a
+ * PC and its block's entry each, the latest first (an odd PC: none); the
+ * code reaches them from its auipc (the byte offsets), jit.c from the
+ * record (words 4-7) */
+#define JIT_DYN_PC0         56
+#define JIT_DYN_TO0         60
+#define JIT_DYN_PC1         64
+#define JIT_DYN_TO1         68
 typedef struct {
     uint32_t pc;                        /* (JIT_EXIT_PC) */
     uint32_t ppc;                       /* the last instruction's address, */

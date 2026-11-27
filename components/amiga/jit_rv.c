@@ -184,6 +184,18 @@ static int new_exit(int kind, uint32_t pc, uint32_t fe)
  * (CHK_S1: unless the instruction's own check just did) and jit_stop
  * (CHK_STOP: after a write; only a write sets it, and every other write's
  * instruction looks at it itself) */
+/* A computed exit (the PC in memory: RTS, JSR/JMP through an address
+ * register): its two last targets' blocks kept after its record, jumped
+ * to when the PC is one of them (jit.c fills them) */
+static int new_dyn(uint32_t fe)
+{
+    int l = new_exit(JIT_EXIT_DYN, 0, fe);
+    if (T.nexits && T.exit_label[T.nexits - 1] == l) {
+        T.exit_chk[T.nexits - 1] = (uint8_t)(CHK_S1 | (T.wrote ? CHK_STOP : 0));
+    }
+    return l;
+}
+
 static int new_link(uint32_t pc, uint32_t fe, int chk)
 {
     int l = new_exit(JIT_EXIT_LINK, pc, fe);
@@ -1674,7 +1686,7 @@ static bool t_flow(uint16_t op, bool *flow, bool *done)
         mem_routine(s_read[4]);
         rv_sw(R, A0, OFF(pc), S0);
         cycles((int32_t)s_cyc);
-        rv_jl(R, new_exit(JIT_EXIT_DYN, 0, a + 2));
+        rv_jl(R, new_dyn(a + 2));
         *flow = true;
         return true;
     }
@@ -1711,7 +1723,7 @@ static bool t_flow(uint16_t op, bool *flow, bool *done)
                 rv_place(R, skip);
             }
             cycles((int32_t)s_cyc);
-            rv_jl(R, new_exit(JIT_EXIT_DYN, 0, next));
+            rv_jl(R, new_dyn(next));
         }
         *flow = true;
         return true;
@@ -2154,8 +2166,9 @@ static bool emit_block(void)
         if (T.exit_pk[k] != PK_NONE) {
             jal_abs(T0, s_mat[T.exit_pk[k]][T.exit_ps[k]]);
         }
-        if (T.exit[k].kind == JIT_EXIT_LINK) {
-            int out = rv_new_label(R);
+        int kind = T.exit[k].kind;
+        int out = rv_new_label(R);
+        if (kind == JIT_EXIT_LINK || kind == JIT_EXIT_DYN) {
             if (T.exit_chk[k] & CHK_S1) {
                 rv_blez(R, S1, out);
             }
@@ -2163,15 +2176,39 @@ static bool emit_block(void)
                 abs_access(4, false, T0, addr32((const void *)&jit_stop));
                 rv_bnez(R, T0, out);
             }
-            rv_word(R, RV_NOP);
-            rv_word(R, RV_NOP);
-            rv_place(R, out);
         }
+        if (kind == JIT_EXIT_LINK) {
+            rv_word(R, RV_NOP);
+            rv_word(R, RV_NOP);
+        } else if (kind == JIT_EXIT_DYN) {
+            /* the PC one of the targets kept after the record (JIT_DYN_*
+             * from the auipc: words 14-17), a0 the jal to the exit (as a
+             * link's: ST_BAIL) */
+            int hit = rv_new_label(R);
+            rv_lw(R, T1, OFF(pc), S0);
+            rv_word(R, (uint32_t)T2 << 7 | 0x17);              /* auipc t2, 0 */
+            rv_lw(R, T0, JIT_DYN_PC0, T2);
+            rv_addi(R, T3, T2, JIT_DYN_TO0);
+            rv_bcc(R, RV_BEQ, T0, T1, hit);
+            rv_lw(R, T0, JIT_DYN_PC1, T2);
+            rv_addi(R, T3, T2, JIT_DYN_TO1);
+            rv_bcc(R, RV_BNE, T0, T1, out);
+            rv_place(R, hit);
+            rv_lw(R, T0, 0, T3);
+            rv_jalr(R, A0, T0, 0);
+        }
+        rv_place(R, out);
         jal_abs(A0, s_stub[ST_EXIT]);
         uint32_t w[4];
         memcpy(w, &T.exit[k], sizeof(w));
         for (int i = 0; i < 4; i++) {
             rv_word(R, w[i]);
+        }
+        if (kind == JIT_EXIT_DYN) {
+            rv_word(R, 1);                  /* (no target yet: an odd PC never matches) */
+            rv_word(R, 0);
+            rv_word(R, 1);
+            rv_word(R, 0);
         }
     }
     return !R->full && rv_link(R);

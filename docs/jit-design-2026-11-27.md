@@ -472,3 +472,82 @@ small cache of targets in the code; Deluxe Galaga's later windows are the
 chips' (collisions on every line while it reads CLXDAT); Leading Lap's
 `jit_written()` (4.1% of core 1 in its profile: writes into pages with
 code).
+
+## The computed exits' targets (2026-11-27)
+
+Before giving RTS, JSR (An) and JMP (An) a memory of their targets: how
+often does such an exit go where it went before? The host over the same
+stretches (`AMI_JITSTAT`: per exit the last 1, 2 or 4 targets, the latest
+first; only exits with the slice going on, the ones a jump could replace):
+
+| Stretch | Dispatcher trips a frame (slice going on / over) | RTS: the last target, among 2, among 4 | JSR (An) | JMP (An) |
+|---|---|---|---|---|
+| Deluxe Galaga credits | 1677 (1675 computed) / 615 | 837 a frame: 99.2%, 99.3%, 99.8% | 629: 99.4%, 99.8%, 100% | 209: 100% |
+| Deluxe Galaga 10000- | 80 / 174 | 49: 85.6%, 87.1%, 96.4% | 22: 83.9%, 93.8%, 99.3% | 2: 98.7% |
+| Leading Lap | 634 (600) / 530 | 434: 75.8%, 94.3%, 97.0% | 163: 82.4%, 88.1%, 93.1% | 3: 98.9% |
+| AmiBee | 260 (226) / 249 | 183: 58.7%, 87.3%, 93.9% | 32: 85.5%, 89.0%, 97.7% | 10: 82.6%, 98.6% |
+| Gea Lux | 205 (164) / 83 | 109: 52.7%, 83.9%, 90.0% | 42: 90.5%, 95.3%, 97.8% | 13: 80.6%, 97.0% |
+| Virtual Karting 2 | 102 (76) / 463 | 76: 68.8%, 76.0%, 82.9% | 0 | 0 |
+
+- With the links made, computed exits are nearly all the dispatcher's
+  trips while the slice goes on; the rest are slice ends (the chips'
+  events), which stay.
+- Deluxe Galaga's credits: 99% go where they went last time (its idle
+  loop calls the same library routines through `jsr (-$12,A6)` and
+  returns to the same places): ~1660 trips a frame a memory of one target
+  would replace.
+- Elsewhere RTS repeats its last target 53-76% of the time, 84-94% with
+  two kept (a routine called from two places, in turn); JSR (An) 82-91%
+  with one.
+- So two targets per exit, the latest first. The target's block is there
+  for 97-100% of the repeats (it ran before). At ~180 P4 instructions a
+  trip less ~10 for the compares, about 0.3 M instructions a frame in
+  Deluxe Galaga's credits (~5-7% of core 1), ~0.1 M in Leading Lap's
+  slow stretch.
+
+## The computed exits' kept targets (2026-11-27)
+
+**The code** (`jit_rv.c`): a computed exit (RTS, JSR/JMP (An)) checks the
+cycles left (and `jit_stop` after JSR's push), loads the PC from memory
+and compares it with two targets kept after its record (data words: PC,
+entry; the latest first; an odd PC for none), then jumps to the matching
+block's entry with a0 at its jal to the shared exit, as a link does (a
+dropped block's entry leaves through the same record). Else on to the
+dispatcher as before, which keeps that target's block as the latest
+(`remember()`, the entry chosen as for a link; data the code reads, so no
+caches to sync). 8 instructions to a hit on the first target, 11 on the
+second.
+
+**Checked on the host**: the collection 96 of 96, the survey 26 of 26,
+the replays 4 of 4 the same as the interpreter; `jit_test`'s RTS and
+JSR/JMP (An) now mostly go to the code after them, with the cycles to go
+on (459 targets kept in 20000 cases); it catches a kept target's wrong
+entry and a target taken without its compare.
+
+**The host's count** (dispatcher trips a frame, all kinds: unlinked →
+links → kept targets; the RISC-V instructions run):
+
+| Stretch | Trips | RISC-V a frame |
+|---|---|---|
+| Deluxe Galaga credits | 9542 → 2292 → 625 (615 slice ends) | 1.65 M → 1.34 M → 1.27 M |
+| Leading Lap | 3207 → 1164 → 615 (530) | 849k → 762k → 743k |
+| AmiBee | 1567 → 509 → 362 (244) | 316k → 273k → 263k |
+| Gea Lux | 697 → 288 → 145 (78) | 175k → 155k → 141k |
+| Virtual Karting 2 | 3092 → 565 → 507 (463) | 1.18 M → 1.07 M → 1.07 M |
+
+**The Tab5** (median, slowest window without a mark; core 1's median):
+AmiBee 99.9% (99.5%), 42%; Deluxe Galaga 99.5% (88.9%), 89%; Gea Lux
+100% (97.1%), 31%; Leading Lap 99.6% (94.3%), 90%; Virtual Karting 2
+99.9% (99.6%), 85%: the same as with links alone within the runs'
+spread. Deluxe Galaga's credits, in the four windows that hold the same
+screenshots and profiles in both runs: 90.1, 92.2, 87.3, 91.1% → 92.8,
+94.4, 90.1, 93.1%; the dispatcher in its profile 4.1% → 2.2% of core 1.
+A trip costs the board less than the ~180 instructions reckoned (~0.3
+µs). The dispatcher entered 43.5 M → 24.8 M times over the pass.
+
+**What's left in Deluxe Galaga's credits** (core 1 at 100%): translated
+code 34%, the chips 34% (Lisa's fetch 7.5%, Paula 6.9%, the line's end
+5%), collisions 12% (`pf_line()` 6.3%, `bits32()` and `collide()` ~3%
+each: worked out on every line while it reads CLXDAT), `memcpy` 4%. Its
+later slow windows (~89-91%) do little on the CPU. So its next lever is
+the collisions, not the CPU.

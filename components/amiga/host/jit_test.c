@@ -500,7 +500,8 @@ static bool one_case(void)
     }
     u.r[15] = 0x1C0000 + 2 * rn(0x4000);
     u.sr = 0x2700 | rn(32);
-    u.rem = pair ? 8 + (int)rn(120) : rn(3) ? 1 : 1 + (int)rn(60);
+    bool flow = i.w[0] == 0x4E75 || (i.w[0] & 0xFF80) == 0x4E80;   /* (RTS, JSR, JMP: on past them) */
+    u.rem = pair || flow ? 8 + (int)rn(120) : rn(3) ? 1 : 1 + (int)rn(60);
     u.fetch = (int)rn(3);
     static const uint32_t cacrs[4] = { 0, 1, 3, 9 };
     u.cacr = cacrs[rn(4)];
@@ -508,6 +509,17 @@ static bool one_case(void)
         u.tag[k] = rn(4) ? 0 : (((u.pc & ~0xFFu) | (uint32_t)k * 4) | 1);
     }
     place(u.pc, &i, (int)rn(3));
+    /* an RTS's or a JSR/JMP (An)'s target mostly the code after it (a
+     * computed exit with a block there: its targets kept, then taken) */
+    if (rn(4)) {
+        uint32_t to = u.pc + 2 * (uint32_t)i.n + 2 * rn(4);
+        if (i.w[0] == 0x4E75) {
+            chip_write16(u.r[15], (uint16_t)(to >> 16));
+            chip_write16(u.r[15] + 2, (uint16_t)to);
+        } else if ((i.w[0] & 0xFF80) == 0x4E80 && (i.w[0] & 0x38) == 0x10) {
+            u.r[8 + (i.w[0] & 7)] = to;
+        }
+    }
 
     memcpy(snap, chip, CHIP);
     apply(&u);
@@ -580,8 +592,8 @@ int main(int argc, char **argv)
     for (int k = 0; k < cases && failures < 20; k++) {
         one_case();
     }
-    extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills; } jit_stats;
-    printf("jit_test: %d cases, %d translated, %lu links, %lu entries killed, %d failed\n", cases_run, natives,
-           jit_stats.links, jit_stats.kills, failures);
+    extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills, fills; } jit_stats;
+    printf("jit_test: %d cases, %d translated, %lu links, %lu targets kept, %lu entries killed, %d failed\n", cases_run,
+           natives, jit_stats.links, jit_stats.fills, jit_stats.kills, failures);
     return failures != 0;
 }

@@ -63,15 +63,66 @@ static int s_ndead;
 uint8_t jit_hot = 64;                       /* (host/jit_test.c: 1) */
 static uint8_t s_heat[HASH_SIZE];
 #ifndef ESP_PLATFORM
-struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills; } jit_stats;
+struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills, fills; } jit_stats;
 uint32_t jit_fb_count[65536];               /* (the handlers called, by opcode: mem.c) */
 uint32_t jit_interp_count[65536];           /* (the instructions run outside blocks, by opcode) */
 /* (AMI_JITSTAT) lookups, their chain steps; the exits that came to the
  * dispatcher by kind (JIT_EXIT_*), with the slice going on and over */
 unsigned long jit_lookups, jit_probes, jit_exits[4][2];
+/* (AMI_JITSTAT) the computed exits with the slice going on, by RTS, JSR,
+ * JMP: their number, the first at their exit, the target the last one
+ * (of 1, 2, 4 kept per exit, the latest first), the last one and a block
+ * there */
+unsigned long jit_dyn[3][6];
+#define TGT_SLOTS       65536
+static struct {
+    const jit_exit_t *e;
+    uint32_t t[4];
+    uint8_t n;
+} s_tgt[TGT_SLOTS];
+
+static jit_block_t *lookup(uint32_t pc);
+
+static void dyn_count(const jit_exit_t *e, uint32_t to)
+{
+    int k = e->ir == 0x4E75 ? 0 : (e->ir & 0xFFC0) == 0x4E80 ? 1 : 2;
+    uint32_t h = (uint32_t)((uintptr_t)e >> 4) & (TGT_SLOTS - 1);
+    for (int i = 0; i < 64 && s_tgt[h].e && s_tgt[h].e != e; i++) {
+        h = (h + 1) & (TGT_SLOTS - 1);
+    }
+    if (s_tgt[h].e && s_tgt[h].e != e) {
+        return;                             /* (the table full here) */
+    }
+    s_tgt[h].e = e;
+    jit_dyn[k][0]++;
+    int i = 0, n = s_tgt[h].n;
+    while (i < n && s_tgt[h].t[i] != to) {
+        i++;
+    }
+    if (!n) {
+        jit_dyn[k][1]++;
+    }
+    if (i < n) {
+        jit_dyn[k][2] += i < 1;
+        jit_dyn[k][3] += i < 2;
+        jit_dyn[k][4] += i < 4;
+        if (i == 0) {
+            unsigned long l0 = jit_lookups, p0 = jit_probes;
+            jit_dyn[k][5] += lookup(to) != NULL;
+            jit_lookups = l0, jit_probes = p0;
+        }
+    } else {
+        i = n < 4 ? n++ : 3;
+    }
+    for (; i > 0; i--) {
+        s_tgt[h].t[i] = s_tgt[h].t[i - 1];
+    }
+    s_tgt[h].t[0] = to;
+    s_tgt[h].n = (uint8_t)n;
+}
 #define STAT(x) (jit_stats.x)
 #else
-static struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, links, kills; } jit_stats;
+static struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, links, kills, fills; } jit_stats;
 #define STAT(x) (jit_stats.x)
 static uint64_t s_us_translate, s_us_sync;
 
@@ -81,10 +132,11 @@ static size_t s_size;
 void jit_report(void)
 {
     printf("JIT: %lu translations (%lu instructions, %lu bytes of code), %lu flushes (%lu full), %lu drops, "
-           "%lu blocks run, %lu links, %lu kills; %llu us translating, %llu us syncing; the arena %u KB, "
-           "%u KB of PSRAM free\n",
+           "%lu blocks run, %lu links, %lu kills, %lu targets kept; %llu us translating, %llu us syncing; the "
+           "arena %u KB, %u KB of PSRAM free\n",
            jit_stats.translations, jit_stats.insns, jit_stats.code_bytes, jit_stats.flushes, jit_stats.full,
-           jit_stats.drops, jit_stats.blocks_run, jit_stats.links, jit_stats.kills, (unsigned long long)s_us_translate,
+           jit_stats.drops, jit_stats.blocks_run, jit_stats.links, jit_stats.kills, jit_stats.fills,
+           (unsigned long long)s_us_translate,
            (unsigned long long)s_us_sync,
            (unsigned)(s_size / 1024), (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 }
@@ -192,6 +244,9 @@ static void flush_now(void)
     s_used = s_start;
     s_flush_pending = false;
     s_ndead = 0;
+#ifndef ESP_PLATFORM
+    memset(s_tgt, 0, sizeof(s_tgt));
+#endif
 }
 
 /* The arena given back (a disk's buffer wants the room; the machine
@@ -518,6 +573,22 @@ static void link(const jit_exit_t *e, const jit_block_t *b)
     STAT(links)++;
 }
 
+/* A computed exit (its record) came to b: b kept as its latest target
+ * (data the exit's code reads: no caches to sync) */
+static void remember(const jit_exit_t *e, const jit_block_t *b)
+{
+    uint32_t a = b->pc;
+    bool seq = a == ((e->fe & 0xFFFF) ? e->fe : 1);
+    uint32_t *t = (uint32_t *)(uintptr_t)e + 4;
+    if (t[0] != a) {
+        t[2] = t[0];
+        t[3] = t[1];
+        t[0] = a;
+    }
+    t[1] = (uint32_t)(uintptr_t)b->entry[seq];
+    STAT(fills)++;
+}
+
 /* ---- The 68EC020's slice from where the PC is ---- */
 
 int AMI_HOT jit_run(void)
@@ -535,7 +606,7 @@ int AMI_HOT jit_run(void)
     unsigned int *pcr = m68k_loop.pc;
     int *remaining = m68k_loop.remaining;
     const unsigned int *tracing = m68k_loop.tracing;
-    const jit_exit_t *from = NULL;          /* a link exit the PC came by: linked to its block */
+    const jit_exit_t *from = NULL;          /* a link or computed exit the PC came by: on to its block next time */
     do {
         uint32_t a = *pcr;
         if (a & 1) {
@@ -557,7 +628,11 @@ int AMI_HOT jit_run(void)
             continue;
         }
         if (from) {
-            link(from, b);
+            if (from->kind == JIT_EXIT_LINK) {
+                link(from, b);
+            } else {
+                remember(from, b);
+            }
         }
         s_running = true;
         jit_stop = false;
@@ -567,12 +642,15 @@ int AMI_HOT jit_run(void)
         s_running = false;
 #ifndef ESP_PLATFORM
         jit_exits[e->kind][*remaining <= 0 || *tracing]++;
+        if (e->kind == JIT_EXIT_DYN && *remaining > 0 && !*tracing) {
+            dyn_count(e, *pcr);
+        }
 #endif
         for (int i = 0; i < s_ndead; i++) {
             kill(s_dead[i]);
         }
         s_ndead = 0;
-        from = e->kind == JIT_EXIT_LINK ? e : NULL;
+        from = e->kind == JIT_EXIT_LINK || e->kind == JIT_EXIT_DYN ? e : NULL;
         if (s_flush_pending) {
             flush_now();
             mem_fetch_reset();              /* (the exit's state is the old map's) */
