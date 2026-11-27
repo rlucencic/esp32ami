@@ -11,6 +11,7 @@
 #include "m68k.h"
 #include "amiga_internal.h"
 #include "emudbg.h"
+#include "jit.h"
 
 amiga_t ami;
 
@@ -162,6 +163,18 @@ bool amiga_kickstart_version(const uint8_t *k, uint32_t size, int *major, int *m
 
 /* ---- Setup and reset ---- */
 
+void *ami_malloc_big(size_t n)
+{
+    void *p = ami_malloc(n);
+#ifdef AMI_JIT
+    if (!p) {
+        jit_release();
+        p = ami_malloc(n);
+    }
+#endif
+    return p;
+}
+
 bool amiga_init(const amiga_config_t *config)
 {
     int major, minor;
@@ -189,7 +202,8 @@ bool amiga_init(const amiga_config_t *config)
     ami.kick_minor = minor;
     rtc_init(config->rtc_offset, config->rtc_changed, major < 36);
 
-    /* the working copies, each word in host order */
+    /* the working copies, each word in host order (in place too: each
+     * word's bytes read before it's written) */
     for (uint32_t i = 0; i < ami.rom_size; i += 2) {
         *(uint16_t *)(ami.rom + i) = (uint16_t)((config->kickstart[i] << 8) | config->kickstart[i + 1]);
     }

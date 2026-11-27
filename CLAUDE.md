@@ -93,7 +93,7 @@ model's own: the A600 2.05, 3.1 or AROS, the A1200 6, 7 or AROS, the others 1.2,
 1.3, 2.04, 3.1 or AROS), chip RAM 512/1024 (2048 the A600; the A1200 only 2048), slow RAM
 0/512 (not the A600 or A1200), fast RAM 0/1024/2048/4096/8192. `X` runs the translating core's probe (code
 written into PSRAM, called; TODO 19), `J` prints its counters (blocks
-translated, flushes, the time translating and syncing the caches). Workbench 1.3 from the console: the pointer starts
+translated, flushes, the time translating and syncing the caches, the arena's size, PSRAM free). Workbench 1.3 from the console: the pointer starts
 top left; `m 300 100 0` then `m 291 0 0` reaches the disk icon (counts
 are hires pixels across, half lines down), the Shell icon in its window
 is `m -523 136 0` from there.
@@ -119,11 +119,11 @@ images.
 | Path | What |
 |---|---|
 | `main/main.c` | The Amiga as an `emu_machine_t`: memory, start, setup rows, drives (DF0:, DF1:, written tracks to the card), the clock's offset, key map, mouse, joystick keys, the touchpad (super-hires pixels halved), sound, status, console |
-| `main/rom_store.c` | Kickstarts from their flash partitions, overridden by files in the SD card's `amiga/roms/` with that version |
+| `main/rom_store.c` | Kickstarts from their flash partitions, overridden by files in the SD card's `amiga/roms/` with that version; loaded straight into the working copies (swapped there by `amiga_init()`), both ROMs checked before either is written |
 | `main/settings.c` | NVS `ami`, which Kickstart and RAM each model takes, its defaults (A2000: 1 MB chip, 2 MB fast) |
 | `main/jit_probe.c` | The console's `X`: runs code written into PSRAM (TODO 19's translating core: does the P4 allow it, how fast) |
 | `components/amiga/` | The machine, platform independent (`include/amiga.h`) |
-| `components/amiga/jit.c`, `jit.h` | The 68EC020's translated blocks (TODO 19, `docs/jit-design-2026-11-27.md`): the arena, the block cache, invalidation, the dispatcher (code translated once it ran 64 times) |
+| `components/amiga/jit.c`, `jit.h` | The 68EC020's translated blocks (TODO 19, `docs/jit-design-2026-11-27.md`): the arena (2044 KB, less while PSRAM is short; given back when a disk's buffer needs the room: `ami_malloc_big()`), the block cache, invalidation (per-bank page tables in the arena), the dispatcher (code translated once it ran 64 times) |
 | `components/amiga/jit_rv.c`, `rv.h` | The translation into RISC-V: the instructions it knows, the shared routines (memory accesses, the flags to memory, a handler's call), pending flags; `rv.h` the encoder |
 | `components/amiga/host/rvsim.c` | The host's RV32IM interpreter: the host runs the very code the board runs (the build not position independent, the heap low: every address in 32 bits) |
 | `components/amiga/host/` | Host build for testing on the Mac (see Testing) |
@@ -411,7 +411,9 @@ images.
   $AAAAAAAA while one is in (else all ones); Kickstart 3.1's trackdisk
   reads and writes them (Christmas Breakdown; a file written by a patched
   startup-sequence read back from the image, host and Tab5); their root
-  block is 1760 (`dos_filesystem()`, `space.c`, `tools/adf.py`).
+  block is 1760 (`dos_filesystem()`, `space.c`, `tools/adf.py`). Their
+  buffer is their size (1.72 MB; written in place, they never grow), an
+  extended ADF's 2.5 MB.
   **Extended ADFs** (UAE-1ADF: raw MFM tracks, any length up to 12668 words)
   at real speed, written too (`write_ext_track()`): a written AmigaDOS
   track (type 0) back into its sectors when all 11 decode with their
@@ -903,6 +905,14 @@ the top two bits do nothing, Aerial Racers' race sets them),
   collection at a picture every 100 frames (`SHOTS=100
   tools/collection.py ... truth=<it> new=<build>`): 96 of 96 now.
 
+- **PSRAM's free space isn't one piece**: Christmas Breakdown's HD disk
+  (then a 2.5 MB buffer) was refused on the A1200 with the translated
+  code's 2 MB arena. Giving the arena back left 5 MB free but no 2.5 MB
+  block: its hole wasn't next to the rest, and the arena came back at
+  1 MB. Ask for what's needed (an HD ADF never grows: 1.72 MB now), and
+  look at the largest free block (`heap_caps_get_largest_free_block()`),
+  not the free total.
+
 ## Testing
 
 - Real-software follow-up: `docs/software-profile-2026-11-07.md` records
@@ -989,7 +999,10 @@ the top two bits do nothing, Aerial Racers' race sets them),
   the host build has the translated blocks on, `-DAMI_JIT`),
   `AMI_JITNOHOOK` (the translated code without the per-instruction hook:
   the board's code exactly; no PC log, ring or `AMI_STOP` then),
-  `AMI_JITSTAT` (translations, flushes, distinct blocks, time),
+  `AMI_JITSTAT` (translations, flushes, distinct blocks, time, the arena),
+  `AMI_JITARENA=<KB>` (a smaller arena, 256 at least),
+  `AMI_JITRELEASE=<frame>[:<frame>...]` (the arena given back before those
+  frames, as a disk's buffer would take it),
   `AMI_JITDUMP=<pc>` (that block's code to `jitdump.bin`: `riscv32-esp-elf-objdump
   -D -b binary -m riscv:rv32 jitdump.bin`), `AMI_OPSTAT=<from>:<to>` (each
   opcode's count in those frames, most first),
@@ -1442,8 +1455,10 @@ the top two bits do nothing, Aerial Racers' race sets them),
   - The translating core (2026-11-27, `docs/jit-design-2026-11-27.md`):
     the 68EC020's hot code in RISC-V. Virtual Karting 2 99.6% (its
     slowest 96.7%), AmiBee and Charr ~100% (core 1 51% and 68%), Deluxe
-    Galaga's slowest 77%, Metal Kombat's 83%. Leading Lap slower (95.6%,
-    its slowest 86.3%): its code doesn't fit the 1 MB arena.
+    Galaga's slowest 77%, Metal Kombat's 83%. The arena 2 MB since
+    (`jit-design`'s "The larger arena"): Leading Lap 99.4% (its slowest
+    90.2%; 95.6% and 86.3% with 1 MB), its code fitting better (33
+    flushes in 15000 frames on the host, 211 before).
 
   Done: `chip_read16()` inline
   (every DMA word) and read directly in `display_fetch()`, `beam()` (VPOSR

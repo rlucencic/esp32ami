@@ -20,17 +20,15 @@ an RP9's disks in two drives; 21, Hyperion's reads and the drive's speed).
 
 Why: item 9's assembler waited for a title that falls behind, and item 17
 found several. Titles that compute all frame, without waiting, run 24-56k
-instructions a frame. Core 1 manages ~15-20k at full speed: about 1 µs an
-instruction, with the chipset's ~5 ms. Since the waits are skipped (item
-18, and this item's first step), these are the titles still behind
-(`docs/faster-020-handlers-2026-11-26.md`):
+instructions a frame; the interpreter managed ~15-20k at full speed. With
+the translating core (`docs/jit-design-2026-11-27.md`) these still fall
+behind in their slowest stretches (median, slowest; `board_pass.py`):
 
-- Virtual Karting 2's race 76-81%.
-- Deluxe Galaga's credits and instructions ~67% (its median 98%).
-- AmiBee's 5000-7000 ~68% (not measured again since 2026-11-25's step 2).
-- Metal Kombat's 3D intro down to 67% (not measured again).
-- Leading Lap 88% at its slowest (its median 99.5%).
-- Gea Lux in play 95% at its slowest.
+- Deluxe Galaga 97.8% (77.2%: its credits and instructions).
+- Metal Kombat 100% (82.8%: its 3D intro).
+- Leading Lap 99.4% (90.2%).
+- AmiBee 99.9% (94.5%), Gea Lux 100% (95.6%), Virtual Karting 2 99.6%
+  (96.9%).
 
 What: fewer P4 instructions per 68020 instruction.
 
@@ -56,13 +54,17 @@ What: fewer P4 instructions per 68020 instruction.
   Virtual Karting 2), the shifts by a register and ROXL/ROXR natively,
   LINK/UNLK; then blocks reaching each other without the dispatcher (5%
   of core 1 in AmiBee's slowest stretch, and a block's prologue and exit
-  each time), and a larger arena (the shared routines in its middle: a
-  jump reaches 1 MB either way). Handlers are esp32emu's Musashi: the ST
+  each time), and denser code (Leading Lap still flushes its 2 MB arena
+  25 times in 15000 frames on the host: the exits' table in 8 bytes, the
+  P4's compressed instructions). Handlers are esp32emu's Musashi: the ST
   and the Macs must be built and checked if it changes.
-- The arena's cost: with the A1200's 8 MB of fast RAM the board has ~2 MB
-  of PSRAM left (3.4 MB before), so an extended ADF (its 2.5 MB buffer)
-  can't go in there now; a smaller page table (`s_page`, 256 KB) or the
-  arena only while there's room would give it back.
+- PSRAM: with the A1200's 8 MB of fast RAM and the 2 MB arena ~2.2 MB are
+  free with two floppies in. A high-density ADF's 1.72 MB buffer fits; an
+  extended ADF's 2.5 MB may not in one piece, even with the arena given
+  back (its hole isn't next to the rest: 5 MB free, no 2.5 MB block, seen
+  once). Extended ADFs are OCS games' (A500: no arena); if one is wanted
+  on the A1200, size its buffer from the file (and its growth) or take
+  the arena's 2 MB for it.
 - Not levers: this P4 (revision 1.x) tops out at 360 MHz; a 512 KB L2
   cache needs 256 KB of internal RAM; code in internal RAM or the TCM;
   extension words read inline (step 10's window, a wash; reading the
@@ -73,6 +75,27 @@ What: fewer P4 instructions per 68020 instruction.
   by the profiles.
 
 Done so far:
+
+- A larger arena (2026-11-27, `jit.c`, `docs/jit-design-2026-11-27.md`,
+  "The larger arena").
+  - 2044 KB, the shared routines (1408 bytes) in its middle: a jump
+    reaches them from either end. Smaller (1 MB, 512 KB, 256 KB) while
+    PSRAM is short, 512 KB left to the rest; given back when a disk's
+    buffer can't be had otherwise (`ami_malloc_big()`), taken again at the
+    next translation.
+  - The PSRAM for it: the page table per 64 KB bank, made in the arena as
+    code lands there (256 KB before); the Kickstart and AROS's extension
+    loaded straight into their working copies (1 MB of copies gone,
+    `rom_store.c` checking both before writing either); a high-density
+    ADF's buffer its own size (1.72 MB, not 2.5). 2229 KB free with the
+    A1200's 8 MB of fast RAM, the 2 MB arena and two floppies (1841 KB
+    with the 1 MB one).
+  - Leading Lap 95.6% → 99.4% (its slowest 86.3% → 90.2%); on the host
+    238000 → 72000 translations and 211 → 33 flushes in 15000 frames.
+    Virtual Karting 2 the same (99.6%, 96.9%), Christmas Breakdown 99.9%
+    (99.4%) with its HD disk in. The board's counters over the two
+    titles' runs (from power-on): 271000 → 93000 translations, 233 → 46
+    flushes, 22.4 s → 8.0 s translating.
 
 - The handlers' side (2026-11-26, `mem.c`, esp32emu's Musashi,
   `docs/faster-020-handlers-2026-11-26.md`).

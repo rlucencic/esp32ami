@@ -25,7 +25,6 @@
 static const char *TAG = "main";
 
 static amiga_config_t s_cfg;
-static uint8_t *s_kick_image, *s_ext_image;
 static const char *s_kick_name;
 
 /* ---- The battery-backed clock: its offset kept in NVS, from core 0 ---- */
@@ -52,13 +51,12 @@ static void reserve_memory(void)
     s_cfg.chip = heap_caps_aligned_alloc(16, CHIP_MAX, MALLOC_CAP_SPIRAM);
     s_cfg.slow = heap_caps_aligned_alloc(16, SLOW_MAX, MALLOC_CAP_SPIRAM);
     s_cfg.fast = heap_caps_aligned_alloc(16, FAST_MAX, MALLOC_CAP_SPIRAM);
+    /* (the ROMs loaded into their working copies, swapped there: amiga_init()) */
     s_cfg.rom = heap_caps_aligned_alloc(16, ROM_MAX_SIZE, MALLOC_CAP_SPIRAM);
-    s_kick_image = heap_caps_malloc(ROM_MAX_SIZE, MALLOC_CAP_SPIRAM);
     s_cfg.ext_rom = heap_caps_aligned_alloc(16, ROM_MAX_SIZE, MALLOC_CAP_SPIRAM);
-    s_ext_image = heap_caps_malloc(ROM_MAX_SIZE, MALLOC_CAP_SPIRAM);
     s_cfg.opcode_tables = heap_caps_malloc(AMIGA_OPCODE_TABLES_SIZE, MALLOC_CAP_SPIRAM);
     s_cfg.picture = heap_caps_calloc(1, amiga_picture_size(), MALLOC_CAP_SPIRAM);
-    ESP_LOGI(TAG, "memory %s", s_cfg.chip && s_cfg.slow && s_cfg.fast && s_cfg.rom && s_kick_image &&
+    ESP_LOGI(TAG, "memory %s", s_cfg.chip && s_cfg.slow && s_cfg.fast && s_cfg.rom && s_cfg.ext_rom &&
              s_cfg.opcode_tables && s_cfg.picture ? "ok" : "MISSING");
 }
 
@@ -66,14 +64,13 @@ static void reserve_memory(void)
 
 static bool start(void)
 {
-    if (!s_cfg.chip || !s_cfg.slow || !s_cfg.fast || !s_cfg.rom || !s_kick_image || !s_cfg.picture) {
+    if (!s_cfg.chip || !s_cfg.slow || !s_cfg.fast || !s_cfg.rom || !s_cfg.picture) {
         emu_set_message("Not enough memory for the Amiga.");
         return false;
     }
     uint32_t size;
     bool ext = rom_store_has_extension(settings.kick);
-    if (!rom_store_load(settings.kick, s_kick_image, &size, &s_kick_name) ||
-        (ext && (!s_ext_image || !s_cfg.ext_rom || !rom_store_load_extension(settings.kick, s_ext_image)))) {
+    if (!rom_store_load(settings.kick, s_cfg.rom, s_cfg.ext_rom, &size, &s_kick_name)) {
         static char text[200];
         static const char *const names[KICK_COUNT] = {
             "Kickstart 1.3 (34.5)", "Kickstart 2.04 (37.175)", "Kickstart 2.05 (37.350)", "Kickstart 3.1 (40.63)",
@@ -85,14 +82,14 @@ static bool start(void)
         emu_set_message(text);
         return false;
     }
-    s_cfg.extension = ext ? s_ext_image : NULL;
+    s_cfg.extension = ext ? s_cfg.ext_rom : NULL;
     s_cfg.model = settings.model;
     s_cfg.chip_size = settings.chip_kb * 1024u;
     s_cfg.slow_size = settings.slow_kb * 1024u;
     s_cfg.fast_size = settings.fast_kb * 1024u;
     s_cfg.ecs = settings.model >= AMIGA_A600 || settings.chip_kb > 512 || settings.kick == KICK_204;
     s_cfg.ntsc = settings.ntsc;
-    s_cfg.kickstart = s_kick_image;
+    s_cfg.kickstart = s_cfg.rom;
     s_cfg.kickstart_size = size;
     s_cfg.rtc_offset = s_rtc_offset;
     s_cfg.rtc_changed = rtc_changed;

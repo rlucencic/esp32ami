@@ -807,7 +807,11 @@ static void flush_drive(drive_t *d)
 }
 
 /* The drives' image and track buffers, kept for the next disk (big blocks
- * fragment PSRAM); an extended ADF's bigger one when one comes
+ * fragment PSRAM); a bigger one when a bigger disk comes: size ADF_SIZE,
+ * HD_SIZE (written in place, it never grows) or EXT_MAX (an extended ADF's
+ * tracks grow when written). The translated code's arena is given back if
+ * that's what it takes: in one piece with the A1200's 8 MB of fast RAM
+ * there were 2 MB to be had, not 2.5 (Christmas Breakdown's HD disk).
  */
 static bool buffers(int drive, uint32_t size)
 {
@@ -816,12 +820,12 @@ static bool buffers(int drive, uint32_t size)
     static uint16_t *tracks[AMIGA_FLOPPIES];
     drive_t *d = &s_drive[drive];
     if (!tracks[drive]) {
-        tracks[drive] = ami_malloc(MFM_MAX * sizeof(uint16_t));
+        tracks[drive] = ami_malloc_big(MFM_MAX * sizeof(uint16_t));
     }
     if (sizes[drive] < size) {
         free(images[drive]);
-        images[drive] = ami_malloc(size > ADF_SIZE ? EXT_MAX : ADF_SIZE);
-        sizes[drive] = images[drive] ? (size > ADF_SIZE ? EXT_MAX : ADF_SIZE) : 0;
+        images[drive] = ami_malloc_big(size);
+        sizes[drive] = images[drive] ? size : 0;
     }
     d->data = images[drive];
     d->mfm = tracks[drive];
@@ -905,7 +909,8 @@ static bool load_file(int drive, const char *path)
         return false;
     }
     /* (an extended ADF: room for its tracks to grow when written) */
-    bool ok = buffers(drive, size == ADF_SIZE ? ADF_SIZE : EXT_MAX) && fread(d->data, 1, (size_t)size, f) == (size_t)size;
+    bool ok = buffers(drive, size == ADF_SIZE ? ADF_SIZE : size == HD_SIZE ? HD_SIZE : EXT_MAX) &&
+              fread(d->data, 1, (size_t)size, f) == (size_t)size;
     fclose(f);
     if (!ok) {
         d->data = NULL;

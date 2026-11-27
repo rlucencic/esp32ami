@@ -816,6 +816,18 @@ int main(int argc, char **argv)
             }
             p = end ? end + 1 : NULL;
         }
+#ifdef AMI_JIT
+        /* AMI_JITRELEASE=<frame>[:<frame>...]: the translated code's arena
+         * given back before those frames (as a disk's buffer would take it) */
+        for (const char *p = getenv("AMI_JITRELEASE"); p && *p;) {
+            if (strtoul(p, NULL, 10) == s_frame) {
+                extern void jit_release(void);
+                jit_release();
+            }
+            const char *end = strchr(p, ':');
+            p = end ? end + 1 : NULL;
+        }
+#endif
         amiga_run_frame();
         wav_drain();
         if (log_every && (s_frame + 1) % log_every == 0) {
@@ -889,9 +901,12 @@ int main(int argc, char **argv)
     }
     if (getenv("AMI_JITSTAT")) {
         extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words; } jit_stats;
-        printf("jit: %lu translations (%lu instructions, %lu bytes of code), %lu flushes (%lu full), %lu drops, %lu blocks run\n",
+        extern size_t jit_arena_size(size_t *routines);
+        size_t routines, arena = jit_arena_size(&routines);
+        printf("jit: %lu translations (%lu instructions, %lu bytes of code), %lu flushes (%lu full), %lu drops, %lu blocks run; "
+               "the arena %zu KB (the shared routines %zu bytes)\n",
                jit_stats.translations, jit_stats.insns, jit_stats.code_bytes, jit_stats.flushes, jit_stats.full,
-               jit_stats.drops, jit_stats.blocks_run);
+               jit_stats.drops, jit_stats.blocks_run, arena / 1024, routines);
         printf("jit: %lu distinct block addresses; per instruction %.1f RISC-V instructions, %.2f exits, %.2f handlers\n",
                jit_stats.distinct, (double)jit_stats.rv_words / jit_stats.insns, (double)jit_stats.exits / jit_stats.insns,
                (double)jit_stats.fbs / jit_stats.insns);

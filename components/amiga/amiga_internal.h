@@ -8,6 +8,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include "amiga.h"
 
@@ -31,6 +32,11 @@
 #define AMI_LOGI(fmt, ...)  printf("I amiga: " fmt "\n", ##__VA_ARGS__)
 #define AMI_LOGW(fmt, ...)  printf("W amiga: " fmt "\n", ##__VA_ARGS__)
 #endif
+
+/* A large buffer (a disk's image): the translated code's arena given back
+ * when that's what it takes (only while the machine is stopped: a disk
+ * going in; amiga.c) */
+void *ami_malloc_big(size_t n);
 
 #define CCK_LINE            227         /* colour clocks a line (NTSC: every other one 228) */
 #define CYCLES_LINE         (CCK_LINE * 2)

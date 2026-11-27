@@ -89,7 +89,7 @@ moment. So:
 - Self-modifying loops writing next to their code: 256-byte pages, the
   blocks on a page checked by address, may need finer pages.
 - How big the code cache needs to be (PSRAM: ~3.4 MB free with the
-  A1200's 8 MB of fast RAM).
+  A1200's 8 MB of fast RAM; 2 MB since, "The larger arena").
 
 ## Stage 1, done (2026-11-27)
 
@@ -224,11 +224,75 @@ minutes.
 - Denser code, so the hot code of a title like Leading Lap fits: the
   exits' table in 8 bytes, not 16; the P4's compressed instructions (half
   the size for most of what the blocks use; the host's interpreter and
-  the assembler check would need them too); and/or a 2 MB arena (the
-  routines are in its middle already: a jump reaches 1 MB either way),
-  if the PSRAM can spare it (2 MB free with the A1200's 8 MB of fast RAM
-  and the 1 MB arena; an extended ADF's 2.5 MB buffer no longer fits
-  then).
+  the assembler check would need them too). (The 2 MB arena: done, below.)
 - Blocks reaching each other without returning to the dispatcher.
 - The handlers the titles still call (the host's `AMI_JITSTAT` lists
   them): the long multiplies and divides, the bit fields.
+
+## The larger arena (2026-11-27)
+
+Leading Lap's hot code didn't fit the 1 MB arena: on the board it ran
+slower translated (95.6%, its slowest 86.3%) than interpreted (99.5%,
+88.0%).
+
+**The arena**: 2044 KB, the shared routines (1408 bytes) in a 4 KB room
+at its middle, so a `jal` (1 MB either way) reaches every routine from
+either end: 2 MB less that room is the most a single copy of them allows.
+`ready()` takes the largest of 2044 KB, 1 MB, 512 KB and 256 KB that
+leaves 512 KB of PSRAM to the rest (uploads, RP9s, the setup screen) and
+fits in one free block; with none it tries again 4096 translations later
+or at the next flush. `jit_release()` gives it back (the machine stopped:
+a disk going in); the next translation takes one again, as large as
+there's room for. `ami_malloc_big()` (`amiga.c`) does that when a disk's
+buffer can't be had (`floppy.c`'s image and track buffers). The host:
+`AMI_JITARENA=<KB>` for a smaller one, `AMI_JITRELEASE=<frames>` to give it
+back before those frames.
+
+**The PSRAM for it** (the board: the A1200 with 8 MB of fast RAM, two
+floppies in):
+
+- The block lists per page: 65536 of them (256 KB) for the 16 MB; now a
+  directory of 256 banks in the arena's first bytes, each bank's table (1
+  KB, its 256 pages) made in the arena when a block first lands there
+  (after the block's code; no room: as a full arena), all gone at a flush.
+- The Kickstart and AROS's extension ROM loaded straight into their
+  working copies (`main.c`, `rom_store.c`; `amiga_init()` swaps each word
+  in place): 1 MB of copies gone. They are the running machine's, and a
+  restart that fails must leave it running (`emu_restart()` resumes it):
+  `rom_store_load()` finds and checks both ROMs (the mapping of a
+  partition, a card file read a piece at a time) before either buffer is
+  written.
+- 2229 KB free with the 2044 KB arena (1841 KB with the 1 MB arena
+  before).
+
+**A high-density ADF's buffer** (found on the board): Christmas Breakdown's
+HD disk was refused. Its image buffer was the extended ADF's 2.5 MB; with
+the arena given back the board had 5 MB free, but no 2.5 MB in one piece
+(the arena's hole and the rest weren't neighbours), and the arena came
+back at 1 MB. An HD ADF is written in place and never grows: its buffer
+is its own 1.72 MB now, and it fits beside the 2 MB arena without giving
+anything back. An extended ADF's 2.5 MB may still not be found in one
+piece on the A1200 (OCS games, run on an A500: no arena there).
+
+**Checked on the host**: the collection 96 of 96, the A1200 survey 26 of
+26 and the replays 4 of 4 the same as the interpreter; both again with a
+256 KB arena given back five times a run (`AMI_JITARENA=256
+AMI_JITRELEASE=1500:2600:3500:4700:5500`: the page tables made and dropped
+over and over, the arena taken again); `jit_test` 300000 random cases.
+Leading Lap (15000 frames, the survey's input): 238000 translations and
+211 flushes (163 full) with 1 MB, 72000 and 33 (25 full) with 2 MB.
+
+**The Tab5** (`board_pass.py`, median and slowest stretch):
+
+| Title | 1 MB arena | 2 MB arena |
+|---|---|---|
+| Leading Lap | 95.6% (86.3%) | 99.4% (90.2%) |
+| Virtual Karting 2 | 99.6% (96.7%) | 99.6% (96.9%) |
+| Christmas Breakdown (its HD disk in) | refused | 99.9% (99.4%), core 1 80% |
+
+The counters over Leading Lap's and Virtual Karting 2's runs (from
+power-on): 271000 → 93000 translations, 233 → 46 flushes, 22.4 s → 8.0 s
+translating, 4.0 s → 1.3 s syncing the caches. AROS (its extension ROM
+in place) booted on the A1200, Kickstart 1.3 on an A500 and 3.1 on the
+A1200 started from their working copies; the arena given back once (the
+refused HD disk above) and taken again at 1 MB, the A1200 running on.

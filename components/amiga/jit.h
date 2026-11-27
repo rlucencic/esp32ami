@@ -71,6 +71,7 @@ extern uint32_t jit_ctx[4];
 
 int jit_run(void);
 void jit_flush(void);
+void jit_release(void);                         /* the arena given back (the machine stopped) */
 void jit_written(uint32_t lo, uint32_t hi);   /* [lo, hi) written by DMA or a helper */
 void jit_cpu_wrote(uint32_t a, int bytes);
 
@@ -105,8 +106,8 @@ const uint16_t *mem_code_ptr(uint32_t a, uint8_t *wait);
  * on past it), its exits and handlers' entries from *meta. False: none (no
  * room: flush and try again; or nothing to translate) */
 bool jit_translate(jit_block_t *b, uint32_t pc, uint8_t **at, uint8_t *end);
-/* the routines the blocks share (prologue, exit, memory accesses), once at
- * the arena's start */
+/* the routines the blocks share (prologue, exit, memory accesses), once in
+ * the arena's middle */
 bool jit_rv_stubs(uint8_t **at, uint8_t *end);
 
 #ifndef ESP_PLATFORM

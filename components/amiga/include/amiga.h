@@ -42,9 +42,9 @@ typedef struct {
     uint32_t fast_size;
     const uint8_t *kickstart;   /* as dumped (big-endian): 256 or 512 KB */
     uint32_t kickstart_size;
-    uint8_t *rom;               /* kickstart_size bytes: the working copy */
+    uint8_t *rom;               /* kickstart_size bytes: the working copy (may be kickstart itself: swapped there) */
     /* AROS's extension ROM for $E00000-$E7FFFF (as dumped, 512 KB; NULL:
-     * none) and 512 KB for its working copy
+     * none) and 512 KB for its working copy (may be the same)
      */
     const uint8_t *extension;
     uint8_t *ext_rom;

@@ -32,83 +32,151 @@ static const struct {
 };
 
 /* That Kickstart, or its extension ROM (AROS's say what they are at $18:
- * "AROS ROM", "AROS EXT")
+ * "AROS ROM", "AROS EXT"), from its first 32 bytes and its checksum (all
+ * longwords added with the carry round: $FFFFFFFF, amiga_kickstart_version()'s
+ * test)
  */
-static bool is_rom(kick_t kick, bool ext, const uint8_t *buf, uint32_t size)
+static bool is_rom(kick_t kick, bool ext, const uint8_t *head, uint32_t sum)
 {
-    int major, minor;
-    if (!amiga_kickstart_version(buf, size, &major, &minor)) {
+    if (sum != 0xFFFFFFFF || head[0] != 0x11 || (head[1] != 0x11 && head[1] != 0x14)) {
         return false;
     }
     if (kick == KICK_AROS) {
-        return memcmp(buf + 0x18, ext ? "AROS EXT" : "AROS ROM", 8) == 0;
+        return memcmp(head + 0x18, ext ? "AROS EXT" : "AROS ROM", 8) == 0;
     }
+    int major = (head[12] << 8) | head[13], minor = (head[14] << 8) | head[15];
     return !ext && major == s_kick[kick].major && minor == s_kick[kick].minor;
 }
 
-static bool from_partition(kick_t kick, bool ext, uint8_t *buf)
+static uint32_t add_longs(uint32_t sum, const uint8_t *p, uint32_t n)
+{
+    for (uint32_t i = 0; i < n; i += 4) {
+        uint32_t w = ((uint32_t)p[i] << 24) | (p[i + 1] << 16) | (p[i + 2] << 8) | p[i + 3];
+        uint32_t t = sum + w;
+        sum = t + (t < sum);
+    }
+    return sum;
+}
+
+/* Where a ROM was found (checked): a mapping of its partition, or a file */
+typedef struct {
+    uint32_t size;
+    const void *map;
+    esp_partition_mmap_handle_t handle;
+    char path[300];
+} src_t;
+
+/* Through a mapping, not esp_partition_read() (that turns the caches off
+ * while it reads)
+ */
+static bool in_partition(kick_t kick, bool ext, src_t *s)
 {
     const esp_partition_t *part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ROM_PARTITION_TYPE,
                                                            ext ? s_kick[kick].ext_partition : s_kick[kick].partition);
-    uint32_t size = ext ? EXT_SIZE : s_kick[kick].size;
-    if (part == NULL || part->size < size) {
+    s->size = ext ? EXT_SIZE : s_kick[kick].size;
+    s->map = NULL;
+    if (part == NULL || part->size < s->size ||
+        esp_partition_mmap(part, 0, s->size, ESP_PARTITION_MMAP_DATA, &s->map, &s->handle) != ESP_OK) {
+        s->map = NULL;
         return false;
     }
-    /* Through a mapping, not esp_partition_read() (that turns the caches off
-     * while it reads)
-     */
-    const void *map;
-    esp_partition_mmap_handle_t handle;
-    if (esp_partition_mmap(part, 0, size, ESP_PARTITION_MMAP_DATA, &map, &handle) != ESP_OK) {
+    if (!is_rom(kick, ext, s->map, add_longs(0, s->map, s->size))) {
+        esp_partition_munmap(s->handle);
+        s->map = NULL;
         return false;
     }
-    memcpy(buf, map, size);
-    esp_partition_munmap(handle);
-    return is_rom(kick, ext, buf, size);
+    return true;
 }
 
-/* Any file in the SD card's "amiga/roms" folder with that version */
-static bool from_sd(kick_t kick, bool ext, uint8_t *buf)
+/* A file in the SD card's "amiga/roms" folder with that version, read a
+ * piece at a time (the buffer it goes into is still the running machine's) */
+static bool on_sd(kick_t kick, bool ext, src_t *s)
 {
     DIR *dir = opendir(ROM_FOLDER);
     if (dir == NULL) {
         return false;
     }
-    uint32_t size = ext ? EXT_SIZE : s_kick[kick].size;
+    s->size = ext ? EXT_SIZE : s_kick[kick].size;
+    s->map = NULL;
     bool ok = false;
     struct dirent *e;
     while (!ok && (e = readdir(dir)) != NULL) {
-        char path[300];
         struct stat st;
-        snprintf(path, sizeof(path), "%s/%s", ROM_FOLDER, e->d_name);
-        if (e->d_name[0] == '.' || stat(path, &st) != 0 || st.st_size != size) {
+        snprintf(s->path, sizeof(s->path), "%s/%s", ROM_FOLDER, e->d_name);
+        if (e->d_name[0] == '.' || stat(s->path, &st) != 0 || st.st_size != s->size) {
             continue;
         }
-        FILE *f = fopen(path, "rb");
+        FILE *f = fopen(s->path, "rb");
         if (f == NULL) {
             continue;
         }
-        ok = fread(buf, 1, size, f) == size && is_rom(kick, ext, buf, size);
-        fclose(f);
-        if (ok) {
-            ESP_LOGI(TAG, "%s from %s", ext ? "Extension ROM" : "Kickstart", path);
+        uint8_t piece[256], head[32];
+        uint32_t sum = 0, at;
+        for (at = 0; at < s->size && fread(piece, 1, sizeof(piece), f) == sizeof(piece); at += sizeof(piece)) {
+            if (at == 0) {
+                memcpy(head, piece, sizeof(head));
+            }
+            sum = add_longs(sum, piece, sizeof(piece));
         }
+        fclose(f);
+        ok = at == s->size && is_rom(kick, ext, head, sum);
     }
     closedir(dir);
     return ok;
 }
 
-bool rom_store_load(kick_t kick, uint8_t *buf, uint32_t *size, const char **name)
+/* Found on the card (it overrides the built-in one) or in the flash */
+static bool find(kick_t kick, bool ext, src_t *s)
+{
+    return on_sd(kick, ext, s) || in_partition(kick, ext, s);
+}
+
+static void forget(src_t *s)
+{
+    if (s->map) {
+        esp_partition_munmap(s->handle);
+        s->map = NULL;
+    }
+}
+
+static bool copy(src_t *s, uint8_t *buf, bool ext)
+{
+    bool ok;
+    if (s->map) {
+        memcpy(buf, s->map, s->size);
+        forget(s);
+        ok = true;
+    } else {
+        FILE *f = fopen(s->path, "rb");
+        ok = f && fread(buf, 1, s->size, f) == s->size;
+        if (f) {
+            fclose(f);
+        }
+        if (ok) {
+            ESP_LOGI(TAG, "%s from %s", ext ? "Extension ROM" : "Kickstart", s->path);
+        }
+    }
+    return ok;
+}
+
+bool rom_store_load(kick_t kick, uint8_t *buf, uint8_t *ext_buf, uint32_t *size, const char **name)
 {
     if ((unsigned)kick >= KICK_COUNT) {
         return false;
     }
-    /* the card's overrides the built-in one */
-    if (from_sd(kick, false, buf)) {
-        s_source = "the SD card";
-    } else if (from_partition(kick, false, buf)) {
-        s_source = "the flash";
-    } else {
+    bool ext = rom_store_has_extension(kick);
+    src_t k, x = { 0 };
+    if (!find(kick, false, &k)) {
+        return false;
+    }
+    if (ext && (ext_buf == NULL || !find(kick, true, &x))) {
+        forget(&k);
+        return false;
+    }
+    s_source = k.map ? "the flash" : "the SD card";
+    /* (both there: only a card failing now leaves a buffer half written) */
+    if (!copy(&k, buf, false) || (ext && !copy(&x, ext_buf, true))) {
+        forget(&x);
         return false;
     }
     *size = s_kick[kick].size;
@@ -131,9 +199,4 @@ const char *rom_store_source(void)
 bool rom_store_has_extension(kick_t kick)
 {
     return (unsigned)kick < KICK_COUNT && s_kick[kick].ext_partition != NULL;
-}
-
-bool rom_store_load_extension(kick_t kick, uint8_t *buf)
-{
-    return rom_store_has_extension(kick) && (from_sd(kick, true, buf) || from_partition(kick, true, buf));
 }

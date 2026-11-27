@@ -17,21 +17,38 @@
 #endif
 
 #define HASH_SIZE       4096
-#ifndef ARENA_SIZE
-#define ARENA_SIZE      (1024 * 1024)       /* (2 MB at most: the jumps to the shared routines) */
-#endif
+/* The arena: the shared routines (jit_rv.c) in its middle, in STUB_ROOM, so
+ * a jump (1 MB either way) reaches all of them from anywhere in it: 2 MB
+ * less that room at most. Smaller ones while PSRAM is short (ready()). */
+#define STUB_ROOM       (4 * 1024)          /* (they take 1408 bytes) */
+#define ARENA_MAX       (2 * 1024 * 1024 - STUB_ROOM)
+#define ARENA_MIN       (256 * 1024)
+#define JIT_RESERVE     (512 * 1024)        /* PSRAM left to the rest (uploads, RP9s, the setup screen) */
+#define BANKS           256                 /* 64 KB banks */
+#define BANK_PAGES      (1u << (16 - JIT_PAGE_SHIFT))
 
 uint8_t jit_code_pages[JIT_PAGES / 8] __attribute__((aligned(4)));
 volatile bool jit_stop AMI_SDATA;          /* (beside Musashi's state: the code reaches it) */
 uint32_t jit_ctx[4] AMI_SDATA;              /* (the bases the code's memory routines take: jit_rv.c) */
 
 static jit_block_t *s_hash[HASH_SIZE];
-static jit_block_t **s_page;                /* per page: the blocks on it */
+/* Per 64 KB bank, the block lists of its pages, made in the arena as a
+ * block first lands there (all 16 MB's lists took 256 KB): the directory
+ * in the arena's first bytes */
+static jit_block_t ***s_dir;
 static uint8_t *s_arena;
-static size_t s_used;
-/* the shared routines (jit_rv.c) in the arena's middle, [s_mid, s_mid_end):
- * a jump reaches them from anywhere in up to 2 MB */
-static size_t s_mid, s_mid_end;
+static size_t s_used, s_start;              /* (s_start: after the directory) */
+static size_t s_mid, s_mid_end;             /* the shared routines: [s_mid, s_mid_end) */
+#ifndef ESP_PLATFORM
+static size_t s_size;
+/* (AMI_JITSTAT) the arena's size, the shared routines' bytes in *routines */
+size_t jit_arena_size(size_t *routines)
+{
+    *routines = s_mid_end - s_mid;
+    return s_size;
+}
+#endif
+static unsigned s_retry;                    /* no arena: translations until the next try */
 static bool s_running, s_flush_pending;
 /* Code is translated once it has run HOT times (by its PC's hash: the
  * interpreter runs it until then). Most code runs a few times (loaders,
@@ -48,13 +65,16 @@ static struct { unsigned long translations, flushes, full, drops, blocks_run, co
 #define STAT(x) (jit_stats.x)
 static uint64_t s_us_translate, s_us_sync;
 
+static size_t s_size;
+
 /* (the console's J) */
 void jit_report(void)
 {
     printf("JIT: %lu translations (%lu instructions, %lu bytes of code), %lu flushes (%lu full), %lu drops, "
-           "%lu blocks run; %llu us translating, %llu us syncing\n",
+           "%lu blocks run; %llu us translating, %llu us syncing; the arena %u KB, %u KB of PSRAM free\n",
            jit_stats.translations, jit_stats.insns, jit_stats.code_bytes, jit_stats.flushes, jit_stats.full,
-           jit_stats.drops, jit_stats.blocks_run, (unsigned long long)s_us_translate, (unsigned long long)s_us_sync);
+           jit_stats.drops, jit_stats.blocks_run, (unsigned long long)s_us_translate, (unsigned long long)s_us_sync,
+           (unsigned)(s_size / 1024), (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 }
 #endif
 
@@ -78,32 +98,70 @@ static void sync_code(void *p, size_t n)
 #endif
 }
 
+/* The largest arena that leaves the rest JIT_RESERVE of PSRAM: 2 MB, else
+ * 1 MB, 512 KB, 256 KB (the host: 2 MB, or AMI_JITARENA's KB) */
+static uint8_t *arena_alloc(size_t *size)
+{
+#ifdef ESP_PLATFORM
+    for (size_t n = ARENA_MAX; n >= ARENA_MIN; n = n == ARENA_MAX ? 1024 * 1024 : n / 2) {
+        if (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) >= n + JIT_RESERVE &&
+            heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) >= n) {
+            uint8_t *a = heap_caps_aligned_alloc(128, n, MALLOC_CAP_SPIRAM);
+            if (a) {
+                *size = n;
+                return a;
+            }
+        }
+    }
+    return NULL;
+#else
+    const char *kb = getenv("AMI_JITARENA");
+    size_t n = kb ? (size_t)strtoul(kb, NULL, 0) * 1024 : ARENA_MAX;
+    n = n > ARENA_MAX ? ARENA_MAX : n < ARENA_MIN ? ARENA_MIN : n;
+    uint8_t *a = malloc(n);
+    if (a) {
+        rvsim_arena(a, n);
+        *size = n;
+    }
+    return a;
+#endif
+}
+
+static void arena_free(void)
+{
+    free(s_arena);
+    s_arena = NULL;
+    s_dir = NULL;
+    s_size = 0;
+}
+
 static bool ready(void)
 {
     if (!s_arena) {
-#ifdef ESP_PLATFORM
-        s_arena = heap_caps_aligned_alloc(128, ARENA_SIZE, MALLOC_CAP_SPIRAM);
-#else
-        s_arena = malloc(ARENA_SIZE);
-        if (s_arena) {
-            rvsim_arena(s_arena, ARENA_SIZE);
-        }
-#endif
-        s_page = ami_malloc(JIT_PAGES * sizeof(*s_page));
-        if (!s_arena || !s_page) {
+        if (s_retry) {
+            s_retry--;
             return false;
         }
-        memset(s_page, 0, JIT_PAGES * sizeof(*s_page));
-        s_mid = ARENA_SIZE / 2;
+        s_arena = arena_alloc(&s_size);
+        if (!s_arena) {
+            s_retry = 4096;
+            return false;
+        }
+        s_dir = (jit_block_t ***)s_arena;
+        memset(s_dir, 0, BANKS * sizeof(*s_dir));
+        s_start = (BANKS * sizeof(*s_dir) + 15) & ~(size_t)15;
+        s_mid = ((s_size - STUB_ROOM) / 2) & ~(size_t)127;
         uint8_t *at = s_arena + s_mid;
-        if (!jit_rv_stubs(&at, s_arena + ARENA_SIZE)) {
+        if (!jit_rv_stubs(&at, s_arena + s_mid + STUB_ROOM)) {
 #ifndef ESP_PLATFORM
             fprintf(stderr, "jit: the shared routines didn't fit\n");
 #endif
+            arena_free();
+            s_retry = ~0u;
             return false;
         }
         s_mid_end = (size_t)(((uintptr_t)at - (uintptr_t)s_arena + 127) & ~(uintptr_t)127);
-        s_used = 0;
+        s_used = s_start;
         sync_code(s_arena + s_mid, s_mid_end - s_mid);
     }
     return true;
@@ -114,18 +172,32 @@ static void flush_now(void)
 {
     STAT(flushes)++;
     memset(s_hash, 0, sizeof(s_hash));
-    if (s_page) {
-        memset(s_page, 0, JIT_PAGES * sizeof(*s_page));
+    if (s_dir) {
+        memset(s_dir, 0, BANKS * sizeof(*s_dir));
     }
     memset(jit_code_pages, 0, sizeof(jit_code_pages));
     memset(s_heat, 0, sizeof(s_heat));
-    s_used = 0;
+    s_used = s_start;
     s_flush_pending = false;
+}
+
+/* The arena given back (a disk's buffer wants the room; the machine
+ * stopped between frames): taken again, as large as there's room for, at
+ * the next translation */
+void jit_release(void)
+{
+    if (s_running || !s_arena) {
+        return;
+    }
+    flush_now();
+    arena_free();
+    s_retry = 0;
 }
 
 /* Everything goes (a new memory map, a reset); while a block runs, after it */
 void jit_flush(void)
 {
+    s_retry = 0;                            /* (no arena: try again) */
     if (s_running) {
         s_flush_pending = true;
         jit_stop = true;
@@ -136,18 +208,45 @@ void jit_flush(void)
 
 /* ---- Pages ---- */
 
+/* page p's list (its bank's table made already) */
+static inline jit_block_t **page_list(uint32_t p)
+{
+    return &s_dir[p / BANK_PAGES][p % BANK_PAGES];
+}
+
+/* the tables of the banks page[0] and page[1] are in, made at *at (up to
+ * end) where missing; false: no room */
+static bool page_tables(const uint32_t page[2], uint8_t **at, uint8_t *end)
+{
+    for (int i = 0; i < 2; i++) {
+        uint32_t k = page[i] / BANK_PAGES;
+        if (!s_dir[k]) {
+            size_t n = BANK_PAGES * sizeof(jit_block_t *);
+            if ((size_t)(end - *at) < n) {
+                return false;
+            }
+            s_dir[k] = (jit_block_t **)*at;
+            memset(s_dir[k], 0, n);
+            *at += n;
+        }
+    }
+    return true;
+}
+
 static void page_add(jit_block_t *b, int i)
 {
     uint32_t p = b->page[i];
-    b->page_next[i] = s_page[p];
-    s_page[p] = b;
+    jit_block_t **l = page_list(p);
+    b->page_next[i] = *l;
+    *l = b;
     jit_code_pages[p >> 3] |= (uint8_t)(1u << (p & 7));
 }
 
 static void page_remove(jit_block_t *b, int i)
 {
     uint32_t p = b->page[i];
-    for (jit_block_t **l = &s_page[p]; *l; ) {
+    jit_block_t **head = page_list(p);
+    for (jit_block_t **l = head; *l; ) {
         jit_block_t *o = *l;
         int k = o->page[0] == p ? 0 : 1;    /* (its link for this page) */
         if (o == b) {
@@ -156,7 +255,7 @@ static void page_remove(jit_block_t *b, int i)
         }
         l = &o->page_next[k];
     }
-    if (!s_page[p]) {
+    if (!*head) {
         jit_code_pages[p >> 3] &= (uint8_t)~(1u << (p & 7));
     }
 }
@@ -184,7 +283,7 @@ static void drop(jit_block_t *b)
 /* The blocks with code in [lo, hi) go */
 void jit_written(uint32_t lo, uint32_t hi)
 {
-    if (!s_page || hi <= lo) {
+    if (!s_dir || hi <= lo) {
         return;
     }
     lo &= 0xFFFFFF;
@@ -199,7 +298,7 @@ void jit_written(uint32_t lo, uint32_t hi)
         if (!(jit_code_pages[p >> 3] & (1u << (p & 7)))) {
             continue;
         }
-        for (jit_block_t *b = s_page[p]; b; ) {
+        for (jit_block_t *b = *page_list(p); b; ) {
             jit_block_t *next = b->page_next[b->page[0] == p ? 0 : 1];
             if (b->pc < hi && lo < b->end) {
                 drop(b);
@@ -239,7 +338,7 @@ static jit_block_t *translate_(uint32_t pc)
         if (s_used >= s_mid && s_used < s_mid_end) {
             s_used = s_mid_end;             /* (the first half full to its end: never over the routines) */
         }
-        uint8_t *at = s_arena + s_used, *end = s_arena + (s_used < s_mid ? s_mid : ARENA_SIZE);
+        uint8_t *at = s_arena + s_used, *end = s_arena + (s_used < s_mid ? s_mid : s_size);
         if ((size_t)(end - at) < sizeof(jit_block_t) + 64) {
             if (s_used < s_mid) {
                 s_used = s_mid_end;         /* (on past the shared routines) */
@@ -264,9 +363,25 @@ static jit_block_t *translate_(uint32_t pc)
             }
             return NULL;
         }
+        if (b->end - 1 > 0xFFFFFF) {
+            return NULL;                    /* (round the top of the address space: left to the interpreter) */
+        }
+        uint8_t *code_end = at;
+        b->page[0] = pc >> JIT_PAGE_SHIFT;
+        b->page[1] = (b->end - 1) >> JIT_PAGE_SHIFT;
+        at = (uint8_t *)(((uintptr_t)at + 15) & ~(uintptr_t)15);
+        if (!page_tables(b->page, &at, end)) {
+            if (s_used < s_mid) {
+                s_used = s_mid_end;         /* (the bank's table: after the routines) */
+            } else {
+                STAT(full)++;
+                flush_now();
+            }
+            continue;
+        }
         s_used = (size_t)(((uintptr_t)at - (uintptr_t)s_arena + 15) & ~(uintptr_t)15);
         STAT(translations)++;
-        STAT(code_bytes) += (unsigned long)(at - code);
+        STAT(code_bytes) += (unsigned long)(code_end - code);
         STAT(insns) += b->n;
 #ifndef ESP_PLATFORM
         jit_stats.exits += b->nexits;
@@ -291,14 +406,12 @@ static jit_block_t *translate_(uint32_t pc)
         }
         if (dump && strtoul(dump, NULL, 16) == pc) {
             FILE *f = fopen("jitdump.bin", "wb");
-            fwrite(b->code, 1, (size_t)(at - (uint8_t *)b->code), f);
+            fwrite(b->code, 1, (size_t)(code_end - (uint8_t *)b->code), f);
             fclose(f);
         }
 #endif
-        sync_code(code, (size_t)(at - code));
+        sync_code(code, (size_t)(code_end - code));
         b->pc = pc;
-        b->page[0] = pc >> JIT_PAGE_SHIFT;
-        b->page[1] = (b->end - 1) >> JIT_PAGE_SHIFT;
         uint32_t h = hash(pc);
         b->hash_next = s_hash[h];
         s_hash[h] = b;

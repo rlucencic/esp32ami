@@ -1496,6 +1496,26 @@ TODO item 19: the 68EC020's blocks in RISC-V on the board
   input lands within a frame there), so exactness rests on the host,
   which runs the same code.
 
+### A larger arena for the translated code, 2026-11-27
+
+TODO item 19 (`jit-design-2026-11-27.md`, "The larger arena").
+
+- **2044 KB**, the shared routines in its middle (a jump reaches them from
+  either end); smaller while PSRAM is short (512 KB left to the rest),
+  given back when a disk's buffer needs the room and taken again after.
+- **The PSRAM for it**: the page table per 64 KB bank inside the arena
+  (256 KB before), the Kickstart and AROS's extension loaded straight
+  into their working copies (1 MB; both checked before either is written,
+  so a failed restart leaves the running machine whole), a high-density
+  ADF's buffer its own 1.72 MB (2.5 MB before: refused once beside the
+  arena). 2229 KB free with the A1200's 8 MB of fast RAM, two floppies
+  and the 2 MB arena (1841 KB with the 1 MB one).
+- **Results**: Leading Lap 99.4% (its slowest 90.2%; 95.6% and 86.3% with
+  1 MB, 99.5% and 88.0% interpreted), Virtual Karting 2 the same,
+  Christmas Breakdown 99.9% with its HD disk in. The host: the collection,
+  the survey and the replays the same as the interpreter, also with a
+  256 KB arena given back five times a run.
+
 ### Voyage follow-up, 2026-10-24
 
 The host comparisons exposed two further issues. Hyperion's DMA could
