@@ -880,44 +880,68 @@ void AMI_HOT mem_interp_one(void)
 #ifdef AMI_JIT
 bool amiga_jit = true;                  /* (the host's AMI_NOJIT: the interpreter) */
 
-/* A translated block's instructions, each as the loop above runs it: the
- * opcode's fetch timing (reached by a jump: its longword; in sequence: a
- * longword's first word), the PC and the fetch state its handler reads
- * its extension words through, the handler, its cycles. It stops where
- * the loop's slice would (no cycles left, the trace mark), where the PC
- * isn't the next one's (a branch, an exception), or when asked (jit_stop:
- * its code written, the map changed). */
-void AMI_HOT jit_exec_block(const jit_block_t *b)
+/* An instruction a translated block leaves to its handler, as the loop
+ * above runs it once its opcode's fetch is timed (by the block's code: it
+ * knows whether the opcode came in sequence): the PC and the fetch state
+ * the handler reads its extension words through, the handler, its
+ * cycles. Nonzero: the block stops here (no cycles left, the trace mark,
+ * its code written or the map changed, the PC elsewhere: a branch, an
+ * exception); the state is then the interpreter's.
+ */
+int AMI_HOT jit_fallback(const jit_fb_t *f)
 {
-    unsigned int *pc = m68k_loop.pc, *ppc = m68k_loop.ppc, *ir = m68k_loop.ir;
-    int *remaining = m68k_loop.remaining;
-    const unsigned int *tracing = m68k_loop.tracing;
-    const jit_insn_t *u = b->insn, *e = u + b->n;
-    uint32_t a = u->pc;
-    for (;;) {
-        /* (not only at the entry: a Bcc not taken skips its displacement
-         * without fetching it, and the next opcode then counts as a jump's) */
-        bool charge = a != s_ic.next || !(a & 2);
-        HOST_HOOK(a);
-        *ppc = a;
-        *pc = a + 2;
-        uint32_t wait = u->wait;
-        if (charge) {
-            ic_longword(a, &wait);
-        }
-        s_ic.next = (a + 2) << 16 ? a + 2 : 1;
-        s_ic.next_word = u->host + 1;
-        s_ic.next_wait = wait;
-        s_ic.bank = a >> 16;
-        s_ic.base = (const uint8_t *)u->host - a;
-        *ir = u->op;
-        u->handler();
-        *remaining -= u->cycles;
-        if (*remaining <= 0 || *tracing || jit_stop || *pc != u->next || ++u == e) {
-            return;
-        }
-        a = u->pc;
+    uint32_t a = f->pc, op = f->op;
+    const uint8_t *p = s_m.rmap[a >> 16];   /* (the block's bank: plain memory) */
+    *m68k_loop.ppc = a;
+    *m68k_loop.pc = a + 2;
+    s_ic.next = (a + 2) << 16 ? a + 2 : 1;
+    s_ic.next_word = (const uint16_t *)(p + a + 2);
+    s_ic.next_wait = f->wait;
+    s_ic.bank = a >> 16;
+    s_ic.base = p;
+    *m68k_loop.ir = op;
+#ifndef ESP_PLATFORM
+    extern uint32_t jit_fb_count[65536];
+    jit_fb_count[op]++;
+#endif
+    (*m68k_loop.handlers)[op]();
+    *m68k_loop.remaining -= (*m68k_loop.cycles)[op];
+    return *m68k_loop.remaining <= 0 || *m68k_loop.tracing || jit_stop || *m68k_loop.pc != a + f->len;
+}
+
+/* The fetch state as the interpreter leaves it after code in this bank
+ * whose last word fetched ends at fe (the translated blocks' exits) */
+void AMI_HOT mem_fetch_state(uint32_t fe)
+{
+    uint32_t b = fe >> 16;
+    if (!(fe & 0xFFFF)) {
+        b = (fe - 2) >> 16;                 /* (the bank's last word: no next) */
     }
+    const uint8_t *p = s_m.rmap[b];
+    s_ic.next = (fe & 0xFFFF) ? fe : 1;
+    s_ic.next_word = (const uint16_t *)(p + fe);
+    s_ic.next_wait = s_m.wait[b];
+    s_ic.bank = b;
+    s_ic.base = p;
+}
+
+/* After a map change or a reset while a block ran (its exit set the old
+ * state): the general path */
+void mem_fetch_reset(void)
+{
+    s_ic.next = 1;
+    s_ic.bank = 0x100;
+}
+
+/* What the translated code reaches directly */
+void mem_jit_env(jit_env_t *e)
+{
+    e->ic_next = &s_ic.next;
+    e->ic_cacr = &s_ic.cacr;
+    e->ic_tag = s_ic.tag;
+    e->rmap = (const void *)s_m.rmap;
+    e->wmap = (const void *)s_m.wmap;
+    e->wait = s_m.wait;
 }
 
 /* The word at a in plain memory the code can run from (NULL: none), and its

@@ -1460,6 +1460,42 @@ stages (`jit-design-2026-11-27.md`).
   Tab5 (Virtual Karting 2 81% -> 67%), so off in the board build.
 - Next: native instructions (stage 3), then the RISC-V emitter for them.
 
+### A translating core, stage 3's first batch, 2026-11-27
+
+TODO item 19: the 68EC020's blocks in RISC-V on the board
+(`jit-design-2026-11-27.md`, "Stage 3").
+
+- **The code**: `jit_rv.c` writes RISC-V straight from the 68k code (the
+  encoder `rv.h`); the commonest families native (MOVE, the ALU ops and
+  their immediate, quick and address forms, Bcc, DBcc, Scc, MOVEM, JSR,
+  RTS, ...: ~98% of what the slow titles run), the rest by their handlers.
+  Shared routines for the data accesses (the callbacks' plain memory paths
+  inline), flags pending in registers until something reads them in
+  memory, the opcode's fetch timing decided at translation where the path
+  is known. Blocks of at most 16 instructions, translated once they ran 64
+  times (all at once filled the arena: the Tab5 booted Workbench at 18%).
+  The shared routines in the arena's middle (a jump reaches 1 MB either
+  way: room for a 2 MB arena); the other shifts and rotates of Dn call
+  their handler directly.
+- **The host runs the board's code** (`host/rvsim.c`, an RV32IM
+  interpreter; the host build not position independent so every address
+  fits 32 bits): the collection 96 of 96, the A1200 survey 26 of 26 and
+  the replays 4 of 4 the same as the interpreter; `host/jit_test.c`, a
+  million random instructions and flag-reading pairs, none different;
+  `rv.h` against the GNU assembler (2360 encodings).
+- **The Tab5** (median, slowest stretch; before: the interpreter):
+  Virtual Karting 2 99.6% (96.7%; was 81.0%, 75.6%), AmiBee 99.9%
+  (94.5%; its slowest ~68%), Charr 99.9% with core 1 at 68% (was ~88%),
+  Deluxe Galaga 97.8% (77.2%; was 98.1%, 66.6%), Gea Lux 100% (95.6%;
+  was 95.1% at its slowest), Metal Kombat 100% (82.8%; its slowest
+  66.7%). Leading Lap slower: 95.6% (86.3%; was 99.5%, 88.0%): its code
+  doesn't fit the 1 MB arena (100000 translations and 76 flushes in 9300
+  frames on the host). The games run right on the board; its pictures
+  can't be held against the host's frame by frame (Virtual Karting 2's
+  intro differs between any two board runs, the interpreter's too, and
+  input lands within a frame there), so exactness rests on the host,
+  which runs the same code.
+
 ### Voyage follow-up, 2026-10-24
 
 The host comparisons exposed two further issues. Hyperion's DMA could

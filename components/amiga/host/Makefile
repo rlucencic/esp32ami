@@ -7,7 +7,7 @@ MUSASHI   := ../../../../esp32emu/components/musashi
 EMUDBG    := ../../../../esp32emu/components/emudbg
 AMI       := ..
 BUILD     := build
-CFLAGS    := -O2 -g -Wall -Wextra -Wno-unused-parameter -DM68K_INSTRUCTION_HOOK=2 -DM68K_RUNTIME -DM68K_NO_BUS_ERRORS -DM68K_PROGRAM_READS -DM68K_HOST_LOOP -DAMI_JIT -I$(AMI)/include -I$(AMI) -I$(MUSASHI) -I$(MUSASHI)/musashi -I$(MUSASHI)/generated -I$(EMUDBG)/include
+CFLAGS    := -O2 -g -Wall -Wextra -Wno-unused-parameter -DM68K_INSTRUCTION_HOOK=2 -DM68K_RUNTIME -DM68K_NO_BUS_ERRORS -DM68K_PROGRAM_READS -DM68K_HOST_LOOP -DAMI_JIT -fno-pie '-DM68K_STATE_ATTR=__attribute__((section("jitstate")))' -I$(AMI)/include -I$(AMI) -I$(MUSASHI) -I$(MUSASHI)/musashi -I$(MUSASHI)/generated -I$(EMUDBG)/include
 KICK      ?= $(ROOT)/roms/amiga-os-130.rom
 FRAMES    ?= 500
 
@@ -17,28 +17,35 @@ M68K_SRCS := $(MUSASHI)/musashi/m68kcpu.c $(MUSASHI)/musashi/m68kdasm.c \
              $(MUSASHI)/m68k_dbg.c
 AMI_OBJS  := $(patsubst $(AMI)/%.c,$(BUILD)/ami/%.o,$(AMI_SRCS))
 M68K_OBJS := $(patsubst $(MUSASHI)/%.c,$(BUILD)/m68k/%.o,$(M68K_SRCS)) \
-             $(BUILD)/emudbg.o $(BUILD)/emudbg_posix.o
+             $(BUILD)/emudbg.o $(BUILD)/emudbg_posix.o $(BUILD)/rvsim.o
+# (the translated blocks run through rvsim.c: every address they use in 32
+# bits, so no position independence; rvsim.c keeps the heap low)
+LDFLAGS   := -no-pie
 
 run: $(BUILD)/ami_host
 	./$(BUILD)/ami_host $(KICK) $(FRAMES) $(BUILD)/screen.ppm
 	sips -s format png $(BUILD)/screen.ppm --out $(BUILD)/screen.png >/dev/null
 
 $(BUILD)/ami_host: host_main.c $(AMI_OBJS) $(M68K_OBJS)
-	$(CC) $(CFLAGS) $^ -lm -lpthread -lz -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ -lm -lpthread -lz -o $@
 
-test: $(BUILD)/floppy_test $(BUILD)/mem_test $(BUILD)/wait_test
+test: $(BUILD)/floppy_test $(BUILD)/mem_test $(BUILD)/wait_test $(BUILD)/jit_test
 	./$(BUILD)/floppy_test
 	./$(BUILD)/mem_test
 	./$(BUILD)/wait_test
+	./$(BUILD)/jit_test
 
 $(BUILD)/floppy_test: floppy_test.c $(AMI_OBJS) $(M68K_OBJS)
-	$(CC) $(CFLAGS) $^ -lm -lpthread -lz -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ -lm -lpthread -lz -o $@
 
 $(BUILD)/mem_test: mem_test.c $(AMI_OBJS) $(M68K_OBJS)
-	$(CC) $(CFLAGS) $^ -lm -lpthread -lz -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ -lm -lpthread -lz -o $@
 
 $(BUILD)/wait_test: wait_test.c $(AMI_OBJS) $(M68K_OBJS)
-	$(CC) $(CFLAGS) $^ -lm -lpthread -lz -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ -lm -lpthread -lz -o $@
+
+$(BUILD)/jit_test: jit_test.c $(AMI_OBJS) $(M68K_OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ -lm -lpthread -lz -o $@
 
 $(BUILD)/ami/%.o: $(AMI)/%.c $(wildcard $(AMI)/*.h $(AMI)/include/*.h)
 	@mkdir -p $(dir $@)
@@ -47,6 +54,10 @@ $(BUILD)/ami/%.o: $(AMI)/%.c $(wildcard $(AMI)/*.h $(AMI)/include/*.h)
 $(BUILD)/m68k/%.o: $(MUSASHI)/%.c $(MUSASHI)/m68kconf.h $(EMUDBG)/include/emudbg.h $(wildcard $(MUSASHI)/musashi/*.h)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -w -c $< -o $@
+
+$(BUILD)/rvsim.o: rvsim.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/%.o: $(EMUDBG)/%.c $(EMUDBG)/include/emudbg.h
 	@mkdir -p $(dir $@)

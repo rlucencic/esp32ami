@@ -1129,6 +1129,11 @@ static bool console_command(const char *line)
         jit_probe();
         return true;
     }
+    case 'J': {
+        extern void jit_report(void);
+        jit_report();
+        return true;
+    }
     case 'R': {
         int model = 0, kick = 0, chip = 0, slow = -1, fast = -1;
         int n = sscanf(line + 1, "%d %d %d %d %d", &model, &kick, &chip, &slow, &fast);

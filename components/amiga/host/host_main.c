@@ -12,7 +12,8 @@
  * (0; 1024-8192: an autoconfig board), AMI_ECS,
  * AMI_NTSC, AMI_SERIAL (print what's sent on the serial port), AMI_EXT=<rom>
  * (AROS's extension ROM at $E00000),
- * AMI_SHOTS=<n> (a picture every n frames, <out>-<frame>.ppm), AMI_LOG=<n>
+ * AMI_SHOTS=<n> (a picture every n frames, <out>-<frame>.ppm; AMI_SHOTFROM=<frame>:
+ * from there on), AMI_LOG=<n>
  * (the machine's state every n frames), AMI_LOGFROM=<frame> (every frame
  * from there), AMI_RING=<n> (the last n instructions at the end),
  * AMI_STOP=<pc>[:<frame>], AMI_TRACE=<pc>:<n> (+ AMI_TRACE_FRAME),
@@ -132,6 +133,43 @@ void ami_host_watch_hit(uint32_t addr, int bytes, uint32_t value)
         return;
     }
     stop_here();
+}
+
+static uint64_t s_opstat[65536];
+static uint32_t s_opstat_pc[65536];
+
+/* At exit: per opcode its count, share and an instruction with it (the
+ * last one seen), most first */
+static int opstat_order(const void *a, const void *b)
+{
+    uint64_t x = s_opstat[*(const uint16_t *)a], y = s_opstat[*(const uint16_t *)b];
+    return x > y ? -1 : x < y;
+}
+
+static void opstat_write(void)
+{
+    static uint16_t ops[65536];
+    uint64_t total = 0;
+    int n = 0;
+    for (int op = 0; op < 65536; op++) {
+        if (s_opstat[op]) {
+            ops[n++] = (uint16_t)op;
+            total += s_opstat[op];
+        }
+    }
+    if (!total) {
+        return;
+    }
+    qsort(ops, n, sizeof(ops[0]), opstat_order);
+    printf("opstat: %llu instructions, %d opcodes\n", (unsigned long long)total, n);
+    uint64_t sum = 0;
+    for (int i = 0; i < n; i++) {
+        char text[100];
+        m68k_disassemble(text, s_opstat_pc[ops[i]], M68K_CPU_TYPE_68EC020);
+        sum += s_opstat[ops[i]];
+        printf("opstat %04x %10llu %5.2f%% %6.2f%%  %s\n", ops[i], (unsigned long long)s_opstat[ops[i]],
+               100.0 * s_opstat[ops[i]] / total, 100.0 * sum / total, text);
+    }
 }
 
 void m68k_host_instruction(unsigned int pc)
@@ -321,6 +359,22 @@ void m68k_host_instruction(unsigned int pc)
         extern int m68ki_remaining_cycles;
         uint32_t rec[3] = { pc, (uint32_t)s_frame, (uint32_t)m68ki_remaining_cycles };
         fwrite(rec, 4, cyc ? 3 : 2, pclog);
+    }
+
+    /* AMI_OPSTAT=<from>:<to>: each opcode's count in those frames (the
+     * translating core's choice of instructions: opstat_write()) */
+    static int opstat_from = -1, opstat_to;
+    if (opstat_from == -1) {
+        const char *e = getenv("AMI_OPSTAT");
+        opstat_from = -2;
+        if (e && sscanf(e, "%d:%d", &opstat_from, &opstat_to) != 2) {
+            opstat_from = -2;
+        }
+    }
+    if (opstat_from >= 0 && (int)s_frame >= opstat_from && (int)s_frame < opstat_to) {
+        uint16_t op = amiga_peek16(pc);
+        s_opstat[op]++;
+        s_opstat_pc[op] = pc;
     }
 
     /* AMI_PCCOVER=<file>: each address executed, once (tools/smoke.py's
@@ -625,6 +679,10 @@ int main(int argc, char **argv)
 #ifdef AMI_JIT
     {
         extern bool amiga_jit;
+        if (getenv("AMI_JITNOHOOK")) {
+            extern bool jit_hooks;
+            jit_hooks = false;
+        }
         if (getenv("AMI_NOJIT")) {
             amiga_jit = false;          /* (the 68EC020 by the interpreter alone) */
         }
@@ -693,6 +751,7 @@ int main(int argc, char **argv)
     }
 
     int shots = env_int("AMI_SHOTS", 0), log_every = env_int("AMI_LOG", 0);
+    int shots_from = env_int("AMI_SHOTFROM", 0);   /* (AMI_SHOTS only from that frame on) */
     clock_t t0 = clock();
     const char *inserts = getenv("AMI_INSERT");
     const char *inputs = getenv("AMI_INPUT");
@@ -787,7 +846,7 @@ int main(int argc, char **argv)
                 fflush(stdout);
             }
         }
-        if (shots && (s_frame + 1) % shots == 0) {
+        if (shots && (s_frame + 1) % shots == 0 && (int)(s_frame + 1) >= shots_from) {
             char path[512];
             snprintf(path, sizeof(path), "%.*s-%04lu.ppm", (int)(strlen(out) - 4), out,
                      (unsigned long)(s_frame + 1));
@@ -824,6 +883,46 @@ int main(int argc, char **argv)
     }
     if (getenv("AMI_RING")) {
         show_ring(atoi(getenv("AMI_RING")));
+    }
+    if (getenv("AMI_OPSTAT")) {
+        opstat_write();
+    }
+    if (getenv("AMI_JITSTAT")) {
+        extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words; } jit_stats;
+        printf("jit: %lu translations (%lu instructions, %lu bytes of code), %lu flushes (%lu full), %lu drops, %lu blocks run\n",
+               jit_stats.translations, jit_stats.insns, jit_stats.code_bytes, jit_stats.flushes, jit_stats.full,
+               jit_stats.drops, jit_stats.blocks_run);
+        printf("jit: %lu distinct block addresses; per instruction %.1f RISC-V instructions, %.2f exits, %.2f handlers\n",
+               jit_stats.distinct, (double)jit_stats.rv_words / jit_stats.insns, (double)jit_stats.exits / jit_stats.insns,
+               (double)jit_stats.fbs / jit_stats.insns);
+        {
+            /* the handlers the translated code still calls, most first */
+            extern uint32_t jit_fb_count[65536];
+            static uint16_t ops[65536];
+            int n = 0;
+            for (int op = 0; op < 65536; op++) {
+                if (jit_fb_count[op]) {
+                    ops[n++] = (uint16_t)op;
+                }
+            }
+            for (int i = 0; i < n; i++) {
+                for (int j = i + 1; j < n; j++) {
+                    if (jit_fb_count[ops[j]] > jit_fb_count[ops[i]]) {
+                        uint16_t t = ops[i];
+                        ops[i] = ops[j];
+                        ops[j] = t;
+                    }
+                }
+                if (i >= 30) {
+                    break;
+                }
+            }
+            for (int i = 0; i < n && i < 30; i++) {
+                printf("jit handler %04x %10u\n", ops[i], jit_fb_count[ops[i]]);
+            }
+        }
+        extern double jit_t_decode, jit_t_emit;
+        printf("jit: %.3f s decoding, %.3f s emitting\n", jit_t_decode, jit_t_emit);
     }
     write_ppm(out);
     amiga_floppy_flush();

@@ -47,16 +47,22 @@ What: fewer P4 instructions per 68020 instruction.
   Its two small items are done: the extension-word reads always inline
   (no change beyond the spread); `mem.c`'s `s_m` can't be reached from gp
   (the linker wants the whole 3 KB object in the window).
-- Next: the translating core (`docs/jit-design-2026-11-27.md`). Stage 1
-  is done: the machinery (`jit.c`: blocks, invalidation, exits, the fetch
-  timing), every instruction still a handler call; exact on the host (the
-  collection, the A1200 survey, the replays), slower on the Tab5 (off in
-  the board build). Next, stage 3: native micro-ops for the commonest
-  instructions (MOVE, MOVEQ, ADD/SUB/CMP, TST, CLR, LEA, Bcc, DBcc, ...),
-  each batch checked exact on the host, then the RISC-V emitter for them
-  (PSRAM is executable with `CONFIG_SPIRAM_PRE_CONFIGURE_MEMORY_PROTECTION`
-  off: `main/jit_probe.c`, the console's `X`). Handlers are esp32emu's
-  Musashi: the ST and the Macs must be built and checked if it changes.
+- The translating core (`docs/jit-design-2026-11-27.md`): stage 1 (the
+  machinery) and stage 3's first batch are done: the commonest families
+  native in RISC-V, the rest by their handlers, flags pending, the board
+  running it (see "Done so far"). Next, by what the titles still leave to
+  handlers (the host's `AMI_JITSTAT` lists them): the 68020's long MULU,
+  MULS, DIVU, DIVS and the .W divides, the bit fields (BFEXTU, BFINS:
+  Virtual Karting 2), the shifts by a register and ROXL/ROXR natively,
+  LINK/UNLK; then blocks reaching each other without the dispatcher (5%
+  of core 1 in AmiBee's slowest stretch, and a block's prologue and exit
+  each time), and a larger arena (the shared routines in its middle: a
+  jump reaches 1 MB either way). Handlers are esp32emu's Musashi: the ST
+  and the Macs must be built and checked if it changes.
+- The arena's cost: with the A1200's 8 MB of fast RAM the board has ~2 MB
+  of PSRAM left (3.4 MB before), so an extended ADF (its 2.5 MB buffer)
+  can't go in there now; a smaller page table (`s_page`, 256 KB) or the
+  arena only while there's room would give it back.
 - Not levers: this P4 (revision 1.x) tops out at 360 MHz; a 512 KB L2
   cache needs 256 KB of internal RAM; code in internal RAM or the TCM;
   extension words read inline (step 10's window, a wash; reading the

@@ -52,14 +52,17 @@ moment. So:
   (256 bytes) that hold translated code and the blocks on each, the
   dispatcher (`jit_run()`, called from `m68k_host_run()` for the
   68EC020), the invalidation.
-- The translation goes into micro-ops: a small RISC-like form. A C
-  interpreter runs them (the host build: so the collection checks the
-  translation exactly, and the board as a fallback); on the board a
-  RISC-V emitter turns them into code in PSRAM.
+- The translation goes straight into RISC-V (`jit_rv.c`, the encoder in
+  `rv.h`), no micro-ops in between: the host runs that very code through
+  its own RV32IM interpreter (`host/rvsim.c`), so the collection checks
+  the code the board runs, not a stand-in. (Planned as micro-ops with a C
+  interpreter for the host; the interpreter of RISC-V was the simpler
+  way to the same check.)
 - A block: from a PC to an instruction that always changes the flow (BRA,
-  JMP, RTS, RTE, BSR, JSR, TRAP, STOP, line A/F, ILLEGAL), at most 64
+  JMP, RTS, RTE, BSR, JSR, TRAP, STOP, line A/F, ILLEGAL), at most 16
   instructions and 256 bytes, never across a 64 KB bank. A conditional
-  branch inside it exits when taken.
+  branch inside it goes on within the block when its target is there,
+  else exits when taken.
 
 ## Stages
 
@@ -118,3 +121,114 @@ A RISC-V version of stage 1 alone would cost about the interpreter's 28
 P4 instructions an instruction (PC, PPC, IR, the fetch state, the cache
 check, the call, the cycles, the exits): stage 2 waits for stage 3's
 native instructions, and the emitter comes with them.
+
+## Stage 3, the first batch (2026-11-27)
+
+Stage 2 (RISC-V for every instruction a handler call) and stage 3 came
+together: the translation writes RISC-V directly (`jit_rv.c`, `rv.h`), and
+an instruction it doesn't know calls its handler from that code.
+
+**Native**: MOVE, MOVEA, MOVEQ, LEA, PEA, CLR, TST, NEG, NOT, EXT, EXTB,
+SWAP, EXG, ADDQ, SUBQ, ADD, SUB, AND, OR, EOR, CMP, ADDA, SUBA, CMPA, the
+immediate forms, BTST BCHG BCLR BSET, the shifts and rotates of Dn by an
+immediate count, ADDX and SUBX between registers, MULU.W, MULS.W, Scc,
+Bcc, DBcc, BRA, BSR, JSR, JMP, RTS, MOVEM, NOP; every addressing mode but
+the full index format. About 98% of the instructions the slow titles run
+(their counts: the host's `AMI_OPSTAT`). The other shifts and rotates of
+Dn call their handler directly (no PC, no fetch state).
+
+**How**:
+
+- The host runs the same code through an RV32IM interpreter
+  (`host/rvsim.c`): a jump out of the code arena calls the host function
+  at that address. The host build is not position independent and keeps
+  its heap low, so every address fits the code's 32 bits; Musashi's
+  state, the fetch state and the translated code's own state sit in one
+  section (`jitstate`, as `.sdata.m68k`/`.sdata.ami` on the board), all
+  reached from one register.
+- Shared routines at the arena's start: the prologue and exit, a
+  handler's call, and the data accesses: each the callback's plain memory
+  path inline (the bank's pointer and wait; for a write `jit_code_pages`
+  too), the callback itself (REG_PPC and the cycles left stored first)
+  for the chips, the CIAs, odd addresses and anything at a bank's end.
+  An access is two instructions where it's made (the PC register's
+  update, the call).
+- Flags pending: a flag setter leaves its source, destination and result
+  in three registers; a Bcc, Scc or DBcc after a CMP, a SUB or a MOVE
+  tests them directly (BLT after CMP is one signed compare of the two
+  operands, shifted up for a byte or a word); they reach memory only
+  before a handler, at an exit (the exit's own routine), at a jump within
+  the block, and before BTST (which sets Z alone) or ADDX/SUBX (which
+  read Z). X is never pending. They match Musashi's where its tests look:
+  N and V bit 7, C and X bit 8, Z nonzero.
+- The opcode's fetch timing as stage 1's, decided at translation where
+  the path is known: an instruction reached in sequence charges a
+  longword's first word, one reached by a jump within the block its
+  longword (the jump knows its own last word), the block's first and the
+  one after a handler compare `s_ic.next` at run time. The cache check of
+  a longword: three instructions in fast RAM or the ROM (no wait: only the
+  tag stored while the cache fills), ten in chip RAM.
+- Blocks are translated once their address has run 64 times, and hold
+  at most 16 instructions: Workbench's boot made 95000 blocks in 30 s
+  with every block translated at once (the Tab5 at 18%), and blocks
+  running on past their branches copied a routine's tail for every entry
+  into it (Virtual Karting 2's race: its 1 MB of code rebuilt 165 times
+  in 4000 frames). Now 23 flushes of the arena in 12000 frames.
+- Instruction lengths from the opcode for the families above (Musashi's
+  disassembler for the rest; on the host every length is checked against
+  it): the disassembler's text formatting took most of a translation's
+  ~210 µs on the board.
+
+**Checked on the host**: the collection 96 of 96, the A1200 survey's 26
+packages 26 of 26 and the replays 4 of 4, the same as the interpreter, with
+the board's code exactly (`AMI_JITNOHOOK`) and with the hooks;
+`host/jit_test.c`, a million random instructions and flag-reading pairs
+against the interpreter (registers, flags, PC, PPC, IR, the cycles left,
+the fetch state, the cache's tags, chip RAM), none different; `rv.h`'s
+encodings against the GNU assembler's (2360, the same).
+
+**The Tab5** (`board_pass.py`, median and slowest stretch):
+
+| Title | Interpreter | Translated |
+|---|---|---|
+| Virtual Karting 2 | 81.0% (75.6%) | 99.6% (96.7%) |
+| AmiBee | its slowest ~68% | 99.9% (94.5%), core 1 51% |
+| Charr | 100%, core 1 ~88% | 99.9%, core 1 68% |
+| Deluxe Galaga | 98.1% (66.6%) | 97.8% (77.2%) |
+| Gea Lux | its slowest 95.1% | 100% (95.6%) |
+| Metal Kombat | its slowest 66.7% | 100% (82.8%) |
+| Leading Lap | 99.5% (88.0%) | 95.6% (86.3%) |
+
+(The interpreter's from `faster-020-handlers-2026-11-26.md` and the
+survey's runs; the translated from `board_pass.py`, 2026-11-27: Virtual
+Karting 2 and Leading Lap on the final firmware, the shifts by a
+register calling their handlers directly; the others on the one before,
+98.1% (91.4%) and 95.5% (83.5%) there. The games run right on the
+board; its pictures can't be compared with the host's frame by frame:
+Virtual Karting 2's intro differs between any two board runs, the
+interpreter's too.)
+
+**Where the time goes now** (core 1's samples in the slowest stretches;
+the flash's code runs from PSRAM at 0x48000000, so only the arena's
+addresses are translated code): translated code and its routines 15-35%,
+the dispatcher (`jit_run()`, `mem_fetch_state()`) 5-11%, the chips as
+before. Leading Lap: its code doesn't fit the 1 MB arena (17 RISC-V
+instructions and 1.17 exits a 68k instruction, ~95 bytes with the exits'
+table; on the host 65 flushes in 9300 frames, 11 with 2 MB), translation
+and `jit_written()` 2.7% each. The board's counters over the six titles:
+416000 translations, 39 s translating, 6 s syncing the caches, of ~30
+minutes.
+
+**Next**:
+
+- Denser code, so the hot code of a title like Leading Lap fits: the
+  exits' table in 8 bytes, not 16; the P4's compressed instructions (half
+  the size for most of what the blocks use; the host's interpreter and
+  the assembler check would need them too); and/or a 2 MB arena (the
+  routines are in its middle already: a jump reaches 1 MB either way),
+  if the PSRAM can spare it (2 MB free with the A1200's 8 MB of fast RAM
+  and the 1 MB arena; an extended ADF's 2.5 MB buffer no longer fits
+  then).
+- Blocks reaching each other without returning to the dispatcher.
+- The handlers the titles still call (the host's `AMI_JITSTAT` lists
+  them): the long multiplies and divides, the bit fields.

@@ -92,7 +92,8 @@ left, 8 right, 10 fire, 20 second button), `R <model> <kick> [chip KB]
 model's own: the A600 2.05, 3.1 or AROS, the A1200 6, 7 or AROS, the others 1.2,
 1.3, 2.04, 3.1 or AROS), chip RAM 512/1024 (2048 the A600; the A1200 only 2048), slow RAM
 0/512 (not the A600 or A1200), fast RAM 0/1024/2048/4096/8192. `X` runs the translating core's probe (code
-written into PSRAM, called; TODO 19). Workbench 1.3 from the console: the pointer starts
+written into PSRAM, called; TODO 19), `J` prints its counters (blocks
+translated, flushes, the time translating and syncing the caches). Workbench 1.3 from the console: the pointer starts
 top left; `m 300 100 0` then `m 291 0 0` reaches the disk icon (counts
 are hires pixels across, half lines down), the Shell icon in its window
 is `m -523 136 0` from there.
@@ -122,7 +123,9 @@ images.
 | `main/settings.c` | NVS `ami`, which Kickstart and RAM each model takes, its defaults (A2000: 1 MB chip, 2 MB fast) |
 | `main/jit_probe.c` | The console's `X`: runs code written into PSRAM (TODO 19's translating core: does the P4 allow it, how fast) |
 | `components/amiga/` | The machine, platform independent (`include/amiga.h`) |
-| `components/amiga/jit.c`, `jit.h` | The 68EC020's translated blocks (TODO 19, `docs/jit-design-2026-11-27.md`): the cache, translation, invalidation, the dispatcher; stage 1, on in the host build only |
+| `components/amiga/jit.c`, `jit.h` | The 68EC020's translated blocks (TODO 19, `docs/jit-design-2026-11-27.md`): the arena, the block cache, invalidation, the dispatcher (code translated once it ran 64 times) |
+| `components/amiga/jit_rv.c`, `rv.h` | The translation into RISC-V: the instructions it knows, the shared routines (memory accesses, the flags to memory, a handler's call), pending flags; `rv.h` the encoder |
+| `components/amiga/host/rvsim.c` | The host's RV32IM interpreter: the host runs the very code the board runs (the build not position independent, the heap low: every address in 32 bits) |
 | `components/amiga/host/` | Host build for testing on the Mac (see Testing) |
 | `tools/adf.py` | Reads ADFs and patches files in them (test disks, see Testing) |
 | `tools/rdb.py`, `tools/ffsls.py` | An HDF's RDB, its first partition's files |
@@ -826,6 +829,30 @@ the top two bits do nothing, Aerial Racers' race sets them),
   moved. Found by logging each instruction's cycles left in both runs
   (`AMI_PCLOGCYC`): copy the interpreter's decisions, don't assume them.
 
+- **ROL and ROR cost a clock a bit on the 68EC020, the other shifts
+  none**: Musashi's `USE_CYCLES(shift << CYC_SHIFT)` is gated by
+  `CPU_TYPE_IS_010_LESS` for LSL/LSR/ASL/ASR but not for the rotates, and
+  `CYC_SHIFT` 0 makes it `shift`, not nothing. The translated `rol.l #8`
+  in Kickstart 3.1's start ran 8 clocks short. Read the handler, not the
+  family's neighbour.
+
+- **Translated code that runs a few times, or the same code translated
+  many times, fills the arena**: Workbench's boot on the board made 95000
+  blocks in 30 s (13.5 s translating, 100 arena flushes, the Tab5 at
+  18%), and Virtual Karting 2's race on the host retranslated the same
+  430 addresses' code 165 times in 4000 frames: blocks ran 48
+  instructions on past their conditional branches, so every entry into a
+  routine copied its tail again, and its 1 MB of code no longer fitted.
+  Code translated only after 64 runs and blocks of 16 instructions at
+  most: 23 flushes in 12000 frames instead of 247 (`AMI_JITSTAT`'s
+  distinct block addresses against its translations shows it).
+
+- **An encoder and an interpreter of the same instructions can share a
+  mistake**: the host runs the translated code through its own RISC-V
+  interpreter, so a misread instruction format would agree with itself
+  there and fail only on the chip. `host/rv_enc_test.c` checks `rv.h`
+  against the GNU assembler (2360 encodings, the same).
+
 - **A drive turning at exactly 300 rpm locks a loader's reads to the
   disk's phase**: Hyperion's loader writes DSKLEN a fixed time after the
   last read's end (decoding, 15 ms on a CIA timer), and that read began
@@ -922,7 +949,16 @@ the top two bits do nothing, Aerial Racers' race sets them),
   a wait (the committed pass), a compare on the horizontal byte (unstable
   bits); each check fails with its part of `wait.c` taken out; and the
   68000's prefetch: the old word after a write over it, the new one on the
-  68EC020 and after a branch, fails without `prefetch16()`). `make
+  68EC020 and after a branch, fails without `prefetch16()`), and the
+  translated blocks (`jit_test.c [cases] [seed]`: random instructions of
+  the translated families and their invalid neighbours, a third followed
+  by a Bcc, Scc or DBcc that reads their flags, from random registers,
+  flags, fetch state and cache tags, in chip RAM and the ROM; each run
+  by the interpreter and by the translated code, registers, SR, PC, PPC,
+  IR, the cycles left, the fetch state, the tags and chip RAM compared;
+  it caught a planted cycle and a planted V flag error at once). `rv.h`'s
+  encodings against the GNU assembler: `host/rv_enc_test.c` (2360
+  instructions the same as `riscv32-esp-elf-as -march=rv32im`'s). `make
   test` builds the tests, not `build/ami_host`: `make build/ami_host` for
   that (a comparison once ran an old binary against itself). The shared core's
   `make -C ../esp32emu/components/musashi/test run run-prefetch run-020
@@ -951,6 +987,12 @@ the top two bits do nothing, Aerial Racers' race sets them),
   `AMI_PCLOGCYC` (with `AMI_PCLOG`: the cycles left as each instruction
   starts, a third word), `AMI_NOJIT` (the 68EC020 by the interpreter alone:
   the host build has the translated blocks on, `-DAMI_JIT`),
+  `AMI_JITNOHOOK` (the translated code without the per-instruction hook:
+  the board's code exactly; no PC log, ring or `AMI_STOP` then),
+  `AMI_JITSTAT` (translations, flushes, distinct blocks, time),
+  `AMI_JITDUMP=<pc>` (that block's code to `jitdump.bin`: `riscv32-esp-elf-objdump
+  -D -b binary -m riscv:rv32 jitdump.bin`), `AMI_OPSTAT=<from>:<to>` (each
+  opcode's count in those frames, most first),
   `AMI_DISKLOG` (each disk DMA's start with the head's position and the
   PC, its end with a checksum of its words, each change of CIA-B's drive
   lines; with the exceptions' lines, the instruction count after `#`),
@@ -1395,10 +1437,13 @@ the top two bits do nothing, Aerial Racers' race sets them),
     brief format and the address-error check cheaper. Virtual Karting 2
     78% → 81%, Leading Lap → 99.5%, Deluxe Galaga 95% → 98%; the A500's
     core 1 up to 4 points lower.
-  - Still behind: Virtual Karting 2's race (~76-81%), Deluxe Galaga's
-    credits and instructions (~67%), Leading Lap at its slowest (~88%),
-    Gea Lux in play (~95% at its slowest) and Metal Kombat's 3D intro. The
-    C side is near its floor; a translating core would be next.
+  - The C side was near its floor then (Virtual Karting 2's race
+    76-81%, Deluxe Galaga's credits ~67%).
+  - The translating core (2026-11-27, `docs/jit-design-2026-11-27.md`):
+    the 68EC020's hot code in RISC-V. Virtual Karting 2 99.6% (its
+    slowest 96.7%), AmiBee and Charr ~100% (core 1 51% and 68%), Deluxe
+    Galaga's slowest 77%, Metal Kombat's 83%. Leading Lap slower (95.6%,
+    its slowest 86.3%): its code doesn't fit the 1 MB arena.
 
   Done: `chip_read16()` inline
   (every DMA word) and read directly in `display_fetch()`, `beam()` (VPOSR

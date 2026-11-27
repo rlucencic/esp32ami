@@ -25,7 +25,9 @@
 #include <stdlib.h>
 #define ami_malloc(n)       malloc(n)
 #define AMI_HOT
-#define AMI_SDATA
+/* (beside Musashi's state, as on the board: the translated code reaches
+ * both from one register; host/Makefile puts Musashi's there too) */
+#define AMI_SDATA           __attribute__((section("jitstate")))
 #define AMI_LOGI(fmt, ...)  printf("I amiga: " fmt "\n", ##__VA_ARGS__)
 #define AMI_LOGW(fmt, ...)  printf("W amiga: " fmt "\n", ##__VA_ARGS__)
 #endif
