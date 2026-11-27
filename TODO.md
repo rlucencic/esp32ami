@@ -47,10 +47,16 @@ What: fewer P4 instructions per 68020 instruction.
   Its two small items are done: the extension-word reads always inline
   (no change beyond the spread); `mem.c`'s `s_m` can't be reached from gp
   (the linker wants the whole 3 KB object in the window).
-- Next, if the titles above are worth it: a translating core for the
-  68EC020's hot code (RISC-V, PIE where it helps; `../esp32emu/CLAUDE.md`,
-  "To do"), a project of its own. Handlers are esp32emu's Musashi: the ST
-  and the Macs must be built and checked too.
+- Next: the translating core (`docs/jit-design-2026-11-27.md`). Stage 1
+  is done: the machinery (`jit.c`: blocks, invalidation, exits, the fetch
+  timing), every instruction still a handler call; exact on the host (the
+  collection, the A1200 survey, the replays), slower on the Tab5 (off in
+  the board build). Next, stage 3: native micro-ops for the commonest
+  instructions (MOVE, MOVEQ, ADD/SUB/CMP, TST, CLR, LEA, Bcc, DBcc, ...),
+  each batch checked exact on the host, then the RISC-V emitter for them
+  (PSRAM is executable with `CONFIG_SPIRAM_PRE_CONFIGURE_MEMORY_PROTECTION`
+  off: `main/jit_probe.c`, the console's `X`). Handlers are esp32emu's
+  Musashi: the ST and the Macs must be built and checked if it changes.
 - Not levers: this P4 (revision 1.x) tops out at 360 MHz; a 512 KB L2
   cache needs 256 KB of internal RAM; code in internal RAM or the TCM;
   extension words read inline (step 10's window, a wash; reading the

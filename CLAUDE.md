@@ -91,7 +91,8 @@ left, 8 right, 10 fire, 20 second button), `R <model> <kick> [chip KB]
 1.3, 1 2.04, 2 2.05, 3 3.1, 4 1.2, 5 AROS, 6 3.0 (A1200), 7 3.1 (A1200) (the
 model's own: the A600 2.05, 3.1 or AROS, the A1200 6, 7 or AROS, the others 1.2,
 1.3, 2.04, 3.1 or AROS), chip RAM 512/1024 (2048 the A600; the A1200 only 2048), slow RAM
-0/512 (not the A600 or A1200), fast RAM 0/1024/2048/4096/8192. Workbench 1.3 from the console: the pointer starts
+0/512 (not the A600 or A1200), fast RAM 0/1024/2048/4096/8192. `X` runs the translating core's probe (code
+written into PSRAM, called; TODO 19). Workbench 1.3 from the console: the pointer starts
 top left; `m 300 100 0` then `m 291 0 0` reaches the disk icon (counts
 are hires pixels across, half lines down), the Shell icon in its window
 is `m -523 136 0` from there.
@@ -119,7 +120,9 @@ images.
 | `main/main.c` | The Amiga as an `emu_machine_t`: memory, start, setup rows, drives (DF0:, DF1:, written tracks to the card), the clock's offset, key map, mouse, joystick keys, the touchpad (super-hires pixels halved), sound, status, console |
 | `main/rom_store.c` | Kickstarts from their flash partitions, overridden by files in the SD card's `amiga/roms/` with that version |
 | `main/settings.c` | NVS `ami`, which Kickstart and RAM each model takes, its defaults (A2000: 1 MB chip, 2 MB fast) |
+| `main/jit_probe.c` | The console's `X`: runs code written into PSRAM (TODO 19's translating core: does the P4 allow it, how fast) |
 | `components/amiga/` | The machine, platform independent (`include/amiga.h`) |
+| `components/amiga/jit.c`, `jit.h` | The 68EC020's translated blocks (TODO 19, `docs/jit-design-2026-11-27.md`): the cache, translation, invalidation, the dispatcher; stage 1, on in the host build only |
 | `components/amiga/host/` | Host build for testing on the Mac (see Testing) |
 | `tools/adf.py` | Reads ADFs and patches files in them (test disks, see Testing) |
 | `tools/rdb.py`, `tools/ffsls.py` | An HDF's RDB, its first partition's files |
@@ -813,6 +816,16 @@ the top two bits do nothing, Aerial Racers' race sets them),
   those too corrupted 9 Fingers' streaming pictures. The generated-disk
   host test checks mid-line DMA start, repeated/backwards sync and frame
   rebasing; it fails with the start synchronization removed.
+- **A Bcc.W not taken doesn't fetch its displacement**: Musashi's handler
+  steps over it (`REG_PC += 2`), so the fetch state still points at that
+  word and the next opcode counts as reached by a jump (its longword
+  charged, 8 clocks in chip RAM). The translated blocks' first version
+  charged only a longword's first word between instructions: Aerial
+  Racers' decruncher (`bmi.w` then `move.b -(A0),-(A3)`) ran 8 clocks
+  short, a frame ended an instruction later, and 8 A1200 games' pictures
+  moved. Found by logging each instruction's cycles left in both runs
+  (`AMI_PCLOGCYC`): copy the interpreter's decisions, don't assume them.
+
 - **A drive turning at exactly 300 rpm locks a loader's reads to the
   disk's phase**: Hyperion's loader writes DSKLEN a fixed time after the
   last read's end (decoding, 15 ms on a CIA timer), and that read began
@@ -935,6 +948,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
   `AMI_WATCH` stops: code a game loaded), `AMI_PCLOG=<file>:<frame>
   [:<lo>-<hi>]` (each instruction's PC and frame, `tools/pcdiff.py`),
   `AMI_PCCOVER=<file>` (each address executed, in the order first run),
+  `AMI_PCLOGCYC` (with `AMI_PCLOG`: the cycles left as each instruction
+  starts, a third word), `AMI_NOJIT` (the 68EC020 by the interpreter alone:
+  the host build has the translated blocks on, `-DAMI_JIT`),
   `AMI_DISKLOG` (each disk DMA's start with the head's position and the
   PC, its end with a checksum of its words, each change of CIA-B's drive
   lines; with the exceptions' lines, the instruction count after `#`),

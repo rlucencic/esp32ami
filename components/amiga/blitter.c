@@ -10,6 +10,7 @@
  * The copper's few slots aren't counted.
  */
 #include "amiga_internal.h"
+#include "jit.h"
 
 blitter_t blit;
 
@@ -314,7 +315,23 @@ void blitter_line_start(void)
 static void start(int at)
 {
     blit.pending = false;
+    uint32_t d0 = blit.pt[D];
     int cck = (blit.con1 & LINE) ? blit_line() : blit_area();
+#ifdef AMI_JIT
+    {
+        /* the 68EC020's translated code in what D wrote goes: between the
+         * pointer's start and end, a row's width and modulo either side */
+        uint32_t d1 = blit.pt[D], m = ami.chip_mask;
+        int32_t mod = blit.mod[D] < 0 ? -blit.mod[D] : blit.mod[D];
+        int32_t margin = 2 * (int32_t)blit.width + mod + 4;
+        int32_t lo = (int32_t)((d0 < d1 ? d0 : d1) & m) - margin, hi = (int32_t)((d0 < d1 ? d1 : d0) & m) + margin;
+        if ((d0 & m) > (d1 & m) ? (d0 & m) - (d1 & m) > m / 2 : (d1 & m) - (d0 & m) > m / 2) {
+            lo = 0;                     /* (round chip RAM's end) */
+            hi = (int32_t)m + 1;
+        }
+        JIT_WRITTEN(lo < 0 ? 0 : (uint32_t)lo, (uint32_t)hi);
+    }
+#endif
     blit.busy = true;
     bus_blit_started();
     blit.left = cck;

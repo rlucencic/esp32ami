@@ -34,6 +34,7 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include "amiga_internal.h"
+#include "jit.h"
 #include "rp9.h"
 
 #define DRIVES          4
@@ -534,6 +535,10 @@ static void end_dma(void)
         d->writes++;
     }
     dk.active = false;
+    if (!dk.writing) {
+        uint32_t words = dk.len & 0x3FFF;
+        JIT_WRITTEN((dk.pt - 2u * words) & ami.chip_mask, ((dk.pt - 2u * words) & ami.chip_mask) + 2u * words);
+    }
     if (amiga_disk_end_hook) {
         amiga_disk_end_hook(dk.pt, dk.len & 0x3FFF, dk.writing);
     }
@@ -715,6 +720,9 @@ void floppy_write(uint32_t reg, uint16_t v, int at)
                 amiga_disk_hook(v, dk.sync, ami.adkcon, rd ? rd->cylinder : -1, s_side, dk.pt);
             }
             dk.active = (v & 0x3FFF) != 0;
+            if (!(v & 0x4000)) {
+                JIT_WRITTEN(dk.pt & ami.chip_mask, (dk.pt & ami.chip_mask) + 2u * (v & 0x3FFF));
+            }
             dk.writing = (v & 0x4000) != 0;
             dk.left = v & 0x3FFF;
             dk.synced = false;

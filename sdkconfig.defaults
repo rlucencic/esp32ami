@@ -113,3 +113,7 @@ CONFIG_M68K_PROGRAM_READS=y
 # CONFIG_M68K_PREFETCH is not set
 # the 68EC020's runs of instructions in mem.c's own loop (its fetch inline)
 CONFIG_M68K_HOST_LOOP=y
+
+# TODO 19: the translating core writes code into PSRAM and runs it there
+# (without its PMP entries PSRAM is RWX, as the P4 PMA has the region)
+# CONFIG_SPIRAM_PRE_CONFIGURE_MEMORY_PROTECTION is not set

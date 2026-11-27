@@ -314,8 +314,13 @@ void m68k_host_instruction(unsigned int pc)
         }
     }
     if (pclog && (int)s_frame >= pclog_from && pc >= pclog_lo && pc < pclog_hi) {
-        uint32_t rec[2] = { pc, (uint32_t)s_frame };
-        fwrite(rec, 4, 2, pclog);
+        static int cyc = -1;
+        if (cyc < 0) {
+            cyc = getenv("AMI_PCLOGCYC") != NULL;   /* (and the cycles left: a third word) */
+        }
+        extern int m68ki_remaining_cycles;
+        uint32_t rec[3] = { pc, (uint32_t)s_frame, (uint32_t)m68ki_remaining_cycles };
+        fwrite(rec, 4, cyc ? 3 : 2, pclog);
     }
 
     /* AMI_PCCOVER=<file>: each address executed, once (tools/smoke.py's
@@ -617,6 +622,14 @@ int main(int argc, char **argv)
         amiga_disk_end_hook = disk_end;
         amiga_drive_hook = drive_lines;
     }
+#ifdef AMI_JIT
+    {
+        extern bool amiga_jit;
+        if (getenv("AMI_NOJIT")) {
+            amiga_jit = false;          /* (the 68EC020 by the interpreter alone) */
+        }
+    }
+#endif
     if (getenv("AMI_DISKSEED")) {
         amiga_floppy_seed((uint32_t)strtoul(getenv("AMI_DISKSEED"), NULL, 10));
     }

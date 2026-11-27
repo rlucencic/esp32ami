@@ -1124,6 +1124,11 @@ static bool console_command(const char *line)
     case 'j':
         amiga_joystick((uint8_t)strtoul(line + 1, NULL, 16));
         return true;
+    case 'X': {
+        extern void jit_probe(void);
+        jit_probe();
+        return true;
+    }
     case 'R': {
         int model = 0, kick = 0, chip = 0, slow = -1, fast = -1;
         int n = sscanf(line + 1, "%d %d %d %d %d", &model, &kick, &chip, &slow, &fast);

@@ -1442,6 +1442,24 @@ tapped at frames 200-215) and flipped after any timing change.
 
 [Hyperion's reads and the drive's speed](hyperion-2026-11-26.md)
 
+### A translating core, stage 1, 2026-11-27
+
+TODO item 19, under way: blocks of the 68EC020's code translated, in
+stages (`jit-design-2026-11-27.md`).
+
+- **The platform**: code written into PSRAM runs on the P4 once
+  `CONFIG_SPIRAM_PRE_CONFIGURE_MEMORY_PROTECTION` is off, a rewrite runs
+  after `esp_cache_msync()` (data written back, instructions invalidated),
+  and warm it runs at 1.76 cycles an instruction (`main/jit_probe.c`, the
+  console's `X`).
+- **Stage 1** (`jit.c`): the block cache, invalidation on writes into
+  translated code (the CPU, the blitter, disk DMA, the loaders' helpers),
+  the exits where the interpreter's slice would end, the fetch timing; each
+  instruction still a handler call. Exact on the host: the collection 96
+  of 96, the A1200 survey 26 of 26, the replays 4 of 4. Slower on the
+  Tab5 (Virtual Karting 2 81% -> 67%), so off in the board build.
+- Next: native instructions (stage 3), then the RISC-V emitter for them.
+
 ### Voyage follow-up, 2026-10-24
 
 The host comparisons exposed two further issues. Hyperion's DMA could

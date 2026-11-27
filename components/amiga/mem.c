@@ -31,6 +31,7 @@
 #endif
 #include "m68k.h"
 #include "amiga_internal.h"
+#include "jit.h"
 
 #define EVEN_SLOTS      116             /* (a line's 114) */
 #define LINE_CCK        (2 * EVEN_SLOTS)
@@ -237,6 +238,7 @@ static void ic_map_changed(void);
 
 void mem_update_map(void)
 {
+    JIT_FLUSH();                        /* (the blocks hold the banks' host pointers) */
     ic_map_changed();
     s_m.cpu020 = ami.cpu_shift != 0;
     memset(s_m.rmap, 0, sizeof(s_m.rmap));
@@ -732,6 +734,7 @@ static struct {
 
 void mem_cpu_reset(void)
 {
+    JIT_FLUSH();
     s_pref.addr = 0x1000;                   /* (Musashi's: the first fetch is from 0) */
     s_ic.next = 1;                          /* (and the 68EC020's: the general path) */
     s_ic.bank = 0x100;
@@ -843,11 +846,100 @@ unsigned int AMI_HOT m68k_read_immediate_32(unsigned int a)
 #else
 #define HOST_HOOK(pc)
 #endif
+/* One instruction the interpreter's way (also the translated blocks' way
+ * past what they can't run: jit.c) */
+void AMI_HOT mem_interp_one(void)
+{
+    unsigned int *pc = m68k_loop.pc, *ppc = m68k_loop.ppc, *ir = m68k_loop.ir;
+    uint32_t a = *pc, op;
+    if (__builtin_expect(a == s_ic.next, 1)) {
+        HOST_HOOK(a);
+        *ppc = a;
+        *pc = a + 2;
+        op = fetch_next(a);
+    } else if (__builtin_expect((a >> 16) == s_ic.bank && !(a & 1), 1)) {
+        HOST_HOOK(a);
+        *ppc = a;
+        *pc = a + 2;
+        ic_longword(a, &s_ic.next_wait);
+        const uint16_t *w = (const uint16_t *)(s_ic.base + a);
+        op = *w;
+        s_ic.next_word = w + 1;
+        s_ic.next = (a + 2) << 16 ? a + 2 : 1;
+    } else {
+        HOST_HOOK(a);
+        *ppc = a;
+        *pc = a + 2;
+        op = m68k_read_immediate_16(a & 0xFFFFFF);
+    }
+    *ir = op;
+    (*m68k_loop.handlers)[op]();
+    *m68k_loop.remaining -= (*m68k_loop.cycles)[op];
+}
+
+#ifdef AMI_JIT
+bool amiga_jit = true;                  /* (the host's AMI_NOJIT: the interpreter) */
+
+/* A translated block's instructions, each as the loop above runs it: the
+ * opcode's fetch timing (reached by a jump: its longword; in sequence: a
+ * longword's first word), the PC and the fetch state its handler reads
+ * its extension words through, the handler, its cycles. It stops where
+ * the loop's slice would (no cycles left, the trace mark), where the PC
+ * isn't the next one's (a branch, an exception), or when asked (jit_stop:
+ * its code written, the map changed). */
+void AMI_HOT jit_exec_block(const jit_block_t *b)
+{
+    unsigned int *pc = m68k_loop.pc, *ppc = m68k_loop.ppc, *ir = m68k_loop.ir;
+    int *remaining = m68k_loop.remaining;
+    const unsigned int *tracing = m68k_loop.tracing;
+    const jit_insn_t *u = b->insn, *e = u + b->n;
+    uint32_t a = u->pc;
+    for (;;) {
+        /* (not only at the entry: a Bcc not taken skips its displacement
+         * without fetching it, and the next opcode then counts as a jump's) */
+        bool charge = a != s_ic.next || !(a & 2);
+        HOST_HOOK(a);
+        *ppc = a;
+        *pc = a + 2;
+        uint32_t wait = u->wait;
+        if (charge) {
+            ic_longword(a, &wait);
+        }
+        s_ic.next = (a + 2) << 16 ? a + 2 : 1;
+        s_ic.next_word = u->host + 1;
+        s_ic.next_wait = wait;
+        s_ic.bank = a >> 16;
+        s_ic.base = (const uint8_t *)u->host - a;
+        *ir = u->op;
+        u->handler();
+        *remaining -= u->cycles;
+        if (*remaining <= 0 || *tracing || jit_stop || *pc != u->next || ++u == e) {
+            return;
+        }
+        a = u->pc;
+    }
+}
+
+/* The word at a in plain memory the code can run from (NULL: none), and its
+ * bank's wait */
+const uint16_t *mem_code_ptr(uint32_t a, uint8_t *wait)
+{
+    const uint8_t *p = s_m.rmap[(a & 0xFFFFFF) >> 16];
+    *wait = s_m.wait[(a & 0xFFFFFF) >> 16];
+    return p ? (const uint16_t *)(p + (a & 0xFFFFFF)) : NULL;
+}
+#endif
+
 int AMI_HOT m68k_host_run(void)
 {
     if (!s_ic.cpu020) {
         return 0;
     }
+#ifdef AMI_JIT
+    if (amiga_jit) {
+        return jit_run();
+    }
+#endif
     unsigned int *pc = m68k_loop.pc, *ppc = m68k_loop.ppc, *ir = m68k_loop.ir;
     void (**handlers)(void) = *m68k_loop.handlers;
     const uint8_t *cycles = *m68k_loop.cycles;
@@ -982,6 +1074,7 @@ void AMI_HOT m68k_write_memory_8(unsigned int a, unsigned int v)
     if (s_m.wait[b]) {
         ami_cpu_wait(s_m.wait[b]);
     }
+    JIT_CHECK_WRITE(a, 1);
     if (p) {
         p[a ^ 1] = v;
         return;
@@ -1013,6 +1106,7 @@ void AMI_HOT m68k_write_memory_16(unsigned int a, unsigned int v)
     if (s_m.wait[b]) {
         ami_cpu_wait(s_m.wait[b]);
     }
+    JIT_CHECK_WRITE(a, 2);
     if (p) {
         wr16(p, a, v);
         return;
@@ -1046,6 +1140,7 @@ void AMI_HOT m68k_write_memory_32(unsigned int a, unsigned int v)
         if (s_m.wait[b]) {
             ami_cpu_wait(s_m.wait[b]);
         }
+        JIT_CHECK_WRITE(a, 4);
         wr16(p, a, v >> 16);
         wr16(p, a + 2, v & 0xFFFF);
         return;
@@ -1057,6 +1152,7 @@ void AMI_HOT m68k_write_memory_32(unsigned int a, unsigned int v)
 
 void mem_copy_to(uint32_t a, const uint8_t *src, uint32_t len)
 {
+    JIT_WRITTEN(a, a + len);
     for (uint32_t i = 0; i < len; i++, a++) {
         a &= 0xFFFFFF;
         uint8_t *p = s_m.wmap[a >> 16];
@@ -1213,6 +1309,7 @@ bool amiga_mem_free(amiga_mem_free_t *chip, amiga_mem_free_t *slow, amiga_mem_fr
 void amiga_poke8(uint32_t a, uint8_t v)
 {
     a &= 0xFFFFFF;
+    JIT_WRITTEN(a, a + 1);
     uint8_t *p = s_m.wmap[a >> 16];
     if (p) {
         p[a ^ 1] = v;
