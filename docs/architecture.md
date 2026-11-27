@@ -1496,6 +1496,28 @@ TODO item 19: the 68EC020's blocks in RISC-V on the board
   input lands within a frame there), so exactness rests on the host,
   which runs the same code.
 
+### Blocks reaching each other, 2026-11-27
+
+TODO item 19 (`jit-design-2026-11-27.md`, "Where the slow stretches spend
+it" and "Blocks reaching each other").
+
+- **Measured first**: in the titles' slow stretches handlers run 0.2-0.9%
+  of the instructions, while a block's entry and exit cost ~93 RISC-V
+  instructions a run (24-61% of the translated code's) plus the C
+  dispatcher's 8-10% of core 1, and 60-84% of the exits go to a fixed PC
+  whose block exists. Metal Kombat's slowest window was the board pass's
+  own screenshot and profile.
+- **Links**: such an exit is made a jump into that block's entry the
+  first time it comes back to the dispatcher; two entries a block (the
+  first opcode's fetch reached by a jump or in sequence); each exit's
+  record after its code; a dropped block's entries lead back to the
+  dispatcher, which links anew.
+- **Results**: the dispatcher's trips 63-84% fewer; Deluxe Galaga's
+  credits ~81% → 90-92%, Leading Lap's slowest 90.2% → 94.5%, AmiBee's
+  94.5% → 99.5%, Virtual Karting 2's 96.9% → 99.4%. The host: the
+  collection, the survey and the replays the same as the interpreter;
+  `jit_test` takes each case's links and kills too.
+
 ### A larger arena for the translated code, 2026-11-27
 
 TODO item 19 (`jit-design-2026-11-27.md`, "The larger arena").

@@ -123,7 +123,7 @@ images.
 | `main/settings.c` | NVS `ami`, which Kickstart and RAM each model takes, its defaults (A2000: 1 MB chip, 2 MB fast) |
 | `main/jit_probe.c` | The console's `X`: runs code written into PSRAM (TODO 19's translating core: does the P4 allow it, how fast) |
 | `components/amiga/` | The machine, platform independent (`include/amiga.h`) |
-| `components/amiga/jit.c`, `jit.h` | The 68EC020's translated blocks (TODO 19, `docs/jit-design-2026-11-27.md`): the arena (2044 KB, less while PSRAM is short; given back when a disk's buffer needs the room: `ami_malloc_big()`), the block cache, invalidation (per-bank page tables in the arena), the dispatcher (code translated once it ran 64 times) |
+| `components/amiga/jit.c`, `jit.h` | The 68EC020's translated blocks (TODO 19, `docs/jit-design-2026-11-27.md`): the arena (2044 KB, less while PSRAM is short; given back when a disk's buffer needs the room: `ami_malloc_big()`), the block cache, invalidation (per-bank page tables in the arena), the dispatcher (code translated once it ran 64 times; an exit's flow on to a fixed PC linked to that block's entry the first time it comes back, a dropped block's entries sent back to the dispatcher) |
 | `components/amiga/jit_rv.c`, `rv.h` | The translation into RISC-V: the instructions it knows, the shared routines (memory accesses, the flags to memory, a handler's call), pending flags; `rv.h` the encoder |
 | `components/amiga/host/rvsim.c` | The host's RV32IM interpreter: the host runs the very code the board runs (the build not position independent, the heap low: every address in 32 bits) |
 | `components/amiga/host/` | Host build for testing on the Mac (see Testing) |
@@ -966,7 +966,13 @@ the top two bits do nothing, Aerial Racers' race sets them),
   flags, fetch state and cache tags, in chip RAM and the ROM; each run
   by the interpreter and by the translated code, registers, SR, PC, PPC,
   IR, the cycles left, the fetch state, the tags and chip RAM compared;
-  it caught a planted cycle and a planted V flag error at once). `rv.h`'s
+  then again without a flush, the exits the first run linked taken, and
+  in chip RAM after the word behind it was written over, its block's
+  entries killed; the code after it a `bra.s *`, a loop that counts the
+  cycles down, or twenty NOPs looping (blocks cut at 16 instructions, so
+  links into the next in sequence); it caught a planted cycle and a
+  planted V flag error at once, and a link to the wrong entry, a dropped
+  block not killed and a link without its cycles check). `rv.h`'s
   encodings against the GNU assembler: `host/rv_enc_test.c` (2360
   instructions the same as `riscv32-esp-elf-as -march=rv32im`'s). `make
   test` builds the tests, not `build/ami_host`: `make build/ami_host` for
@@ -999,7 +1005,11 @@ the top two bits do nothing, Aerial Racers' race sets them),
   the host build has the translated blocks on, `-DAMI_JIT`),
   `AMI_JITNOHOOK` (the translated code without the per-instruction hook:
   the board's code exactly; no PC log, ring or `AMI_STOP` then),
-  `AMI_JITSTAT` (translations, flushes, distinct blocks, time, the arena),
+  `AMI_JITSTAT[=<frame>]` (translations, flushes, distinct blocks, time,
+  the arena, the handlers called; the exits by kind, the lookups, the
+  RISC-V instructions run; counted from that frame on; with `AMI_OPSTAT`
+  over the same frames each opcode's runs, handler calls and runs
+  outside blocks as `jitop` lines),
   `AMI_JITARENA=<KB>` (a smaller arena, 256 at least),
   `AMI_JITRELEASE=<frame>[:<frame>...]` (the arena given back before those
   frames, as a disk's buffer would take it),

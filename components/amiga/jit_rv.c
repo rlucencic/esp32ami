@@ -87,6 +87,8 @@ static struct {
     int nexits, max_exits;
     int exit_label[2 * MAX_INSNS + 8];
     uint8_t exit_pk[2 * MAX_INSNS + 8], exit_ps[2 * MAX_INSNS + 8];
+    uint8_t exit_chk[2 * MAX_INSNS + 8];    /* a link exit's checks (CHK_*) */
+    int entry_l[2];                         /* the entries' labels (a jump, in sequence) */
     int pk, psize;                          /* the pending flags (PK_NONE: in memory) */
     jit_fb_t *fb;
     int nfb;
@@ -136,7 +138,7 @@ static void st_rem(void) { abs_access(2, true, S1, addr32(&m68ki_remaining_cycle
 
 /* ---- The shared routines ---- */
 
-enum { ST_PROLOGUE, ST_EXIT, ST_RD8, ST_RD16, ST_RD32, ST_WR8, ST_WR16, ST_WR32, ST_FB, ST_N };
+enum { ST_PROLOGUE, ST_EXIT, ST_BAIL, ST_RD8, ST_RD16, ST_RD32, ST_WR8, ST_WR16, ST_WR32, ST_FB, ST_N };
 static uint32_t s_stub[ST_N];
 enum { PK_NONE, PK_LOGIC, PK_SUB, PK_ADD, PK_Z };   /* pending flags (below) */
 static uint32_t s_mat[5][5];                /* their routines, by kind and size */
@@ -155,6 +157,8 @@ static void jal_abs(int rd, uint32_t to)
 
 /* ---- Exits ---- */
 
+enum { CHK_S1 = 1, CHK_STOP = 2 };         /* a link exit's checks before its jump */
+
 static int new_exit(int kind, uint32_t pc, uint32_t fe)
 {
     if (T.nexits >= T.max_exits) {
@@ -170,8 +174,23 @@ static int new_exit(int kind, uint32_t pc, uint32_t fe)
     e->fe = fe;
     T.exit_pk[k] = (uint8_t)T.pk;
     T.exit_ps[k] = (uint8_t)T.psize;
+    T.exit_chk[k] = 0;
     T.exit_label[k] = rv_new_label(R);
     return T.exit_label[k];
+}
+
+/* The flow on to pc out of the block: an exit the dispatcher links to pc's
+ * block (jit_run()), once there is one. Its jump checks the cycles left
+ * (CHK_S1: unless the instruction's own check just did) and jit_stop
+ * (CHK_STOP: after a write; only a write sets it, and every other write's
+ * instruction looks at it itself) */
+static int new_link(uint32_t pc, uint32_t fe, int chk)
+{
+    int l = new_exit(JIT_EXIT_LINK, pc, fe);
+    if (T.nexits && T.exit_label[T.nexits - 1] == l && chk) {
+        T.exit_chk[T.nexits - 1] = (uint8_t)(chk | (T.wrote ? CHK_STOP : 0));
+    }
+    return l;
 }
 
 /* ---- The fetch timing ---- */
@@ -848,7 +867,7 @@ static void branch_to(uint32_t a, uint32_t fe)
 {
     int i = insn_at(a);
     if (i < 0 || a == T.u->pc) {
-        rv_jl(R, new_exit(JIT_EXIT_PC, a, fe));
+        rv_jl(R, new_link(a, fe, CHK_S1));
         return;
     }
     rv_blez(R, S1, new_exit(JIT_EXIT_PC, a, fe));
@@ -1582,7 +1601,7 @@ static bool t_flow(uint16_t op, bool *flow, bool *done)
             rv_li(R, RS_, ret);
             push32(RS_);
             cycles((int32_t)s_cyc);
-            rv_jl(R, new_exit(JIT_EXIT_PC, target, w ? a + 4 : a + 2));
+            rv_jl(R, new_link(target, w ? a + 4 : a + 2, CHK_S1));
             *flow = true;
             return true;
         }
@@ -1679,7 +1698,7 @@ static bool t_flow(uint16_t op, bool *flow, bool *done)
         }
         if (e.stat) {
             cycles((int32_t)s_cyc);
-            rv_jl(R, new_exit(JIT_EXIT_PC, e.value, next));
+            rv_jl(R, new_link(e.value, next, CHK_S1));
         } else {
             rv_sw(R, RA_, OFF(pc), S0);
             if (!jsr) {
@@ -1981,7 +2000,8 @@ static void fallback(void)
 }
 
 static int s_cut;                           /* (the instruction the code budget ran out at) */
-static jit_exit_t s_exits[2 * MAX_INSNS + 8];   /* (copied after the code, at their number) */
+static jit_exit_t s_exits[2 * MAX_INSNS + 8];   /* (each written after its exit's code) */
+_Static_assert(sizeof(jit_exit_t) == 16, "an exit's record: four words in the code");
 
 /* Internal branch targets: their instructions are reached by jumps too */
 static void find_targets(void)
@@ -2012,11 +2032,34 @@ static bool emit_block(void)
     T.pk = PK_NONE;
     T.psize = 4;
     s_cut = -1;
-    jal_abs(T0, s_stub[ST_PROLOGUE]);
-    rv_li(R, S2, (T.in[0].pc & ~3u) | 1);  /* (the tags' base: charge_longword()) */
     find_targets();
     for (int i = 0; i < T.n; i++) {
         T.in[i].body = rv_new_label(R);     /* (forward branches reach them before they're placed) */
+    }
+    /* the dispatcher's entry: the prologue, then the entry the fetch state
+     * says (the opcode reached in sequence or not: only a second word
+     * differs). A linked exit comes to an entry directly: the tags' base
+     * (s2: charge_longword()) and the first opcode's fetch */
+    uint32_t pc0 = T.in[0].pc;
+    T.u = &T.in[0];
+    jal_abs(T0, s_stub[ST_PROLOGUE]);
+    T.entry_l[1] = -1;
+    if (pc0 & 2) {
+        T.entry_l[1] = rv_new_label(R);
+        rv_lw(R, T0, T.ic_next_off, S0);
+        rv_li(R, T1, pc0);
+        rv_bcc(R, RV_BEQ, T0, T1, T.entry_l[1]);
+    }
+    T.entry_l[0] = rv_new_label(R);
+    rv_place(R, T.entry_l[0]);
+    hook(pc0);
+    rv_li(R, S2, (pc0 & ~3u) | 1);
+    charge_longword(pc0);
+    if (pc0 & 2) {
+        rv_jl(R, T.in[0].body);
+        rv_place(R, T.entry_l[1]);
+        hook(pc0);
+        rv_li(R, S2, (pc0 & ~3u) | 1);
     }
     for (int i = 0; i < T.n; i++) {
         tinsn_t *u = &T.in[i];
@@ -2026,8 +2069,10 @@ static bool emit_block(void)
         if (u->target) {
             materialize();                  /* (jumps here bring them in memory) */
         }
-        hook(u->pc);
-        opcode_charge(u->pc, T.fe_dyn, T.fe);
+        if (i > 0) {
+            hook(u->pc);
+            opcode_charge(u->pc, T.fe_dyn, T.fe);
+        }
         rv_place(R, u->body);
         if (u->target) {
             T.s5 = -1;                      /* (reached from elsewhere too) */
@@ -2093,23 +2138,41 @@ static bool emit_block(void)
     T.u = &T.in[T.n - 1];
     bool last_flow = ends_block(T.u->op);
     if (!last_flow) {
-        int ex = new_exit(JIT_EXIT_PC, T.u->next, T.fe_dyn ? 0 : T.fe);
-        if (T.fe_dyn) {
-            T.exit[T.nexits - 1].kind = JIT_EXIT_FB;  /* (the handler's state stands) */
-        }
+        /* (after a handler its state stands; else on to the next block, the
+         * last instruction's checks done) */
+        int ex = T.fe_dyn ? new_exit(JIT_EXIT_FB, T.u->next, 0) : new_link(T.u->next, T.fe, 0);
         rv_jl(R, ex);
     } else if (T.fe_dyn) {
         /* (a handler ended it: its own exit) */
         rv_jl(R, new_exit(JIT_EXIT_FB, 0, 0));
     }
-    /* the exits: their number in a0, on to the shared exit */
+    /* the exits: the flags to memory, a link's checks and its two words
+     * (nothing until linked), then on to the shared exit with the record's
+     * address in a0 (it follows the jal) */
     for (int k = 0; k < T.nexits; k++) {
         rv_place(R, T.exit_label[k]);
-        rv_addi(R, A0, X0, k);
         if (T.exit_pk[k] != PK_NONE) {
             jal_abs(T0, s_mat[T.exit_pk[k]][T.exit_ps[k]]);
         }
-        jal_abs(X0, s_stub[ST_EXIT]);
+        if (T.exit[k].kind == JIT_EXIT_LINK) {
+            int out = rv_new_label(R);
+            if (T.exit_chk[k] & CHK_S1) {
+                rv_blez(R, S1, out);
+            }
+            if (T.exit_chk[k] & CHK_STOP) {
+                abs_access(4, false, T0, addr32((const void *)&jit_stop));
+                rv_bnez(R, T0, out);
+            }
+            rv_word(R, RV_NOP);
+            rv_word(R, RV_NOP);
+            rv_place(R, out);
+        }
+        jal_abs(A0, s_stub[ST_EXIT]);
+        uint32_t w[4];
+        memcpy(w, &T.exit[k], sizeof(w));
+        for (int i = 0; i < 4; i++) {
+            rv_word(R, w[i]);
+        }
     }
     return !R->full && rv_link(R);
 }
@@ -2296,6 +2359,12 @@ bool jit_rv_stubs(uint8_t **at, uint8_t *end)
     rv_addi(R, SP, SP, 64);
     rv_ret(R);
 
+    /* a dropped block's entry (jit_rv_kill()): out as the link exit that
+     * jumped there (a0 its jal to the exit, the record after it) */
+    s_stub[ST_BAIL] = addr32(R->p);
+    rv_addi(R, A0, A0, 4);
+    jal_abs(X0, s_stub[ST_EXIT]);
+
     /* a handler (a0 = its entry): jit_fallback() with the cycles left in
      * memory */
     s_stub[ST_FB] = addr32(R->p);
@@ -2404,6 +2473,29 @@ bool jit_rv_stubs(uint8_t **at, uint8_t *end)
     return true;
 }
 
+/* A link: the exit's two words a jump to a block's entry, a0 the exit's
+ * jal after them either way (the record behind it: ST_BAIL) */
+void jit_rv_link(uint32_t *site, const uint32_t *to)
+{
+    int32_t off = (int32_t)(addr32(to) - addr32(site + 1));
+    if (off >= -(1 << 20) && off < (1 << 20)) {
+        site[0] = RV_NOP;
+        site[1] = rv_j(off, A0);
+    } else {
+        uint32_t d = addr32(to) - addr32(site);
+        int32_t lo = (int32_t)(d << 20) >> 20;
+        site[0] = ((d - (uint32_t)lo) & 0xFFFFF000u) | (uint32_t)T0 << 7 | 0x17;   /* auipc t0 */
+        site[1] = rv_i(lo, T0, 0, A0, 0x67);                                     /* jalr a0, lo(t0) */
+    }
+}
+
+/* A dropped block's entry: back to the dispatcher (the routines are within
+ * a jal's reach of the whole arena) */
+void jit_rv_kill(uint32_t *entry)
+{
+    *entry = rv_j((int32_t)(s_stub[ST_BAIL] - addr32(entry)), X0);
+}
+
 #ifndef ESP_PLATFORM
 #include <time.h>
 double jit_t_decode, jit_t_emit, jit_t_all;
@@ -2469,21 +2561,16 @@ bool jit_translate(jit_block_t *b, uint32_t pc, uint8_t **at, uint8_t *end)
             max = T.n > 1 ? T.n / 2 : 1;    /* (a branch out of reach: fewer) */
             continue;
         }
-        uint8_t *e = (uint8_t *)(((uintptr_t)R->p + 3) & ~(uintptr_t)3);
-        if (e + (size_t)T.nexits * sizeof(jit_exit_t) > end) {
-            b->n = 0xFFFF;
-            return false;
-        }
-        memcpy(e, s_exits, (size_t)T.nexits * sizeof(jit_exit_t));
         b->pc = pc;
         b->end = T.in[T.n - 1].next;
         b->code = R->start;
-        b->exit = (jit_exit_t *)e;
+        b->entry[0] = R->start + R->label[T.entry_l[0]];
+        b->entry[1] = T.entry_l[1] >= 0 ? R->start + R->label[T.entry_l[1]] : b->entry[0];
         b->fb = T.fb;
         b->n = (uint16_t)T.n;
         b->nexits = (uint16_t)T.nexits;
         b->nfb = (uint16_t)T.nfb;
-        *at = e + (size_t)T.nexits * sizeof(jit_exit_t);
+        *at = (uint8_t *)R->p;
         return true;
     }
     return false;

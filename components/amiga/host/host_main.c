@@ -172,6 +172,25 @@ static void opstat_write(void)
     }
 }
 
+#ifdef AMI_JIT
+/* (AMI_JITSTAT=<frame>) the translated code's counters from here on */
+extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills; } jit_stats;
+static void jitstat_reset(void)
+{
+    extern uint32_t jit_fb_count[65536], jit_interp_count[65536];
+    extern uint64_t rvsim_steps, rvsim_calls;
+    extern double jit_t_decode, jit_t_emit;
+    memset(&jit_stats, 0, sizeof(jit_stats));
+    memset(jit_fb_count, 0, sizeof(jit_fb_count));
+    memset(jit_interp_count, 0, sizeof(jit_interp_count));
+    rvsim_steps = rvsim_calls = 0;
+    extern unsigned long jit_lookups, jit_probes, jit_exits[4][2];
+    jit_lookups = jit_probes = 0;
+    memset(jit_exits, 0, sizeof(jit_exits));
+    jit_t_decode = jit_t_emit = 0;
+}
+#endif
+
 void m68k_host_instruction(unsigned int pc)
 {
     s_insns++;
@@ -827,6 +846,10 @@ int main(int argc, char **argv)
             const char *end = strchr(p, ':');
             p = end ? end + 1 : NULL;
         }
+        /* AMI_JITSTAT=<frame>: the counters from that frame on */
+        if (getenv("AMI_JITSTAT") && s_frame && strtoul(getenv("AMI_JITSTAT"), NULL, 10) == s_frame) {
+            jitstat_reset();
+        }
 #endif
         amiga_run_frame();
         wav_drain();
@@ -900,8 +923,7 @@ int main(int argc, char **argv)
         opstat_write();
     }
     if (getenv("AMI_JITSTAT")) {
-        extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words; } jit_stats;
-        extern size_t jit_arena_size(size_t *routines);
+            extern size_t jit_arena_size(size_t *routines);
         size_t routines, arena = jit_arena_size(&routines);
         printf("jit: %lu translations (%lu instructions, %lu bytes of code), %lu flushes (%lu full), %lu drops, %lu blocks run; "
                "the arena %zu KB (the shared routines %zu bytes)\n",
@@ -934,6 +956,28 @@ int main(int argc, char **argv)
             }
             for (int i = 0; i < n && i < 30; i++) {
                 printf("jit handler %04x %10u\n", ops[i], jit_fb_count[ops[i]]);
+            }
+            /* with AMI_OPSTAT over the same frames: each opcode run, by
+             * its handler from a block, and outside the blocks */
+            extern uint32_t jit_interp_count[65536];
+            extern uint64_t rvsim_steps, rvsim_calls;
+            printf("jit: %llu RISC-V instructions run in the arena, %llu calls out of it\n",
+                   (unsigned long long)rvsim_steps, (unsigned long long)rvsim_calls);
+            extern unsigned long jit_lookups, jit_probes, jit_exits[4][2];
+            printf("jit: %lu lookups, %lu chain steps; %lu links made, %lu blocks' entries killed; exits to the dispatcher "
+                   "(the slice going on / over): a link's %lu / %lu, the slice's or a write's %lu / %lu, computed %lu / %lu, "
+                   "after a handler %lu / %lu\n",
+                   jit_lookups, jit_probes, jit_stats.links, jit_stats.kills, jit_exits[3][0], jit_exits[3][1],
+                   jit_exits[0][0], jit_exits[0][1], jit_exits[1][0], jit_exits[1][1], jit_exits[2][0], jit_exits[2][1]);
+            for (int op = 0; op < 65536; op++) {
+                if (s_opstat[op] || jit_fb_count[op] || jit_interp_count[op]) {
+                    char text[100] = "";
+                    if (s_opstat[op]) {
+                        m68k_disassemble(text, s_opstat_pc[op], M68K_CPU_TYPE_68EC020);
+                    }
+                    printf("jitop %04x %llu %u %u  %s\n", op, (unsigned long long)s_opstat[op], jit_fb_count[op],
+                           jit_interp_count[op], text);
+                }
             }
         }
         extern double jit_t_decode, jit_t_emit;

@@ -24,11 +24,15 @@ instructions a frame; the interpreter managed ~15-20k at full speed. With
 the translating core (`docs/jit-design-2026-11-27.md`) these still fall
 behind in their slowest stretches (median, slowest; `board_pass.py`):
 
-- Deluxe Galaga 97.8% (77.2%: its credits and instructions).
-- Metal Kombat 100% (82.8%: its 3D intro).
-- Leading Lap 99.4% (90.2%).
-- AmiBee 99.9% (94.5%), Gea Lux 100% (95.6%), Virtual Karting 2 99.6%
-  (96.9%).
+- Deluxe Galaga 99.7% (90.4%: its later windows, the chips'; its
+  credits, an idle loop that polls the joystick and keyboard through the
+  OS, 90-92%).
+- Leading Lap 99.6% (94.5%).
+- Gea Lux 100% (96.8%), AmiBee 99.9% (99.5%), Virtual Karting 2 99.9%
+  (99.4%).
+- (Metal Kombat's 82.8% was the board pass's own: a screenshot and a
+  profile in that window, a disk insert in the next slowest; otherwise
+  99.4% or more.)
 
 What: fewer P4 instructions per 68020 instruction.
 
@@ -48,16 +52,28 @@ What: fewer P4 instructions per 68020 instruction.
 - The translating core (`docs/jit-design-2026-11-27.md`): stage 1 (the
   machinery) and stage 3's first batch are done: the commonest families
   native in RISC-V, the rest by their handlers, flags pending, the board
-  running it (see "Done so far"). Next, by what the titles still leave to
-  handlers (the host's `AMI_JITSTAT` lists them): the 68020's long MULU,
-  MULS, DIVU, DIVS and the .W divides, the bit fields (BFEXTU, BFINS:
-  Virtual Karting 2), the shifts by a register and ROXL/ROXR natively,
-  LINK/UNLK; then blocks reaching each other without the dispatcher (5%
-  of core 1 in AmiBee's slowest stretch, and a block's prologue and exit
-  each time), and denser code (Leading Lap still flushes its 2 MB arena
-  25 times in 15000 frames on the host: the exits' table in 8 bytes, the
-  P4's compressed instructions). Handlers are esp32emu's Musashi: the ST
-  and the Macs must be built and checked if it changes.
+  running it (see "Done so far"). Measured in the slow stretches
+  (2026-11-27, the document's "Where the slow stretches spend it"):
+  handlers run 0.2-0.9% of the instructions there (0.3-2.7% of core 1),
+  while a block's entry and exit cost ~93 RISC-V instructions a run
+  (24-61% of the translated code's, 54% in Deluxe Galaga's credits at
+  3.9 instructions a block run) plus the C dispatcher's 8-10% of core 1,
+  and 60-84% of the exits go to a fixed PC whose block exists (linked
+  since: see "Done so far"). Next, in that order:
+  - Computed exits (RTS, JMP (An): 3-24% of the exits, now most of what
+    reaches the dispatcher) through a small cache of targets in the code.
+  - Leading Lap's `jit_written()` (4.1% of core 1 in its profile): its
+    writes land in pages with code; finer pages or a cheaper walk.
+  - Denser code (Leading Lap still flushes its 2 MB arena 25 times in
+    15000 frames on the host: the exits' table in 8 bytes, the P4's
+    compressed instructions).
+  - The handlers left, last: Virtual Karting 2's BFINS, MULS.L and DIVS.L
+    (~350 a frame), Leading Lap's DIVS.W and DIVU.W (~160). Handlers are
+    esp32emu's Musashi: the ST and the Macs must be built and checked if
+    it changes.
+  - Deluxe Galaga's later slow windows (88-89%) run ~6700 instructions a
+    frame: the chips' (its collisions on every line while it reads
+    CLXDAT), not the CPU's; profile them on the board first.
 - PSRAM: with the A1200's 8 MB of fast RAM and the 2 MB arena ~2.2 MB are
   free with two floppies in. A high-density ADF's 1.72 MB buffer fits; an
   extended ADF's 2.5 MB may not in one piece, even with the arena given
@@ -75,6 +91,23 @@ What: fewer P4 instructions per 68020 instruction.
   by the profiles.
 
 Done so far:
+
+- Blocks reaching each other (2026-11-27, `jit.c`, `jit_rv.c`,
+  `docs/jit-design-2026-11-27.md`, "Blocks reaching each other").
+  - An exit whose flow goes on to a fixed PC (a branch out, BSR, JSR or
+    JMP to an address, a block's end) is linked to that PC's block the
+    first time it comes back to the dispatcher: its two words become a
+    jump to the block's entry (one for an opcode reached by a jump, one
+    in sequence), past the prologue and the dispatcher. Each exit's
+    record follows its code (the block returns its address); a dropped
+    block's entries lead back to the dispatcher.
+  - The dispatcher's trips 63-84% fewer in the slow stretches (Deluxe
+    Galaga's credits 9542 → 2292 a frame), the RISC-V instructions run
+    9-24% fewer; on the board the dispatcher 10.3% → 4.8% of core 1 in
+    the credits.
+  - Deluxe Galaga's credits ~81% → 90-92%, Leading Lap's slowest 90.2% →
+    94.5%, AmiBee's 94.5% → 99.5%, Virtual Karting 2's 96.9% → 99.4%,
+    Gea Lux's 95.6% → 96.8%; core 1's medians 1-10 points lower.
 
 - A larger arena (2026-11-27, `jit.c`, `docs/jit-design-2026-11-27.md`,
   "The larger arena").

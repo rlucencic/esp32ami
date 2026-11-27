@@ -296,3 +296,179 @@ translating, 4.0 s → 1.3 s syncing the caches. AROS (its extension ROM
 in place) booted on the A1200, Kickstart 1.3 on an A500 and 3.1 on the
 A1200 started from their working copies; the arena given back once (the
 refused HD disk above) and taken again at 1 MB, the A1200 running on.
+
+## Where the slow stretches spend it (2026-11-27)
+
+Before more native instructions, a measurement: which instructions the
+titles' slowest stretches still leave to handlers, and what else they
+cost. The board's 5 s windows (`board_pass.py`'s `board.json`) and its
+profiles of core 1, and the host over the same frames with the survey's
+input (`AMI_JITSTAT=<frame>` with `AMI_OPSTAT`, with and without the hooks;
+the scripts in `build/measure-2026-11-27/`, not in git).
+
+**Two of the "slowest stretches" were the board pass's own**: Metal
+Kombat's 82.8% (frames 7809-8223) holds a profile and a screenshot, its
+next slowest (83.7%, 5600-5813) a disk insert through the web page (the
+machine paused); every other window is 99.4% or more, core 1 at 81% at
+most. Deluxe Galaga's 77.2% holds a profile too: without one it is 80.7%
+(3133-3337), 20 of its 45 windows under 97.5%. Leading Lap's slowest
+(90.2%) has no mark: 10 of 40 windows under 97.5%.
+
+**The host over those frames** (a frame's instructions; the share run
+by the translated code, by handlers called from blocks and outside any
+block; the blocks run; the RISC-V instructions run in the arena, without
+the hooks, the board's code):
+
+| Stretch | Instructions | Translated | Handlers | Outside | Blocks run | Instructions a block run | RISC-V a frame |
+|---|---|---|---|---|---|---|---|
+| Deluxe Galaga 3133-3938 (credits) | 37218 | 100% | 0.0% | 0.0% | 9542 | 3.9 | 1646k |
+| Deluxe Galaga 10000-11400 | 6749 | 97.9% | 0.4% | 1.7% | 1621 | 4.1 | 247k |
+| Leading Lap 6290-7927 | 25787 | 96.3% | 0.6% | 3.1% | 3155 | 7.9 | 849k |
+| AmiBee 14015-14266 | 10969 | 88.6% | 0.2% | 11.2% | 1485 | 6.6 | 316k |
+| Gea Lux 3850-4089 | 6122 | 87.3% | 0.4% | 12.3% | 640 | 8.4 | 175k |
+| Virtual Karting 2 13084-13341 | 44888 | 99.1% | 0.9% | 0.0% | 3091 | 14.5 | 1185k |
+
+- **Handlers: 0.2-0.9% of the instructions.** Leading Lap's are DIVS.W
+  (126 a frame) and DIVU.W (38), Virtual Karting 2's BFINS (140), MULS.L
+  (110) and DIVS.L (94); the board's profiles agree (Musashi's handlers 0.3% of core 1
+  in Deluxe Galaga's credits, 0.5% in Virtual Karting 2's race, 2.7% in
+  Leading Lap). Translating more families has almost nothing left here.
+- **The blocks' entries and exits**: a fit over the six stretches gives
+  ~20 RISC-V instructions a 68020 instruction and ~93 a block run (the
+  prologue keeps ra and s0-s11 and sets up the cycles and the tags, the
+  exit restores them; the exit's pending flags to memory; the first
+  instruction's fetch decided at run time). That is 24-61% of the
+  arena's instructions (54% in Deluxe Galaga's credits), and the C
+  dispatcher (`jit_run()`, `mem_fetch_state()`) is another 8-10% of
+  core 1 on the board.
+- **Where the exits go** (`AMI_JITSTAT`'s exits):
+
+| Stretch | To a fixed PC with a block there | none there | the slice over | Computed (RTS, JMP (An)...) | After a handler |
+|---|---|---|---|---|---|
+| Deluxe Galaga credits | 76.0% | 0.0% | 6.2% | 17.9% | 0.0% |
+| Deluxe Galaga 10000- | 84.3% | 0.3% | 10.5% | 4.6% | 0.3% |
+| Leading Lap | 63.8% | 1.0% | 15.6% | 19.0% | 0.6% |
+| AmiBee | 67.2% | 2.3% | 15.4% | 14.8% | 0.4% |
+| Gea Lux | 59.4% | 3.9% | 11.3% | 24.4% | 1.0% |
+| Virtual Karting 2 | 81.7% | 0.0% | 13.9% | 2.6% | 1.8% |
+
+  60-84% of the exits could go straight to the next block's body; the
+  dispatcher's lookups take ~1 step of the hash chain each (not the cost).
+- **Deluxe Galaga's credits are its idle loop**, ~120 instructions a
+  pass, ~300 passes a frame: lowlevel.library's ReadJoyPort (through
+  potgo.resource's WritePotgo: INTENA and POTGO written), CIA-A's serial
+  register against 20 key codes, two RAM flags. A real A1200 spins there
+  too; with the calls and the chips' writes `wait.c` can't pass it, so
+  only cheaper translated code helps.
+- **Deluxe Galaga's later slow windows** (88-89% at 10130-11309 on the
+  board) run only ~6700 instructions a frame on the host: the chips', not
+  the CPU's (its collisions are worked out on every line while it reads
+  CLXDAT: `pf_line()`, `collide()`, `bits32()` 10% of core 1 in the
+  credits' profile). No board profile of those frames yet.
+
+**So the next step is the blocks reaching each other**: an exit to a fixed
+PC whose block exists jumps into its body (the slice's cycles and
+`jit_stop` checked, the fetch charged as known, the flags to memory as
+now), the dispatcher's prologue and exit paid once per slice instead of
+once per block; computed exits (RTS) through a small cache of targets
+next. A rough count: ~160 P4 instructions saved an exit chained, ~1.2 M a
+frame in Deluxe Galaga's credits (a fifth of core 1 there), ~0.3 M in
+Leading Lap's slow stretch.
+
+## Blocks reaching each other (2026-11-27)
+
+The step the measurement above pointed to: an exit whose flow goes on to a
+fixed PC jumps straight into that PC's block once both exist, instead of
+returning to the dispatcher (which kept s0-s11 and set up the cycles and
+the tags for every block, then looked the next one up in C).
+
+**The exits** (`jit_rv.c`):
+
+- Each exit ends in `jal a0` to the shared exit with its 16-byte record
+  (PC, PPC, the last word fetched, IR, kind) right after the jal: the
+  block returns the record's address, so the dispatcher knows the exit
+  whichever block of a chain took it (the exits' table after the code is
+  gone).
+- A new kind, `JIT_EXIT_LINK`: a branch out of the block, BSR, JSR or JMP
+  to a fixed address, the end of a block that goes on. Its code: the
+  pending flags to memory, the cycles left checked (unless the last
+  instruction's own check just did, at a block's end), `jit_stop` checked
+  after BSR's and JSR's push (only a write sets it, and every other
+  write's instruction checks it itself), then two words, NOPs until
+  linked, then the jal to the shared exit.
+- The other exits stay as they were: the per-instruction ones (the slice
+  over, `jit_stop`), the computed ones (RTS, JMP (An)) and those after a
+  handler.
+
+**The entries**: a block has an entry for an opcode reached by a jump and
+one for an opcode reached in sequence (they differ only when the first
+opcode is a longword's second word: its fetch is charged or not). Each
+sets the tags' base (s2) and charges the first opcode as known; the
+dispatcher's entry runs the prologue and picks one by the fetch state, as
+its run-time check did before.
+
+**Linking** (`jit.c`): when a link exit comes back to the dispatcher with
+the slice going on, the dispatcher looks the PC up (translating it when
+hot, as before) and makes the exit's two words a jump to that block's
+entry (`jal a0` within 1 MB, else `auipc` + `jalr a0`), the entry chosen
+by the exit's last word fetched; then the caches synced for those 8
+bytes. A chain runs until the slice is over, a computed exit, a handler
+that stops, or a write that set `jit_stop`.
+
+**Dropped blocks**: a block dropped (its code written) gets each entry's
+first word made a jump to a shared routine that leaves as the link exit
+that jumped there (a0 points at that exit's jal, its record after it):
+the dispatcher then links that exit to the new block. A drop while a
+block runs is queued and done when it returns (a drop is always a
+write's, and the write's instruction stops the block before any other
+link is taken); more than 64 at once flush everything.
+
+**Checked on the host**: the collection 96 of 96, the A1200 survey 26 of
+26 and the replays 4 of 4 the same as the interpreter (the board's code,
+`AMI_JITNOHOOK`). `jit_test` runs each case again without a flush (its
+links taken) and, in chip RAM, after the word behind the instruction is
+written over (its block's entries killed); the code after the instruction
+is a `bra.s *`, a loop counting the cycles down, or twenty NOPs looping
+(blocks cut at 16 instructions: links into the next in sequence). 20000
+cases and two runs of 100000, none different (~22000 links and ~66000
+killed entries a 100000). It catches a link to the wrong entry, a dropped
+block not killed and a link without its cycles check (that one hangs); the
+`jit_stop` check after a push into a linked block isn't reached by it.
+
+**The host's count** over the slow stretches (`AMI_JITSTAT`, without the
+hooks):
+
+| Stretch | RISC-V a frame | Dispatcher trips a frame |
+|---|---|---|
+| Deluxe Galaga credits | 1.65 M → 1.34 M (−19%) | 9542 → 2292 |
+| Deluxe Galaga 10000-11400 | 247k → 188k (−24%) | 1622 → 255 |
+| Leading Lap | 849k → 762k (−10%) | 3207 → 1164 |
+| AmiBee | 316k → 273k (−14%) | 1567 → 509 |
+| Gea Lux | 175k → 155k (−11%) | 697 → 288 |
+| Virtual Karting 2 | 1.18 M → 1.07 M (−9%) | 3092 → 565 |
+
+**The Tab5** (`board_pass.py`, median and the slowest window without the
+pass's own screenshots, profiles or disk inserts in it; core 1's median):
+
+| Title | Before | Linked |
+|---|---|---|
+| Deluxe Galaga | 97.8% (80.7%), core 1 96% | 99.7% (90.4%), core 1 89% |
+| Leading Lap | 99.4% (90.2%), core 1 98% | 99.6% (94.5%), core 1 90% |
+| AmiBee | 99.9% (94.5%), core 1 51% | 99.9% (99.5%), core 1 41% |
+| Gea Lux | 100% (95.6%), core 1 32% | 100% (96.8%), core 1 30% |
+| Virtual Karting 2 | 99.6% (96.9%), core 1 90% | 99.9% (99.4%), core 1 85% |
+
+Deluxe Galaga's credits went from ~81% to 90-92% (every window there
+held a screenshot or profile this time); its slowest windows now are the
+later ones the chips limit (90.4%, 88.5-89.5% before), windows under
+97.5% 20 of 45 → 10 of 42. Leading Lap's 10 of 40 → 5 of 41. The board's
+profile in Deluxe Galaga's credits: the dispatcher (`jit_run()`,
+`mem_fetch_state()`) 10.3% of core 1 → 4.8%. Over the five titles'
+pass: 103760 links, 1485 kills, 3.2 s syncing the caches in all (links
+and kills included) of ~26 minutes.
+
+**Next**: computed exits (RTS, JMP (An): 3-24% of the exits) through a
+small cache of targets in the code; Deluxe Galaga's later windows are the
+chips' (collisions on every line while it reads CLXDAT); Leading Lap's
+`jit_written()` (4.1% of core 1 in its profile: writes into pages with
+code).

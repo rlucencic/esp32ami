@@ -20,6 +20,7 @@ __attribute__((constructor)) static void low_heap(void)
 
 static uint32_t s_lo, s_hi;                 /* the code arena */
 static uint32_t s_stack[4096];
+uint64_t rvsim_steps, rvsim_calls;          /* (AMI_JITSTAT: instructions run in the arena, host calls) */
 
 void rvsim_arena(const void *base, size_t size)
 {
@@ -55,6 +56,7 @@ uint32_t rvsim_call(uint32_t entry)
                 return x[10];
             }
             /* a host function, then back to the return address */
+            rvsim_calls++;
             uint32_t r = (uint32_t)((host_fn)(uintptr_t)pc)(x[10], x[11], x[12], x[13]);
             static const int clobber[] = { 5, 6, 7, 11, 12, 13, 14, 15, 16, 17, 28, 29, 30, 31 };
             for (unsigned i = 0; i < sizeof(clobber) / sizeof(clobber[0]); i++) {
@@ -64,6 +66,7 @@ uint32_t rvsim_call(uint32_t entry)
             pc = x[1];
             continue;
         }
+        rvsim_steps++;
         uint32_t w = rd32(pc), op = w & 0x7F, rd = (w >> 7) & 31, f3 = (w >> 12) & 7;
         uint32_t rs1 = (w >> 15) & 31, rs2 = (w >> 20) & 31, f7 = w >> 25;
         uint32_t a = x[rs1], b = x[rs2];

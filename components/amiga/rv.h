@@ -61,6 +61,8 @@ static inline uint32_t rv_b(int32_t imm, int rs2, int rs1, uint32_t f3)
            f3 << 12 | ((u >> 1) & 0xF) << 8 | ((u >> 11) & 1) << 7 | 0x63;
 }
 
+#define RV_NOP  0x00000013u                /* addi x0, x0, 0 */
+
 static inline uint32_t rv_j(int32_t imm, int rd)
 {
     uint32_t u = (uint32_t)imm;

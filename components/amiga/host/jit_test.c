@@ -5,7 +5,11 @@
  * (its fetch waits) and in the ROM (none). Each case runs once through
  * mem_interp_one() and once through jit_run() from the same state; the
  * registers, SR, PC, PPC, IR, the cycles left, the fetch state, the cache
- * tags and chip RAM must come out the same. A stub ROM, no Kickstart.
+ * tags and chip RAM must come out the same. Then the translated code
+ * again without a flush (the exits the first run linked jump from block to
+ * block now) and, in chip RAM, after the word behind the instruction was
+ * written over (its block dropped: a link to it goes back to the
+ * dispatcher, which links the new one). A stub ROM, no Kickstart.
  *   jit_test [cases] [seed]
  */
 #include <stdio.h>
@@ -367,10 +371,18 @@ static void apply(const setup_t *u)
     memcpy(s_env.ic_tag, u->tag, sizeof(u->tag));
 }
 
-static void place(uint32_t at, const insn_t *i)
+/* the instruction, then bra.s *, a few (branches past the first); or a
+ * loop first that runs until the cycles are gone, so the cycles left show
+ * every fetch's charge (a linked entry's): 1 a nop and a bra.s to it, 2
+ * twenty nops and a bra.s to the first (blocks cut at 16 instructions:
+ * links into the next in sequence) */
+static void place(uint32_t at, const insn_t *i, int loop)
 {
-    for (int k = 0; k < i->n + 16; k++) {
-        uint16_t w = k < i->n ? i->w[k] : 0x60FE;  /* then bra.s *, a few (branches past the first) */
+    int nops = loop == 1 ? 1 : loop == 2 ? 20 : 0;
+    for (int k = 0; k < i->n + 40; k++) {
+        int f = k - i->n;                           /* (the filler's word) */
+        uint16_t w = k < i->n ? i->w[k] : f < nops ? 0x4E71 : nops && f == nops ? (uint16_t)(0x6000 | (uint8_t)(-2 * nops - 2))
+                                                                                 : 0x60FE;
         uint32_t a = at + 2 * (uint32_t)k;
         if (at >= 0xF80000) {
             *(uint16_t *)(ami.rom + ((a - 0xF80000) & (ami.rom_size - 1))) = w;
@@ -403,6 +415,68 @@ static void run_interp(void)
     }
 }
 
+/* chip RAM back as it was before the run, the translated code told where
+ * the run changed it (its blocks there were made from the run's bytes) */
+static void restore(void)
+{
+    for (uint32_t k = 0; k < CHIP; k++) {
+        if (chip[k] != snap[k]) {
+            uint32_t lo = k;
+            while (k < CHIP && chip[k] != snap[k]) {
+                k++;
+            }
+            jit_written(lo, k);
+        }
+    }
+    memcpy(chip, snap, CHIP);
+}
+
+static bool same(const char *what, const insn_t *i, const setup_t *u, const state_t *a, const state_t *b)
+{
+    bool ok = true;
+    char where[64];
+    for (int r = 0; r < 16; r++) {
+        if (a->r[r] != b->r[r]) {
+            if (ok) {
+                snprintf(where, sizeof(where), "%s: registers", what);
+                show(where, i, u);
+            }
+            fprintf(stderr, "  %c%d: interp %08x jit %08x (was %08x)\n", r < 8 ? 'D' : 'A', r & 7, a->r[r], b->r[r], u->r[r]);
+            ok = false;
+        }
+    }
+    if (a->sr != b->sr || a->pc != b->pc || a->ppc != b->ppc || a->ir != b->ir || a->rem != b->rem || a->ic_next != b->ic_next) {
+        if (ok) {
+            snprintf(where, sizeof(where), "%s: state", what);
+            show(where, i, u);
+        }
+        fprintf(stderr, "  interp: sr %04x pc %06x ppc %06x ir %04x rem %d next %06x\n", a->sr, a->pc, a->ppc, a->ir, a->rem, a->ic_next);
+        fprintf(stderr, "  jit:    sr %04x pc %06x ppc %06x ir %04x rem %d next %06x\n", b->sr, b->pc, b->ppc, b->ir, b->rem, b->ic_next);
+        ok = false;
+    }
+    if (memcmp(a->tag, b->tag, sizeof(a->tag))) {
+        if (ok) {
+            snprintf(where, sizeof(where), "%s: cache tags", what);
+            show(where, i, u);
+        }
+        ok = false;
+    }
+    if (memcmp(after_interp, chip, CHIP)) {
+        if (ok) {
+            snprintf(where, sizeof(where), "%s: chip RAM", what);
+            show(where, i, u);
+        }
+        for (uint32_t k = 0; k < CHIP; k += 2) {
+            if (memcmp(after_interp + k, chip + k, 2)) {
+                fprintf(stderr, "  at $%06x: interp %04x jit %04x\n", k, *(uint16_t *)(after_interp + k), *(uint16_t *)(chip + k));
+                break;
+            }
+        }
+        ok = false;
+    }
+    return ok;
+}
+
 static bool one_case(void)
 {
     insn_t i;
@@ -433,7 +507,7 @@ static bool one_case(void)
     for (int k = 0; k < 64; k++) {
         u.tag[k] = rn(4) ? 0 : (((u.pc & ~0xFFu) | (uint32_t)k * 4) | 1);
     }
-    place(u.pc, &i);
+    place(u.pc, &i, (int)rn(3));
 
     memcpy(snap, chip, CHIP);
     apply(&u);
@@ -449,34 +523,31 @@ static bool one_case(void)
     capture(&b);
     cases_run++;
     natives += jit_native_at(u.pc);
+    bool ok = same("translated", &i, &u, &a, &b);
 
-    bool ok = true;
-    for (int r = 0; r < 16; r++) {
-        if (a.r[r] != b.r[r]) {
-            if (ok) show("registers", &i, &u);
-            fprintf(stderr, "  %c%d: interp %08x jit %08x (was %08x)\n", r < 8 ? 'D' : 'A', r & 7, a.r[r], b.r[r], u.r[r]);
-            ok = false;
-        }
+    /* again: the links made */
+    if (ok) {
+        restore();
+        apply(&u);
+        jit_run();
+        capture(&b);
+        ok = same("linked", &i, &u, &a, &b);
     }
-    if (a.sr != b.sr || a.pc != b.pc || a.ppc != b.ppc || a.ir != b.ir || a.rem != b.rem || a.ic_next != b.ic_next) {
-        if (ok) show("state", &i, &u);
-        fprintf(stderr, "  interp: sr %04x pc %06x ppc %06x ir %04x rem %d next %06x\n", a.sr, a.pc, a.ppc, a.ir, a.rem, a.ic_next);
-        fprintf(stderr, "  jit:    sr %04x pc %06x ppc %06x ir %04x rem %d next %06x\n", b.sr, b.pc, b.ppc, b.ir, b.rem, b.ic_next);
-        ok = false;
-    }
-    if (memcmp(a.tag, b.tag, sizeof(a.tag))) {
-        if (ok) show("cache tags", &i, &u);
-        ok = false;
-    }
-    if (memcmp(after_interp, chip, CHIP)) {
-        if (ok) show("chip RAM", &i, &u);
-        for (uint32_t k = 0; k < CHIP; k += 2) {
-            if (memcmp(after_interp + k, chip + k, 2)) {
-                fprintf(stderr, "  at $%06x: interp %04x jit %04x\n", k, *(uint16_t *)(after_interp + k), *(uint16_t *)(chip + k));
-                break;
-            }
-        }
-        ok = false;
+    /* the word after it (its first BRA.S *) written over by the CPU: the
+     * block there dropped, its entries killed */
+    if (ok && u.pc < 0xF80000) {
+        restore();
+        m68k_write_memory_16(u.pc + 2 * (uint32_t)i.n, (uint16_t)(0x7E00 | rn(256)));   /* moveq #n, D7 */
+        memcpy(snap, chip, CHIP);
+        apply(&u);
+        run_interp();
+        capture(&a);
+        memcpy(after_interp, chip, CHIP);
+        restore();
+        apply(&u);
+        jit_run();
+        capture(&b);
+        ok = same("killed", &i, &u, &a, &b);
     }
     if (!ok) {
         failures++;
@@ -509,6 +580,8 @@ int main(int argc, char **argv)
     for (int k = 0; k < cases && failures < 20; k++) {
         one_case();
     }
-    printf("jit_test: %d cases, %d translated, %d failed\n", cases_run, natives, failures);
+    extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills; } jit_stats;
+    printf("jit_test: %d cases, %d translated, %lu links, %lu entries killed, %d failed\n", cases_run, natives,
+           jit_stats.links, jit_stats.kills, failures);
     return failures != 0;
 }

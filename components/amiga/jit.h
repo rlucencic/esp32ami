@@ -29,11 +29,16 @@ typedef struct {
     uint8_t wait;                       /* its bank's (s_m.wait): the fetch's */
 } jit_fb_t;
 
-/* A way out of a block: the state the interpreter would have there */
+/* A way out of a block: the state the interpreter would have there. Each
+ * exit ends in a jal a0 to the shared exit with its record after it: the
+ * block returns the record's address. */
 enum {
-    JIT_EXIT_PC,                        /* PC = pc (and the rest below) */
+    JIT_EXIT_PC,                        /* PC = pc (and the rest below): the slice over, or jit_stop */
     JIT_EXIT_DYN,                       /* the code set the PC; the rest below */
     JIT_EXIT_FB,                        /* after a handler: as it left everything */
+    JIT_EXIT_LINK,                      /* as JIT_EXIT_PC, the flow going on to pc: the two
+                                         * words 12 bytes before the record a jump to pc's
+                                         * block once linked (jit_rv_link()) */
 };
 typedef struct {
     uint32_t pc;                        /* (JIT_EXIT_PC) */
@@ -48,8 +53,9 @@ typedef struct jit_block {
     struct jit_block *hash_next;
     struct jit_block *page_next[2];     /* on the lists of its first and last page */
     uint32_t page[2];
-    const uint32_t *code;
-    jit_exit_t *exit;
+    const uint32_t *code;               /* the dispatcher's entry */
+    uint32_t *entry[2];                 /* a linked exit's: reached by a jump, in sequence
+                                         * (the same unless pc & 2: the opcode's fetch) */
     jit_fb_t *fb;
     uint16_t n, nexits, nfb;            /* instructions, exits, handlers */
     bool dead;
@@ -103,12 +109,18 @@ void mem_interp_one(void);
 const uint16_t *mem_code_ptr(uint32_t a, uint8_t *wait);
 
 /* jit_rv.c: the block at pc translated into code at *at (up to end; moved
- * on past it), its exits and handlers' entries from *meta. False: none (no
- * room: flush and try again; or nothing to translate) */
+ * on past it), its handlers' entries first, its exits' records in the
+ * code. False: none (no room: flush and try again; or nothing to
+ * translate) */
 bool jit_translate(jit_block_t *b, uint32_t pc, uint8_t **at, uint8_t *end);
 /* the routines the blocks share (prologue, exit, memory accesses), once in
  * the arena's middle */
 bool jit_rv_stubs(uint8_t **at, uint8_t *end);
+/* a link exit's two words (its record less 12 bytes) made a jump to a
+ * block's entry; a dropped block's entry made a jump back to the
+ * dispatcher, as the exit that came there (the caller syncs the caches) */
+void jit_rv_link(uint32_t *site, const uint32_t *to);
+void jit_rv_kill(uint32_t *entry);
 
 #ifndef ESP_PLATFORM
 /* host/rvsim.c */
