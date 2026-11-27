@@ -291,6 +291,12 @@ extern void (*amiga_disk_hook)(uint16_t dsklen, uint16_t sync, uint16_t adkcon, 
                                uint32_t pt);
 extern void (*amiga_disk_end_hook)(uint32_t pt, uint16_t words, bool write);
 extern void (*amiga_drive_hook)(uint8_t old, uint8_t prb);
+/* Debugging: where the head of the drive Paula reads is, in 68000 clocks
+ * from its turn's start (224 a word), -1 for none */
+int amiga_floppy_head(void);
+/* Testing: another sequence of the drives' speeds from turn to turn (0: the
+ * usual one), as another drive would have */
+void amiga_floppy_seed(uint32_t seed);
 
 /* The Kickstart's version (e.g. 34.5) from its header; false if the image
  * isn't one (size, checksum)

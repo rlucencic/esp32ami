@@ -1409,6 +1409,39 @@ uploaded each title's disk 2 as an ADF instead).
   and Sword reached play with the survey's presses (not the Shell).
 - All esp32emu projects build (18 for the Tab5, 14 for the MaTouch).
 
+### Hyperion's reads and the drive's speed, 2026-11-26
+
+TODO item 21. Hyperion's loader failed in most runs (14 of 17 with a key
+tapped at frames 200-215) and flipped after any timing change.
+
+- **Why**: each read's DSKLEN comes a fixed time after the last read,
+  which began at a sync, so the reads land at a few fixed offsets from
+  the sectors. One, after a side change across the index, fell 1-2 words
+  after a sector's first sync word, inside the second one, where Paula
+  syncs on the second (WinUAE and vAmiga alike): the buffer begins at a
+  header, the decoder loses the sector, and with no retry the loader
+  seeks track $FFFF forever. Our 68000's timing decides it to a word.
+- **The change**: the drive's speed varies from turn to turn (`floppy.c`,
+  `WOBBLE`: ±0.89%, real drives ±1.5%), drawn from the turn's number, a
+  reset rolling on. Hyperion's load fails ~9% of the time instead of ~46%
+  (18 of 200 speed sequences, `AMI_DISKSEED`; the Tab5 3 of 23 boots):
+  rarer, not gone (±1.5% is worse, 35 of 200). Taps and resets from
+  power-on reuse the same speeds at the same reads and first suggested
+  it was gone (17 of 17): sample with other sequences.
+- **A DMA with no drive** giving words runs on at the word rate (a read
+  gets empty words): it waited forever when Cricket Captain's code
+  deselected every drive just before a read. That race itself still hangs
+  Cricket Captain with the collection's input at the usual sequence (0 of
+  40 others): the price of a drive that varies, as on a real Amiga.
+- The collection: 58 of 96 the same, the 38 others the same scenes at
+  other moments, but Hyperion (loads now) and Cricket Captain (above).
+  The replays pass. 9 Fingers not checked (not here). The Tab5: Hyperion
+  to its credits in 20 of 23 boots, speed 100%.
+- Debugging: `AMI_DISKLOG` gives the head's position and the PC at each
+  DSKLEN, `AMI_DISKDUMP` each read's buffer.
+
+[Hyperion's reads and the drive's speed](hyperion-2026-11-26.md)
+
 ### Voyage follow-up, 2026-10-24
 
 The host comparisons exposed two further issues. Hyperion's DMA could

@@ -376,14 +376,24 @@ images.
   board: every second once the disk was still for 2 s). The disk turns at
   300 rpm: 6334 MFM words a track, 224 clocks a word, moved on at each
   line's end, and up to a DMA start/stop or enable change
-  (`floppy_sync()`, rebased with each frame). The track under the head is
+  (`floppy_sync()`, rebased with each frame). Not steadily (since
+  2026-11-26, TODO 21): each turn's word takes 224 clocks +- up to
+  `WOBBLE` sixteenths of a clock (32: 2 clocks, +-0.89%; real drives
+  +-1.5%), drawn from the turn's number (the drive's turns since
+  power-on: a reset rolls on, so a retry gets other speeds;
+  `amiga_floppy_seed()`, the host's `AMI_DISKSEED`, another drive's
+  sequence). The track under the head is
   made from the image in
   AmigaDOS's format (11 sectors: sync words, header, checksums, odd/even
   MFM; the gap first, after the index, then sector 0, as WinUAE has it);
   Paula's disk DMA (DSKLEN written twice, WORDSYNC waits for DSKSYNC
   and doesn't transfer it, DSKBLK at the end, DSKSYN as the sync word
   passes, DSKBYTR roughly) reads it or writes over it, and a written track
-  is decoded back into the image's sectors when the write ends. Paula
+  is decoded back into the image's sectors when the write ends. With no
+  drive giving her words (none selected, or the motor off, or no disk) her
+  DMA runs on all the same at the word rate: a read gets empty words, a
+  write goes nowhere (it used to wait forever: a race in Cricket Captain
+  started a read with no drive selected). Paula
   syncs bit by bit (a shift register over the stream: syncs at any bit
   offset, as Son Shu Shi's loader needs). Speed per disk: 8x for an ADF
   with an AmigaDOS filesystem (`dos_filesystem()`: the root block's type
@@ -803,17 +813,29 @@ the top two bits do nothing, Aerial Racers' race sets them),
   those too corrupted 9 Fingers' streaming pictures. The generated-disk
   host test checks mid-line DMA start, repeated/backwards sync and frame
   rebasing; it fails with the start synchronization removed.
-- **Hyperion's load is a coin toss on clock-level timing**: its loader
-  writes DSKLEN at a phase of the disk that drifts from read to read;
-  when one of its ~130 reads lands within a sector's second sync word
-  (32 µs; a real Paula has the window too), the DMA syncs on the second
-  `$4489`, sector 0 has no sync in its buffer, and it seeks without end
-  (the drive lines toggling $70/$71 thousands of times). TODO 18's build
-  fails with a key tapped at frame 208 and TODO 19's passes; the other
-  way round without the key. A collection difference in Hyperion after a
-  timing change isn't the change by itself: decode its buffer
-  (`AMI_DUMP=1000:13312:...` after the read) and try a perturbation
-  (TODO 21).
+- **A drive turning at exactly 300 rpm locks a loader's reads to the
+  disk's phase**: Hyperion's loader writes DSKLEN a fixed time after the
+  last read's end (decoding, 15 ms on a CIA timer), and that read began
+  at a sync. So its reads land at a few fixed offsets from the sectors.
+  One, after a side change across the index, fell 1-2 words after a
+  sector's first sync word: inside the second one (32 µs; Paula, WinUAE
+  and vAmiga alike sync on the second there), the buffer then begins at
+  sector 0's header, and the decoder, which looks for `$4489`, lost the
+  sector and sought track $FFFF forever. Our 68000's timing decides it to
+  a word, and isn't that exact: 14 of 17 runs with a key tapped at frames
+  200-215 failed. A real drive's speed varies, which spreads such offsets
+  over several words; the drive's turns now vary too (`WOBBLE`, +-0.89%):
+  Hyperion's load fails ~9% of the time instead of ~46% (18 of 200
+  speed sequences; the Tab5 3 of 23 boots), not never (+-1.5% is worse:
+  more reads come within reach). The price: any title can meet a rare
+  race now (Cricket Captain hangs in its loader with the collection's
+  input at the usual sequence). To measure such odds, vary
+  `AMI_DISKSEED`: the speed comes from the turn's number, so taps, insert
+  frames and resets from power-on reuse the same speeds at the reads
+  that matter (they gave 17 of 17 and 39 of 40 at first).
+  `AMI_DISKLOG`'s head position and PC at each DSKLEN, and
+  `AMI_DISKDUMP`'s buffers, show where reads land
+  (`docs/hyperion-2026-11-26.md`).
 
 - **Uploads failed while the A1200 ran** (TODO 15, fixed 2026-11-24 in
   esp32emu): the Amiga leaves ~3.4 MB of PSRAM free, under the web
@@ -913,9 +935,11 @@ the top two bits do nothing, Aerial Racers' race sets them),
   `AMI_WATCH` stops: code a game loaded), `AMI_PCLOG=<file>:<frame>
   [:<lo>-<hi>]` (each instruction's PC and frame, `tools/pcdiff.py`),
   `AMI_PCCOVER=<file>` (each address executed, in the order first run),
-  `AMI_DISKLOG` (each disk DMA's start, its end with a checksum of its
-  words, each change of CIA-B's drive lines; with the exceptions' lines,
-  the instruction count after `#`),
+  `AMI_DISKLOG` (each disk DMA's start with the head's position and the
+  PC, its end with a checksum of its words, each change of CIA-B's drive
+  lines; with the exceptions' lines, the instruction count after `#`),
+  `AMI_DISKDUMP=<folder>` (each read's words, `read-<n>.bin`),
+  `AMI_DISKSEED=<n>` (another sequence of the drives' speeds),
   `AMI_EXC` (exceptions; `all` with interrupts),
   `AMI_EXCSTOP=<vector>[:<frame>]` (stop at that exception, as `AMI_STOP`),
   `AMI_DEBUG=<port>` (the debugger, real time), `AMI_DF0`/`AMI_DF1` (ADF
@@ -1224,8 +1248,8 @@ the top two bits do nothing, Aerial Racers' race sets them),
 ## Open items
 
 - [TODO.md](TODO.md) tracks the next Tab5 and host checks and the work
-  waiting on hardware, media or a reproducible case. Items 1–8, 10–18
-  and 20 are complete.
+  waiting on hardware, media or a reproducible case. Items 1–8, 10–18,
+  20 and 21 are complete.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
   (`docs/images`, 2026-10-21): `workbench31.png` (A600, 3.1 from an HDF,
@@ -1291,7 +1315,11 @@ the top two bits do nothing, Aerial Racers' race sets them),
   `docs/architecture.md`). ECO wants 1.2. DarkSide and Primal Rage want 2.04 with 1 MB.
   Hardwired wants disk 2 in DF0 and a right click. The Quartex cracks of Navy Seals and
   Crime Does Not Pay load through a trace-vector decoder for ~160 s ("the
-  game takes a while to load"; not timed on a real one).
+  game takes a while to load"; not timed on a real one). Hyperion's load
+  fails ~9% of the time since the drive's speed varies (~46% before,
+  2026-11-26; a reset retries); Cricket Captain then hangs on its loader
+  screen with the collection's input (a race in its code that 40 other
+  speed sequences didn't meet).
 - **Clock** (the clock audit, 2026-10-21: `../esp32emu/CLAUDE.md`, To do):
   the saved offset would keep a clock set while the board's time was
   wrong (unlikely with the Tab5's RTC). (HOLD's release: fixed.)

@@ -12,7 +12,7 @@ floppy follow-up; 12, Workbench's display changes on the Tab5; 13, DMS
 through the live web page; 14, title replays that tell floppy from memory
 failures; 15, uploads while the A1200 runs; 16, faster Tab5 downloads;
 17, an A1200 load survey on the Tab5; 18, wait loops without the CPU; 20,
-an RP9's disks in two drives).
+an RP9's disks in two drives; 21, Hyperion's reads and the drive's speed).
 
 ## Next work
 
@@ -136,35 +136,6 @@ Checked:
 
 Size: a project, each step measured on its own.
 
-## 21. Hyperion's reads and the second sync word
-
-Why: Hyperion's loader seeks without end when one of its ~130 track reads
-starts at a sector's header. That happens when DSKLEN is written within the
-sector's second sync word (32 µs): the DMA then syncs on the second
-`$4489`, sector 0 has no sync in the 6656-word buffer, and its copy at the
-end is cut off. The loader starts each read at a phase that drifts
-deterministically, so whether it hits the window is a coin toss on
-clock-level timing: item 18's build fails with a key tapped at frame 208
-and item 19's passes, and the other way round without it
-(`docs/faster-020-2026-11-25.md`). The collection flips on it after any
-timing change.
-
-What: find out what a real Amiga does differently. A real Paula has the
-same window, so look at the drive instead:
-
-- its speed varies (300 rpm within about 1%), which makes each read's
-  phase random rather than locked;
-- WinUAE's DSKLEN and sync handling, compared against ours.
-
-Model the speed variation deterministically (per turn, from the turn's
-number) if that is what makes the window rare.
-
-Checked: Hyperion through its load with key taps at frames 200-208 on the
-host, every one to its title; the collection; the replays; 9 Fingers and
-Lethal Xcess (the other loaders sensitive to the disk's phase).
-
-Size: a session.
-
 ## 9. Waiting on something
 
 Nothing here can be done as things are; each says what it waits for.
@@ -177,6 +148,10 @@ Nothing here can be done as things are; each says what it waits for.
   instruction (a bus-cycle 68000 core, not Musashi): a project of its
   own. Then the 2 clocks a 68000 on an odd colour clock waits could come
   back (`mem.c`: they made two loaders fail with the back-to-back cycles).
+  It would also place Hyperion's reads where a real A500 does: they land
+  within a word or two of a sector's second sync word, and its load still
+  fails ~9% of the time with the drive's speed varying (item 21,
+  `docs/hyperion-2026-11-26.md`).
 - Sprites on lines inside the window without bitplanes: Denise (WinUAE)
   wants a BPL1DAT write on a line before showing them; here they show.
   Needs a game or a test on a real Amiga that shows the difference.

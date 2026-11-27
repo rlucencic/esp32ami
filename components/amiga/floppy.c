@@ -48,6 +48,17 @@
 #define EXT_MAX         (2560 * 1024)
 #define EXT_TRACKS      168
 #define WORD_CYCLES     224             /* 16 bit cells of 2 us, in 68000 clocks */
+/* A real drive's speed isn't steady: each turn of ours takes its own, the
+ * word time WORD_CYCLES +- WOBBLE sixteenths of a clock (+-0.89%; drives
+ * are specified to +-1.5%), drawn from the turn's number. Without it a
+ * loader's reads land at the same phase of the disk every time: Hyperion's
+ * fell 1-2 words after a sector's first sync word, where the DMA syncs on
+ * the second and its decoder loses the sector: ~46% of its loads failed,
+ * ~9% now (more wobble is worse: 54, +-1.5%, ~17.5%; TODO 21,
+ * docs/hyperion-2026-11-26.md). -DWOBBLE=n in a host build to try others */
+#ifndef WOBBLE
+#define WOBBLE          32
+#endif
 #define SECTOR_WORDS    544
 #define SYNC            0x4489
 #define SPINUP_CYCLES   (7093790 * 2 / 5)   /* /RDY 400 ms after the motor starts */
@@ -81,13 +92,16 @@ typedef struct {
     bool any_dirty;
 
     int pos;                        /* the word under the head */
-    int frac;                       /* clocks into it */
+    int frac;                       /* 1/16 clocks into it */
+    int word_time;                  /* this turn's word, in 1/16 clocks (0: not yet) */
+    uint32_t turn;                  /* turns since power-on (a reset rolls on) */
     uint32_t reads, writes;
 } drive_t;
 
 static drive_t s_drive[DRIVES];
 static int s_side;
 static int s_at;                    /* the disk's time, in clocks into this frame */
+static uint32_t s_seed;             /* amiga_floppy_seed(): another drive (testing) */
 
 void (*amiga_disk_hook)(uint16_t dsklen, uint16_t sync, uint16_t adkcon, int cylinder, int side, uint32_t pt);
 void (*amiga_disk_end_hook)(uint32_t pt, uint16_t words, bool write);
@@ -103,6 +117,8 @@ static struct {
     uint16_t shift;                 /* the last 16 bits off the disk */
     int bits;                       /* of the word being put together */
     int drive;                      /* the drive being written */
+    bool to_drive;                  /* a drive gave or took this DMA's words (else none was there) */
+    int idle;                       /* 1/16 clocks into a word while no drive gives Paula any */
     bool wordequal;
     bool byte_ready;
 } dk;
@@ -399,6 +415,9 @@ void floppy_reset(void)
         d->id_bit = 0;
         d->pos = 0;
         d->frac = 0;
+        if (d->word_time == 0) {
+            d->word_time = WORD_CYCLES * 16;
+        }
     }
     s_side = 0;
     memset(&dk, 0, sizeof(dk));
@@ -504,7 +523,7 @@ static bool dma_on(void)
 
 static void end_dma(void)
 {
-    if (dk.writing) {
+    if (dk.writing && dk.to_drive) {
         drive_t *d = &s_drive[dk.drive];
         if (d->data && !d->ext && d->mfm_track >= 0 && d->mfm_track < CYLINDERS * 2 && !d->protect &&
             d->track_words == turn_words(d)) {
@@ -526,7 +545,9 @@ static void deliver(uint16_t w)
     chip_write16(dk.pt, w);
     dk.pt += 2;
     if (--dk.left == 0) {
-        s_drive[dk.drive].reads++;
+        if (dk.to_drive) {
+            s_drive[dk.drive].reads++;
+        }
         end_dma();
     }
 }
@@ -537,20 +558,37 @@ static void deliver(uint16_t w)
  * the transfer (not itself transferred) and puts the words in step again
  * wherever it comes. Without, the words go as they are.
  */
+static void paula_word(drive_t *d, uint16_t w);
+
 static void word_passes(drive_t *d)
 {
     int track = d->cylinder * 2 + s_side;
     if (d->mfm_track != track) {
         load_track(d, track);
     }
-    uint16_t w = d->mfm[d->pos];
+    paula_word(d, d->mfm[d->pos]);
+}
+
+/* Paula's side of a word: w off drive d's head, or with no drive giving
+ * any (d NULL) an empty one: her DMA runs on her own bit clock all the
+ * same, a read gets the empty words and a write goes nowhere (Kickstart
+ * 1.x's trackdisk started a read with DF1: empty and no drive selected:
+ * waiting for a word that never came, it hung) */
+static void paula_word(drive_t *d, uint16_t w)
+{
     bool dma = dk.active && dma_on();
     dk.byte_ready = true;
     dk.wordequal = false;
-    if (dma && dk.writing) {
-        d->mfm[d->pos] = chip_read16(dk.pt);
-        dk.pt += 2;
+    if (d && dma) {
+        dk.to_drive = true;
         dk.drive = (int)(d - s_drive);
+    }
+    if (dma && dk.writing) {
+        uint16_t v = chip_read16(dk.pt);
+        if (d) {
+            d->mfm[d->pos] = v;
+        }
+        dk.pt += 2;
         if (--dk.left == 0) {
             end_dma();
         }
@@ -611,20 +649,44 @@ void floppy_sync(int at)
         if (!d->motor || !d->data) {
             continue;
         }
-        d->frac += d->fast ? cycles * 8 : cycles;
-        while (d->frac >= WORD_CYCLES) {
-            d->frac -= WORD_CYCLES;
+        d->frac += (d->fast ? cycles * 8 : cycles) * 16;
+        while (d->frac >= d->word_time) {
+            d->frac -= d->word_time;
             if (d == r) {
                 word_passes(d);
             }
             if (++d->pos >= d->track_words) {
                 d->pos = 0;
+                d->turn++;
+                uint32_t h = (d->turn + s_seed + (uint32_t)i * 0x9E3779B9u) * 2654435761u;
+                h ^= h >> 15;
+                h *= 2246822519u;
+                h ^= h >> 13;
+                d->word_time = WORD_CYCLES * 16 + (int)(h % (2 * WOBBLE + 1)) - WOBBLE;
                 if (d->selected) {
                     cia_flag(&cia[1]);      /* the index pulse */
                 }
             }
         }
     }
+    if (!r && dk.active && dma_on()) {
+        dk.idle += cycles * 16;
+        while (dk.idle >= WORD_CYCLES * 16 && dk.active) {
+            dk.idle -= WORD_CYCLES * 16;
+            paula_word(NULL, 0);
+        }
+    }
+}
+
+void amiga_floppy_seed(uint32_t seed)
+{
+    s_seed = seed * 7919u;
+}
+
+int amiga_floppy_head(void)
+{
+    const drive_t *d = reading();
+    return d ? d->pos * WORD_CYCLES + d->frac / 16 : -1;
 }
 
 void floppy_rebase(int frame_cycles)
@@ -656,6 +718,8 @@ void floppy_write(uint32_t reg, uint16_t v, int at)
             dk.writing = (v & 0x4000) != 0;
             dk.left = v & 0x3FFF;
             dk.synced = false;
+            dk.to_drive = false;
+            dk.idle = 0;
             dk.drive = 0;
             drive_t *d = reading();
             if (d) {

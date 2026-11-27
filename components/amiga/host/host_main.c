@@ -35,7 +35,10 @@
  * then on, "\n" for Return; a mouse move of more than 100 is spread over
  * the frames after), AMI_WAV=<file> (the sound), AMI_DISKLOG
  * (each disk DMA's start, its end with a checksum of its words, each
- * change of the drives' lines on CIA-B), AMI_DUMP=<addr hex>:<bytes>:<file> (memory at the end).
+ * change of the drives' lines on CIA-B; with AMI_DISKDUMP=<folder> each
+ * read's words as read-<n>.bin), AMI_DISKSEED=<n> (another sequence of the
+ * drives' speeds from turn to turn, as another drive would have),
+ * AMI_DUMP=<addr hex>:<bytes>:<file> (memory at the end).
  * Where two runs part: AMI_WATCHLOG (with AMI_WATCH: every covering write
  * a line, the run goes on), AMI_STOPDIS=<addr hex>:<n> (disassemble memory
  * as it is where AMI_STOP or AMI_WATCH stops), AMI_PCLOG=<file>:<frame>
@@ -398,9 +401,12 @@ static void exception(unsigned int vector)
 
 static void disk_dma(uint16_t len, uint16_t sync, uint16_t adkcon, int cylinder, int side, uint32_t pt)
 {
-    printf("-- disk %s %u words, sync %04x%s, cylinder %d side %d, to $%06x (frame %lu), #%llu\n",
+    int head = amiga_floppy_head();
+    printf("-- disk %s %u words, sync %04x%s, cylinder %d side %d, to $%06x (frame %lu), #%llu, head %d.%03d, "
+           "PC $%06x\n",
            (len & 0x4000) ? "write" : "read", len & 0x3FFF, sync, (adkcon & 0x0400) ? "" : " (not used)",
-           cylinder, side, (unsigned)pt, (unsigned long)s_frame, (unsigned long long)s_insns);
+           cylinder, side, (unsigned)pt, (unsigned long)s_frame, (unsigned long long)s_insns, head / 224,
+           head % 224, m68k_get_reg(NULL, M68K_REG_PPC) & 0xFFFFFF);
 }
 
 /* A DMA's words (in memory now: read from the disk, or written to it) as
@@ -415,6 +421,22 @@ static void disk_end(uint32_t pt, uint16_t words, bool write)
     }
     printf("-- disk end %s %u words at $%06x, sum %08x (frame %lu), #%llu\n", write ? "write" : "read",
            words, (unsigned)start, (unsigned)sum, (unsigned long)s_frame, (unsigned long long)s_insns);
+    /* AMI_DISKDUMP=<folder>: each read's words as they came (big-endian), read-<n>.bin */
+    static int reads;
+    const char *dir = getenv("AMI_DISKDUMP");
+    if (dir && !write) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/read-%03d.bin", dir, reads++);
+        FILE *f = fopen(path, "wb");
+        for (uint32_t i = 0; f && i < words; i++) {
+            uint16_t w = amiga_peek16(start + 2 * i);
+            fputc(w >> 8, f);
+            fputc(w & 0xFF, f);
+        }
+        if (f) {
+            fclose(f);
+        }
+    }
 }
 
 /* The CPU's commands to the drives: CIA-B's port B (/MTR, /SEL3-0, /SIDE,
@@ -594,6 +616,9 @@ int main(int argc, char **argv)
         amiga_disk_hook = disk_dma;
         amiga_disk_end_hook = disk_end;
         amiga_drive_hook = drive_lines;
+    }
+    if (getenv("AMI_DISKSEED")) {
+        amiga_floppy_seed((uint32_t)strtoul(getenv("AMI_DISKSEED"), NULL, 10));
     }
     if (getenv("AMI_PCCOVER")) {
         s_cover_first = calloc(1u << 23, sizeof(uint32_t));
