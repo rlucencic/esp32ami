@@ -174,6 +174,8 @@ static void jal_abs(int rd, uint32_t to)
 
 enum { CHK_S1 = 1, CHK_STOP = 2 };         /* a link exit's checks before its jump */
 
+static int insn_at(uint32_t a);
+
 static int new_exit(int kind, uint32_t pc, uint32_t fe)
 {
     if (T.nexits >= T.max_exits) {
@@ -187,6 +189,10 @@ static int new_exit(int kind, uint32_t pc, uint32_t fe)
     e->ppc = T.u->pc;
     e->ir = T.u->op;
     e->fe = fe;
+    /* (a slice may resume after a slice's, a write's or a handler's exit:
+     * at the PC's instruction, a handler's PC its next as a rule) */
+    int j = kind == JIT_EXIT_PC ? insn_at(pc) : kind == JIT_EXIT_FB ? insn_at(T.u->next) : -1;
+    e->res = (uint8_t)(j > 0 ? j : 0);
     T.exit_pk[k] = (uint8_t)T.pk;
     T.exit_ps[k] = (uint8_t)T.psize;
     T.exit_chk[k] = 0;
@@ -2254,6 +2260,12 @@ static bool emit_block(void)
         /* (a slice may resume after a slice's, a write's or a handler's exit:
          * the registers kept) */
         BT(JB_XJAL, jal_abs(A0, s_stub[kind == JIT_EXIT_PC || kind == JIT_EXIT_FB ? ST_EXIT_RF : ST_EXIT]));
+        /* (the record's way back to its block) */
+        uint32_t back = (uint32_t)(R->p - (uint32_t *)T.b);
+        if (back <= 0xFFF) {
+            T.exit[k].ppc |= (back & 0xFF) << 24;
+            T.exit[k].res |= (uint8_t)((back >> 8) << 4);
+        }
         uint32_t w[4];
         memcpy(w, &T.exit[k], sizeof(w));
         BT(JB_RECORD, for (int i = 0; i < 4; i++) { rv_word(R, w[i]); });
@@ -2696,9 +2708,10 @@ static bool flags_match(int pk, int size, const uint32_t f[3])
 
 #ifndef ESP_PLATFORM
 unsigned long jit_resume_no[3];             /* (AMI_JITSTAT) not resumed: dropped, no instruction there, the flags */
+unsigned long jit_resume_looked;            /* (the instruction looked for: the exit's not it) */
 #endif
 
-const uint32_t *jit_rv_resume(const jit_block_t *b, uint32_t pc, const uint32_t f[3])
+const uint32_t *jit_rv_resume(const jit_block_t *b, uint32_t pc, const uint32_t f[3], unsigned j)
 {
     uint32_t off = pc - b->pc;
     if (b->dead) {
@@ -2707,7 +2720,13 @@ const uint32_t *jit_rv_resume(const jit_block_t *b, uint32_t pc, const uint32_t 
 #endif
         return NULL;
     }
-    for (int j = 1; j < b->n; j++) {
+    if (!j || j >= b->n || JIT_RES_PC(b->res[j]) != off) {
+#ifndef ESP_PLATFORM
+        jit_resume_looked++;
+#endif
+        j = 1;                              /* (looked for) */
+    }
+    for (; j < b->n; j++) {
         uint32_t w = b->res[j];
         if (JIT_RES_PC(w) != off) {
             continue;

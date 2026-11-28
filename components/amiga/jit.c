@@ -43,6 +43,7 @@ typedef struct {
     uint32_t pc;
     const jit_block_t *b;
     uint32_t f[3];
+    uint32_t j;                             /* (its instruction, as the exit's record says) */
 } jit_res_t;
 static jit_res_t *s_res;                    /* (in the arena, after the directory) */
 /* Per 64 KB bank, the block lists of its pages, made in the arena as a
@@ -815,7 +816,7 @@ static inline void exit_state(const jit_exit_t *e)
     if (e->kind != JIT_EXIT_DYN) {
         *m68k_loop.pc = e->pc;
     }
-    *m68k_loop.ppc = e->ppc;
+    *m68k_loop.ppc = e->ppc & 0xFFFFFF;     /* (above: the way back to its block) */
     *m68k_loop.ir = e->ir;
     mem_fetch_state(e->fe);
 }
@@ -925,7 +926,7 @@ int AMI_HOT jit_run(void)
              * computed exit's target gets a block of its own when hot: one
              * to link to) */
             jit_res_t *r = s_res ? res_slot(a) : NULL;
-            if (!from && r && r->b && r->pc == a && (code = jit_rv_resume(r->b, a, r->f)) != NULL) {
+            if (!from && r && r->b && r->pc == a && (code = jit_rv_resume(r->b, a, r->f, r->j)) != NULL) {
                 b = (jit_block_t *)(uintptr_t)r->b;
                 resumed = true;
             } else if ((from || a != *s_ic_next || s_cont
@@ -944,7 +945,7 @@ int AMI_HOT jit_run(void)
 #endif
             }
             r = s_res ? res_slot(a) : NULL;     /* (translate() may have flushed) */
-            if (!b && from && r && r->b && r->pc == a && (code = jit_rv_resume(r->b, a, r->f)) != NULL) {
+            if (!b && from && r && r->b && r->pc == a && (code = jit_rv_resume(r->b, a, r->f, r->j)) != NULL) {
                 b = (jit_block_t *)(uintptr_t)r->b;
                 resumed = true;
             }
@@ -1004,13 +1005,15 @@ int AMI_HOT jit_run(void)
         if ((e->kind == JIT_EXIT_PC || e->kind == JIT_EXIT_FB) && s_res) {
             /* (ended inside the block that left: the next slice resumes it
              * there; else the code after it may start a block) */
-            const jit_block_t *x = exit_block(e);
+            uint32_t back = JIT_EXIT_BACK(e);
+            const jit_block_t *x = back ? (const jit_block_t *)(uintptr_t)((const uint32_t *)e - back) : exit_block(e);
             uint32_t pc = *pcr;
             if (x && pc - x->pc - 1 < x->end - x->pc - 1 && !x->dead) {
                 jit_res_t *r = res_slot(pc);
                 r->pc = pc;
                 r->b = x;
                 memcpy(r->f, jit_rf, sizeof(r->f));
+                r->j = JIT_EXIT_RES(e);
             } else {
                 s_cont = true;
             }

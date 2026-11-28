@@ -222,8 +222,9 @@ static void jitstat_reset(void)
     memset(jit_exits, 0, sizeof(jit_exits));
     jit_t_decode = jit_t_emit = 0;
     memset(jit_bytes, 0, sizeof(jit_bytes));
-    extern unsigned long jit_resume_no[3];
+    extern unsigned long jit_resume_no[3], jit_resume_looked;
     memset(jit_resume_no, 0, sizeof(jit_resume_no));
+    jit_resume_looked = 0;
     extern unsigned long jit_first[6][5];
     memset(jit_first, 0, sizeof(jit_first));
     extern jit_pc_count_t jit_noslot_pcs[4096];
@@ -1062,9 +1063,10 @@ int main(int argc, char **argv)
             }
             extern jit_pc_count_t jit_noslot_pcs[4096];
             top_pcs("no slot", jit_noslot_pcs, 12);
-            extern unsigned long jit_resume_no[3];
-            printf("jit: %lu slices resumed inside a block; not resumed: the block dropped %lu, no instruction there %lu, "
-                   "the flags %lu\n", jit_stats.resumes, jit_resume_no[0], jit_resume_no[1], jit_resume_no[2]);
+            extern unsigned long jit_resume_no[3], jit_resume_looked;
+            printf("jit: %lu slices resumed inside a block (%lu with the instruction looked for); not resumed: the block "
+                   "dropped %lu, no instruction there %lu, the flags %lu\n", jit_stats.resumes, jit_resume_looked,
+                   jit_resume_no[0], jit_resume_no[1], jit_resume_no[2]);
             printf("jit: %lu lookups, %lu chain steps; %lu links made, %lu blocks' entries killed; exits to the dispatcher "
                    "(the slice going on / over): a link's %lu / %lu, the slice's or a write's %lu / %lu, computed %lu / %lu, "
                    "after a handler %lu / %lu\n",

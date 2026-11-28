@@ -754,3 +754,36 @@ instructions: not needed now (no flush in the six stretches).
 **Next**: Deluxe Galaga's collisions; the handlers left. The dispatcher's
 resume could carry its block in the exit's record (the pc, ppc and fe
 words' top bytes are free) instead of two lookups.
+
+## The resumes' records (2026-11-28)
+
+The resumes cost the dispatcher two lookups an exit (the block that left,
+from s2) and a search of the block's resume words a resume. An exit's
+record now says both: ppc holds a 24-bit address (pc and fe can't give
+their top bytes: a JMP to an address with its top byte set keeps it in
+the PC, and fe reaches $1000000 at the top of the address space), so its
+top byte and the record's spare byte's top half give the words back from
+the record
+to its block's header (12 bits: 16 KB; further, the lookups as before),
+the spare byte's low half the instruction a slice may resume at after
+it (a slice's exit: the PC's instruction; a handler's: the next one).
+`exit_state()` masks ppc; `jit_rv_resume()` takes the record's
+instruction when its address is the PC's, else looks for it.
+
+**The host**: the six stretches the same in every count (translations,
+instructions interpreted, RISC-V run, resumes), the record's instruction
+right at every resume, the dispatcher's lookups 32-65% fewer (Leading
+Lap's stretch 2.64 M → 0.97 M, Deluxe Galaga's credits 1.30 M → 0.50
+M). The collection 96 of 96, the survey 26 of 26 and the replays 4 of 4
+the same as the interpreter. `jit_test` caught ppc unmasked; a wrong way
+back to the block only stops the resumes (correct, slower), so a run of
+1000 cases or more with none fails now.
+
+**The Tab5** (Deluxe Galaga and Virtual Karting 2): the profiles at the
+same frame (the pass's fixed one, 3250): `jit_rv_resume()` 1.2% → 0.8% of
+core 1 in Deluxe Galaga's credits, 1.1% → 0.9% in Virtual Karting 2;
+`jit_run()` 3.5% → 3.5% and 3.3% → 2.9%. Half a point, inside the runs'
+spread: Deluxe Galaga 99.8% (94.5%, frame ~9970 in play; 2 windows under
+97.5% as before), Virtual Karting 2 99.9% (99.3%). Deluxe Galaga's game
+differs from run to run on the board (its pictures at the pass's fixed
+frames differ), and core 1's median in play with it (83-91%).

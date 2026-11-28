@@ -123,7 +123,7 @@ images.
 | `main/settings.c` | NVS `ami`, which Kickstart and RAM each model takes, its defaults (A2000: 1 MB chip, 2 MB fast) |
 | `main/jit_probe.c` | The console's `X`: runs code written into PSRAM (TODO 19's translating core: does the P4 allow it, how fast) |
 | `components/amiga/` | The machine, platform independent (`include/amiga.h`) |
-| `components/amiga/jit.c`, `jit.h` | The 68EC020's translated blocks (TODO 19, `docs/jit-design-2026-11-27.md`): the arena (2044 KB, less while PSRAM is short; given back when a disk's buffer needs the room: `ami_malloc_big()`), the block cache, invalidation (per-bank page tables in the arena: each 256-byte page's blocks and a mask of the words they cover, looked at first; the CPU's writes in `jit_cpu_wrote()`), the dispatcher (code reached by a jump, a link's or computed exit's flow or after code with no block of its own translated once it ran 64 times; a slice that ended inside a block resumes it there: the exit's pending flags' registers and s2 kept, `jit_rv_resume()` checks them against the flags in memory; an exit's flow on to a fixed PC linked to that block's entry the first time it comes back, a computed exit's (RTS, JSR/JMP (An)) last two targets' blocks kept after its record, a dropped block's entries sent back to the dispatcher) |
+| `components/amiga/jit.c`, `jit.h` | The 68EC020's translated blocks (TODO 19, `docs/jit-design-2026-11-27.md`): the arena (2044 KB, less while PSRAM is short; given back when a disk's buffer needs the room: `ami_malloc_big()`), the block cache, invalidation (per-bank page tables in the arena: each 256-byte page's blocks and a mask of the words they cover, looked at first; the CPU's writes in `jit_cpu_wrote()`), the dispatcher (code reached by a jump, a link's or computed exit's flow or after code with no block of its own translated once it ran 64 times; a slice that ended inside a block resumes it there: the exit's pending flags' registers kept, its record saying its block (ppc's top byte and its spare byte's top half: the words back to the block) and the instruction to resume at, `jit_rv_resume()` checks the registers against the flags in memory; an exit's flow on to a fixed PC linked to that block's entry the first time it comes back, a computed exit's (RTS, JSR/JMP (An)) last two targets' blocks kept after its record, a dropped block's entries sent back to the dispatcher) |
 | `components/amiga/jit_rv.c`, `rv.h` | The translation into RISC-V: the instructions it knows, the shared routines (memory accesses, the flags to memory, a handler's call, a slice's resume), pending flags, each instruction's resume word (its body, the state there); `rv.h` the encoder |
 | `components/amiga/host/rvsim.c` | The host's RV32IM interpreter: the host runs the very code the board runs (the build not position independent, the heap low: every address in 32 bits) |
 | `components/amiga/host/` | Host build for testing on the Mac (see Testing) |
@@ -1006,8 +1006,10 @@ the top two bits do nothing, Aerial Racers' race sets them),
   where the last ended, the flags sometimes changed between them (no
   resume then): it caught a resume without the pending flags' registers,
   without the flags' check, without the opcode's fetch, and with the
-  pending kind left out. Every case is translated at once: `jit_hot` 1 and
-  `jit_heat_all`, every PC heating). `rv.h`'s
+  pending kind left out; a run of 1000 cases or more with no slice resumed
+  fails (a record's way back to its block wrong only stops resuming).
+  Every case is translated at once: `jit_hot` 1 and `jit_heat_all`, every
+  PC heating). `rv.h`'s
   encodings against the GNU assembler: `host/rv_enc_test.c` (2360
   instructions the same as `riscv32-esp-elf-as -march=rv32im`'s). `make
   test` builds the tests, not `build/ami_host`: `make build/ami_host` for

@@ -678,5 +678,11 @@ int main(int argc, char **argv)
     extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills, fills, resumes; } jit_stats;
     printf("jit_test: %d cases, %d translated, %lu links, %lu targets kept, %lu entries killed, %lu slices resumed, "
            "%d failed\n", cases_run, natives, jit_stats.links, jit_stats.fills, jit_stats.kills, jit_stats.resumes, failures);
+    if (cases_run >= 1000 && !jit_stats.resumes) {
+        /* (a resume that finds its block wrong only stops resuming: the
+         * cases still come out right) */
+        fprintf(stderr, "FAIL: no slice resumed inside a block\n");
+        return 1;
+    }
     return failures != 0;
 }

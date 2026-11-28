@@ -1496,6 +1496,17 @@ TODO item 19: the 68EC020's blocks in RISC-V on the board
   input lands within a frame there), so exactness rests on the host,
   which runs the same code.
 
+### The resumes' records, 2026-11-28
+
+TODO item 19 (`jit-design-2026-11-27.md`, "The resumes' records"). An
+exit's record carries the way back to its block (ppc's free top byte and
+its spare byte) and the instruction a slice resumes at after it: the
+dispatcher's two lookups and the resume word's search gone. The host's
+lookups 32-65% fewer, everything else the same (the collection, the
+survey, the replays); the Tab5's dispatcher half a point of core 1 less
+in Deluxe Galaga's credits and Virtual Karting 2, inside the runs'
+spread.
+
 ### Deluxe Galaga's collisions, 2026-11-28
 
 TODO item 19 (`collisions-2026-11-28.md`).

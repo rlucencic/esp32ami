@@ -50,11 +50,17 @@ enum {
 #define JIT_DYN_TO1         68
 typedef struct {
     uint32_t pc;                        /* (JIT_EXIT_PC) */
-    uint32_t ppc;                       /* the last instruction's address, */
+    uint32_t ppc;                       /* the last instruction's address (bits 0-23), */
     uint32_t fe;                        /* the end of its last word fetched, */
     uint16_t ir;                        /* its opcode */
     uint8_t kind;
+    uint8_t res;                        /* the instruction a slice may resume at after it (bits 0-3, 0: none) */
 } jit_exit_t;
+/* The block a record is in: back from the record by ppc's bits 24-31 and
+ * res's bits 4-7 in 32-bit words (0: further than 4095); the dispatcher's
+ * without looking it up (jit.c's exit_block()) */
+#define JIT_EXIT_BACK(e)    ((e)->ppc >> 24 | (uint32_t)((e)->res >> 4) << 8)
+#define JIT_EXIT_RES(e)     ((e)->res & 15u)
 
 /* A slice resumed inside a block (jit_rv_resume()): each instruction after
  * the first has a word (the block's res) with its body's place in the code
@@ -151,11 +157,12 @@ bool jit_rv_stubs(uint8_t **at, uint8_t *end);
  * dispatcher, as the exit that came there (the caller syncs the caches) */
 void jit_rv_link(uint32_t *site, const uint32_t *to);
 void jit_rv_kill(uint32_t *entry);
-/* b's code from its instruction at pc, as a slice left it there (the
- * pending flags' registers f as the exit at pc saved them): the shared
- * routine to run (jit_rs filled), or NULL (no instruction there, or the
- * flags in memory no longer what f says) */
-const uint32_t *jit_rv_resume(const jit_block_t *b, uint32_t pc, const uint32_t f[3]);
+/* b's code from its instruction at pc (the jth, if j is it: else looked
+ * for), as a slice left it there (the pending flags' registers f as the
+ * exit at pc saved them): the shared routine to run (jit_rs filled), or
+ * NULL (no instruction there, or the flags in memory no longer what f
+ * says) */
+const uint32_t *jit_rv_resume(const jit_block_t *b, uint32_t pc, const uint32_t f[3], unsigned j);
 
 #ifndef ESP_PLATFORM
 /* (AMI_JITSTAT) the arena's bytes: the block's header, the handlers'

@@ -61,9 +61,6 @@ What: fewer P4 instructions per 68020 instruction.
   and 60-84% of the exits go to a fixed PC whose block exists (linked
   since: see "Done so far"; the computed exits keep their targets too).
   Next, in that order:
-  - The dispatcher's resumes (~2.5 points of core 1 where slices end
-    inside blocks often): the exit's block in its record (the top bytes
-    of its pc, ppc and fe words are free) instead of two lookups.
   - The handlers left, last: Virtual Karting 2's BFINS, MULS.L and DIVS.L
     (~350 a frame), Leading Lap's DIVS.W and DIVU.W (~160). Handlers are
     esp32emu's Musashi: the ST and the Macs must be built and checked if
@@ -85,6 +82,14 @@ What: fewer P4 instructions per 68020 instruction.
   by the profiles.
 
 Done so far:
+
+- The resumes' records (2026-11-28, `jit.c`, `jit_rv.c`,
+  `docs/jit-design-2026-11-27.md`, "The resumes' records"): an exit's
+  record says its block (ppc's top byte and its spare byte: the words
+  back) and the instruction to resume at, instead of two lookups and a
+  search. The host's lookups 32-65% fewer; on the Tab5 `jit_rv_resume()`
+  1.2% → 0.8% of core 1 in Deluxe Galaga's credits, half a point in all,
+  inside the runs' spread.
 
 - Deluxe Galaga's collisions (2026-11-28, `display.c`,
   `docs/collisions-2026-11-28.md`): it reads CLXDAT once a frame, and
