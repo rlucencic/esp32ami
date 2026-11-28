@@ -1382,6 +1382,181 @@ static bool t_shift(uint16_t op)
     return true;
 }
 
+static void handler_case(void);
+
+/* DIVU.W, DIVS.W <ea>,Dn by a data register or an immediate, as Musashi's
+ * handler: a quotient past 16 bits sets V alone (the others as they were:
+ * the pending ones to memory first); else Dn gets the quotient and the
+ * remainder, N from bit 15, Z the quotient, V and C clear (to memory too:
+ * both ways meet with no flags pending). A zero divisor (the trap) and
+ * DIVS's $80000000 / -1 (Musashi's own result) are its handler's, called
+ * before anything changed or was fetched past the opcode (an immediate's
+ * fetch after those checks: the division touches no bus). A divisor in
+ * memory: the handler's (its read would come twice) */
+static bool t_div16(uint16_t op)
+{
+    bool sign = op & 0x100;
+    int mode = (op >> 3) & 7, reg = op & 7, dn = (op >> 9) & 7;
+    bool imm = mode == 7 && reg == 4;
+    if (mode != 0 && !imm) {
+        return false;
+    }
+    uint16_t iv = imm ? T.u->host[1] : 0;
+    if (imm && !iv) {
+        return false;                       /* (a zero divisor) */
+    }
+    int slow = rv_new_label(R), go = rv_new_label(R), ovf = rv_new_label(R), done = rv_new_label(R);
+    if (imm) {
+        rv_li(R, RS_, sign ? (uint32_t)(int32_t)(int16_t)iv : iv);
+    } else {
+        rv_lw(R, RS_, DREG(reg), S0);
+        if (sign) {
+            sext_reg(RS_, RS_, 2);
+        } else {
+            mask_reg(RS_, RS_, 2);
+        }
+        rv_beqz(R, RS_, slow);
+    }
+    rv_lw(R, RA_, DREG(dn), S0);
+    if (sign && (!imm || iv == 0xFFFF)) {
+        rv_li(R, T0, 0x80000000u);          /* ($80000000 / -1) */
+        rv_bcc(R, RV_BNE, RA_, T0, go);
+        rv_li(R, T0, 0xFFFFFFFFu);
+        rv_bcc(R, RV_BEQ, RS_, T0, slow);
+    }
+    if (!imm || (sign && iv == 0xFFFF)) {
+        rv_jl(R, go);
+        rv_place(R, slow);
+        handler_case();
+    }
+    rv_place(R, go);
+    if (imm) {
+        ext16();                            /* (its fetch) */
+    }
+    if (sign) {
+        rv_div(R, RD_, RA_, RS_);
+        rv_rem(R, RR_, RA_, RS_);
+        rv_slli(R, T1, RD_, 16);
+        rv_srai(R, T1, T1, 16);
+        rv_bcc(R, RV_BNE, T1, RD_, ovf);   /* (past 16 bits) */
+    } else {
+        rv_divu(R, RD_, RA_, RS_);
+        rv_remu(R, RR_, RA_, RS_);
+        rv_srli(R, T1, RD_, 16);
+        rv_bnez(R, T1, ovf);
+    }
+    mask_reg(T1, RD_, 2);
+    rv_slli(R, RR_, RR_, 16);
+    rv_or(R, RR_, RR_, T1);
+    rv_sw(R, RR_, DREG(dn), S0);
+    rv_srli(R, T1, RD_, 8);
+    st_flag(T1, OFF(n_flag));
+    st_flag(RD_, OFF(not_z_flag));
+    st_flag(X0, OFF(v_flag));
+    st_flag(X0, OFF(c_flag));
+    rv_jl(R, done);
+    rv_place(R, ovf);
+    materialize();
+    rv_li(R, T1, 0x80);
+    st_flag(T1, OFF(v_flag));
+    rv_place(R, done);
+    T.pk = PK_NONE;
+    return true;
+}
+
+/* MULU.L, MULS.L <ea>,Dl (Dh:Dl): the product's 64 bits from mul and
+ * mulh(u), the flags to memory as Musashi's (C clear; the 32-bit form's V
+ * when the product doesn't fit, N and Z of its low long; the 64-bit form's
+ * N its top bit, Z both longs, V clear); Dh written before Dl */
+static bool t_mull(uint16_t op)
+{
+    uint32_t w2 = ext16();                  /* (before the operand's words) */
+    ea_t e;
+    if (!ea_decode((op >> 3) & 7, op & 7, 4, &e, RA_) || e.kind == EA_A) {
+        return false;
+    }
+    ea_read(&e, 4, RS_);
+    int dl = (w2 >> 12) & 7, dh = w2 & 7;
+    bool sign = w2 & 0x800, wide = w2 & 0x400;
+    rv_lw(R, T0, DREG(dl), S0);
+    rv_mul(R, RD_, RS_, T0);
+    if (sign) {
+        rv_mulh(R, RR_, RS_, T0);
+    } else {
+        rv_mulhu(R, RR_, RS_, T0);
+    }
+    if (!wide) {
+        if (sign) {
+            rv_srai(R, T1, RD_, 31);
+            rv_xor(R, T1, T1, RR_);         /* (the high long not the low one's sign) */
+        } else {
+            rv_mv(R, T1, RR_);
+        }
+        rv_sltu(R, T1, X0, T1);
+        rv_slli(R, T1, T1, 7);
+        st_flag(T1, OFF(v_flag));
+        rv_srli(R, T1, RD_, 24);
+        st_flag(T1, OFF(n_flag));
+        st_flag(RD_, OFF(not_z_flag));
+    } else {
+        rv_sw(R, RR_, DREG(dh), S0);
+        st_flag(X0, OFF(v_flag));
+        rv_srli(R, T1, RR_, 24);
+        st_flag(T1, OFF(n_flag));
+        rv_or(R, T1, RD_, RR_);
+        st_flag(T1, OFF(not_z_flag));
+    }
+    st_flag(X0, OFF(c_flag));
+    rv_sw(R, RD_, DREG(dl), S0);
+    T.pk = PK_NONE;                         /* (all four set: the pending ones superseded) */
+    return true;
+}
+
+/* DIVU.L, DIVS.L <ea>,Dq (DIVUL.L, DIVSL.L Dr:Dq) of a 32-bit dividend by
+ * a data register or an immediate: div and rem as Musashi's 64-bit
+ * arithmetic has them ($80000000 / -1 too: $80000000, no overflow); a zero
+ * divisor the handler's, before the extension word's fetch. A 64-bit
+ * dividend (no 64-bit division here) or a divisor in memory: the handler's */
+static bool t_divl(uint16_t op)
+{
+    uint16_t w2 = T.u->host[1];
+    int mode = (op >> 3) & 7, reg = op & 7;
+    bool imm = mode == 7 && reg == 4;
+    if ((w2 & 0x400) || (mode != 0 && !imm)) {
+        return false;
+    }
+    uint32_t iv = imm ? (uint32_t)T.u->host[2] << 16 | T.u->host[3] : 0;
+    if (imm && !iv) {
+        return false;
+    }
+    int dq = (w2 >> 12) & 7, dr = w2 & 7;
+    bool sign = w2 & 0x800;
+    if (!imm) {
+        int go = rv_new_label(R);
+        rv_lw(R, RS_, DREG(reg), S0);
+        rv_bnez(R, RS_, go);
+        handler_case();
+        rv_place(R, go);
+    }
+    ext16();
+    if (imm) {
+        ext32();
+        rv_li(R, RS_, iv);
+    }
+    rv_lw(R, T0, DREG(dq), S0);
+    if (sign) {
+        rv_div(R, F_R, T0, RS_);
+        rv_rem(R, RR_, T0, RS_);
+    } else {
+        rv_divu(R, F_R, T0, RS_);
+        rv_remu(R, RR_, T0, RS_);
+    }
+    rv_sw(R, RR_, DREG(dr), S0);            /* (the remainder first: Dr = Dq keeps the quotient) */
+    rv_sw(R, F_R, DREG(dq), S0);
+    flags_logic(F_R, 4);
+    return true;
+}
+
 /* An instruction on data registers alone (no extension words, no memory,
  * no branch, no exception) by its handler, called directly: REG_IR (its
  * operands) and the cycles left (it may add some) set, the flags in
@@ -1805,6 +1980,12 @@ static bool t_body(uint16_t op)
         if ((op & 0xFB80) == 0x4880 && (op & 0x38)) {
             return t_movem(op);
         }
+        if ((op & 0xFFC0) == 0x4C00) {
+            return t_mull(op);
+        }
+        if ((op & 0xFFC0) == 0x4C40) {
+            return t_divl(op);
+        }
         if (op == 0x4E71) {
             return true;                    /* NOP */
         }
@@ -1817,6 +1998,9 @@ static bool t_body(uint16_t op)
     case 0x7:
         return t_moveq(op);
     case 0x8:
+        if ((op & 0xC0) == 0xC0) {
+            return t_div16(op);             /* (DIVU.W, DIVS.W) */
+        }
         return t_alu(op, OP_OR);
     case 0x9:
         if ((op & 0x130) == 0x100 && (op & 0xC0) != 0xC0) {
@@ -2043,6 +2227,24 @@ static void fallback(void)
     T.fe_dyn = true;
 }
 
+/* The instruction by its handler from here, then out of the block (the
+ * fetch state the handler's): the rare cases of one translated otherwise,
+ * taken before it changed anything or fetched past its opcode; the
+ * pending flags to memory on this path alone */
+static void handler_case(void)
+{
+    tinsn_t *u = T.u;
+    int pk = T.pk, ps = T.psize;
+    materialize();
+    jit_fb_t *f = &T.fb[T.nfb++];
+    f->pc = u->pc;
+    f->op = u->op;
+    f->len = (uint8_t)(u->next - u->pc);
+    f->wait = u->wait;
+    BT(JB_FB, rv_li(R, A0, addr32(f)); jal_abs(RA, s_stub[ST_FB]); rv_jl(R, new_exit(JIT_EXIT_FB, 0, 0)));
+    T.pk = pk, T.psize = ps;
+}
+
 static int s_cut;                           /* (the instruction the code budget ran out at) */
 static jit_exit_t s_exits[2 * MAX_INSNS + 8];   /* (each written after its exit's code) */
 _Static_assert(sizeof(jit_exit_t) == 16, "an exit's record: four words in the code");
@@ -2132,7 +2334,7 @@ static bool emit_block(void)
         s_cyc = (*m68k_loop.cycles)[u->op];
         /* the translation, or the handler */
         uint32_t *p0 = R->p;
-        int nl = R->nlabels, nf = R->nfixups, ne = T.nexits;
+        int nl = R->nlabels, nf = R->nfixups, ne = T.nexits, nfb = T.nfb;
         int64_t s5 = T.s5;
         int pk = T.pk, ps = T.psize;
 #ifndef ESP_PLATFORM
@@ -2165,6 +2367,7 @@ static bool emit_block(void)
             R->nlabels = nl;
             R->nfixups = nf;
             T.nexits = ne;
+            T.nfb = nfb;                    /* (a handler_case() of the translation tried) */
             T.fetch = u->pc + 2;
             T.s5 = s5;
             T.pk = pk, T.psize = ps;

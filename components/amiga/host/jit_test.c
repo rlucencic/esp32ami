@@ -77,6 +77,7 @@ static void make_rom(void)
 typedef struct {
     uint16_t w[12];
     int n;
+    int dvs, dvd;                               /* a division's divisor and dividend data registers (-1: none) */
 } insn_t;
 
 static void put(insn_t *i, uint16_t w)
@@ -148,10 +149,13 @@ static int bytes(int s)
 static void gen(insn_t *i)
 {
     memset(i, 0, sizeof(*i));
+    i->dvs = i->dvd = -1;
     int s = rsize(), b = bytes(s);
     uint16_t op;
     put(i, 0);                                  /* (the opcode, below) */
-    switch (rn(30)) {
+    int fam = (int)rn(33);
+    fam = fam == 31 ? 28 : fam == 32 ? 30 : fam;  /* (the divisions twice as often) */
+    switch (fam) {
     case 0: case 1: case 2: {                   /* MOVE, MOVEA */
         static const int sz[3] = { 1, 3, 2 };
         uint16_t src = ea(i, b, true, true, false, false);
@@ -279,6 +283,36 @@ static void gen(insn_t *i)
         op = (uint16_t)(0x4880 | to_regs << 10 | l << 6 | e);
         break;
     }
+    case 28: {                                  /* DIVU.W, DIVS.W (an immediate a zero one at times) */
+        int dn = (int)rn(8), k = (int)rn(10);
+        uint16_t e = k < 4 ? (uint16_t)rn(8) : k < 7 ? (put(i, (uint16_t)rnd()), 0x3C) : ea(i, 2, true, false, false, false);
+        if (e == 0x3C && !rn(4)) {
+            i->w[1] = 0;
+        }
+        op = (uint16_t)(0x80C0 | dn << 9 | rn(2) << 8 | e);
+        i->dvs = (e >> 3) == 0 ? (e & 7) : -1;
+        i->dvd = dn;
+        break;
+    }
+    case 29: {                                  /* MULU.L, MULS.L (32 or 64 bits) */
+        put(i, (uint16_t)(rn(8) << 12 | rn(2) << 11 | rn(2) << 10 | rn(8)));
+        op = (uint16_t)(0x4C00 | ea(i, 4, true, false, false, false));
+        break;
+    }
+    case 30: {                                  /* DIVU.L, DIVS.L (a 64-bit dividend at times) */
+        int dq = (int)rn(8);
+        put(i, (uint16_t)(dq << 12 | rn(2) << 11 | (rn(4) == 0) << 10 | (rn(2) ? dq : (int)rn(8))));
+        int k = (int)rn(10);
+        uint16_t e = k < 4 ? (uint16_t)rn(8)
+                   : k < 7 ? (put(i, (uint16_t)rnd()), put(i, (uint16_t)rnd()), 0x3C) : ea(i, 4, true, false, false, false);
+        if (e == 0x3C && !rn(4)) {
+            i->w[i->n - 1] = i->w[i->n - 2] = 0;
+        }
+        op = (uint16_t)(0x4C40 | e);
+        i->dvs = (e >> 3) == 0 ? (e & 7) : -1;
+        i->dvd = dq;
+        break;
+    }
     default:                                    /* NOP, and opcodes near the families */
         op = rn(3) == 0 ? 0x4E71 : (uint16_t)(rnd() & 0xFFFF);
         if ((op & 0xFFF0) == 0x4E70 || (op & 0xF000) == 0x4000 || (op & 0xF000) == 0x0000) {
@@ -294,6 +328,13 @@ static void gen(insn_t *i)
         break;
     }
     i->w[0] = op;
+    /* (a division or long multiply after a CMP.L at times: flags pending
+     * as it begins, to memory on its handler's path) */
+    if (((op & 0xF0C0) == 0x80C0 || (op & 0xFF80) == 0x4C00) && !rn(3) && i->n < 12) {
+        memmove(i->w + 1, i->w, (size_t)i->n * sizeof(i->w[0]));
+        i->n++;
+        i->w[0] = (uint16_t)(0xB080 | rn(8) << 9 | rn(8));
+    }
 }
 
 /* a second instruction that reads the first one's flags: Bcc, Scc, DBcc
@@ -508,6 +549,13 @@ static bool one_case(void)
         }
     }
     u.r[15] = 0x1C0000 + 2 * rn(0x4000);
+    /* (a division's rare cases: a zero divisor, $80000000 / -1) */
+    if (i.dvs >= 0 && !rn(4)) {
+        u.r[i.dvs] = rn(2) ? 0 : 0x10000;   /* (a word divisor of 0 either way) */
+    } else if (i.dvs >= 0 && !rn(4)) {
+        u.r[i.dvs] = 0xFFFFFFFF;
+        u.r[i.dvd] = 0x80000000;
+    }
     u.sr = 0x2700 | rn(32);
     bool flow = i.w[0] == 0x4E75 || (i.w[0] & 0xFF80) == 0x4E80;   /* (RTS, JSR, JMP: on past them) */
     u.rem = pair || flow ? 8 + (int)rn(120) : rn(3) ? 1 : 1 + (int)rn(60);

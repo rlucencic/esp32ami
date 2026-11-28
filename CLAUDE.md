@@ -1008,6 +1008,13 @@ the top two bits do nothing, Aerial Racers' race sets them),
   without the flags' check, without the opcode's fetch, and with the
   pending kind left out; a run of 1000 cases or more with no slice resumed
   fails (a record's way back to its block wrong only stops resuming).
+  The divisions and the long multiply (DIVU/DIVS .W and .L, MULU/MULS .L,
+  by a register or an immediate mostly, after a CMP.L at times: flags
+  pending) with the divisor zero or $80000000 / -1 at times: it caught a
+  signed remainder taken unsigned, the long multiply's V left clear, the
+  quotient written before the remainder, the handler's path without the
+  pending flags, an overflow without them and an immediate's fetch
+  charged before the handler's cases.
   Every case is translated at once: `jit_hot` 1 and `jit_heat_all`, every
   PC heating). `rv.h`'s
   encodings against the GNU assembler: `host/rv_enc_test.c` (2360
