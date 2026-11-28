@@ -840,8 +840,28 @@ void amiga_get_screen(amiga_screen_t *st)
  */
 #define CLX_FRAMES      4
 
+#ifndef ESP_PLATFORM
+/* (AMI_CLXSTAT) CLXDAT's reads, CLXCON's writes and its last value; the
+ * lines worked out, those with bit 0 still clear, with it found; the lines
+ * with sprites armed and shown, the spans looked at, those that looked at
+ * the playfields; the lines where nothing could change (bit 0 set, no
+ * span's bits left to find); (10 unused) bit 0 worked out on the fetched
+ * words (pf_both()) */
+unsigned long clx_stat[12];
+#define CLXS(i) (clx_stat[i]++)
+/* AMI_CLXCHECK: pf_both()'s and pf_span()'s answers against pf_line()'s,
+ * the run stopped at a difference; AMI_CLXSLOW: pf_line() for bit 0 */
+static int clx_env(const char *name)
+{
+    return getenv(name) != NULL;
+}
+#else
+#define CLXS(i) ((void)0)
+#endif
+
 uint16_t display_clxdat(void)
 {
+    CLXS(0);
     uint16_t v = s.clxdat | 0x8000;
     s.clxdat = 0;
     s.clx_frames = CLX_FRAMES;
@@ -850,6 +870,10 @@ uint16_t display_clxdat(void)
 
 void display_clxcon(uint16_t v)
 {
+    CLXS(1);
+#ifndef ESP_PLATFORM
+    clx_stat[2] = v;
+#endif
     s.clxcon = v;
     s.clxcon2 = 0;
 }
@@ -876,7 +900,7 @@ static uint16_t win16(int L, int hstart, int hstop)
 /* 32 pixels of a line of n words from pixel x on (bit 31: x), fill
  * outside it
  */
-static uint32_t bits32(const uint16_t *d, int n, uint32_t fill, int x)
+static inline uint32_t bits32(const uint16_t *d, int n, uint32_t fill, int x)
 {
     int w = x >> 4, sh = x & 15;
     uint32_t a = (unsigned)w < (unsigned)n ? d[w] : fill;
@@ -952,6 +976,117 @@ static void pf_line(int hstart, int n, uint16_t *odd, uint16_t *even)
     }
 }
 
+/* Bit 0 (a lores pixel of the window where both playfields match) worked
+ * out on the fetched words in place, when the playfields' pixels lie where
+ * the fetch put them alike: lores, and the same scroll for the sides with
+ * an enabled plane fetched. Then a pixel matches both where every enabled
+ * plane has its MVBP value (outside the fetch, and planes not fetched, 0):
+ * no side moved to the window first, no window words (pf_line()). 1 found,
+ * 0 not, -1 not this way (hires or super-hires pixels: a lores pixel may
+ * match one side in one half and the other in the other) */
+static int pf_both(int hstart, int hstop)
+{
+    int planes = s.fetched ? s.planes : 0, words = s.words;
+    if (planes && (s.con0 & (BPLCON0_HIRES | BPLCON0_SHRES))) {
+        return -1;
+    }
+    int enbp = ((s.clxcon >> 6) & 63) | ((s.clxcon2 >> 6) & 3) << 6;
+    int mvbp = (s.clxcon & 63) | (s.clxcon2 & 3) << 6;
+    int delay[2] = { s.con1 & 15, (s.con1 >> 4) & 15 };
+    bool side[2] = { false, false };            /* an enabled plane fetched */
+    uint16_t fill = 0xFFFF, flat = 0xFFFF;      /* outside the fetch; the planes not fetched */
+    for (int p = 0; p < MAX_PLANES; p++) {
+        if (enbp & (1 << p)) {
+            uint16_t inv = (mvbp & (1 << p)) ? 0 : 0xFFFF;
+            fill &= inv;
+            if (p < planes) {
+                side[p & 1] = true;
+            } else {
+                flat &= inv;
+            }
+        }
+    }
+    if (side[0] && side[1] && delay[0] != delay[1]) {
+        return -1;
+    }
+    int end = hstop < hstart + 16 * CLX_WORDS ? hstop : hstart + 16 * CLX_WORDS;
+    int x0 = hstart - s.first - delay[side[0] ? 0 : 1], x1 = x0 + (end - hstart);
+    int lo = x0 < 0 ? 0 : x0, hi = x1 < 16 * words ? x1 : 16 * words;
+    if (!side[0] && !side[1]) {
+        lo = hi = 0;                            /* (all of it as outside) */
+    }
+    if (fill && (lo >= hi || x0 < lo || x1 > hi)) {
+        return 1;                               /* (outside the fetch, in the window) */
+    }
+    if (lo >= hi || !flat) {
+        return 0;
+    }
+    /* the enabled planes fetched, four or eight (the rest words of 0 taken
+     * as 1: matching), over the words [lo, hi) touches, the end ones masked
+     * to it */
+    static const uint16_t zeros[MAX_PLANE_WORDS];
+    const uint16_t *d[MAX_PLANES];
+    uint16_t inv[MAX_PLANES];
+    int n = 0;
+    for (int p = 0; p < planes; p++) {
+        if (enbp & (1 << p)) {
+            d[n] = s.data + p * words;
+            inv[n++] = (mvbp & (1 << p)) ? 0 : 0xFFFF;
+        }
+    }
+    int all = n <= 4 ? 4 : 8;
+    for (; n < all; n++) {
+        d[n] = zeros;
+        inv[n] = 0xFFFF;
+    }
+    int w0 = lo >> 4, w1 = (hi - 1) >> 4;
+    uint16_t any = 0;
+    if (all == 4) {
+        for (int w = w0; w <= w1; w++) {
+            any |= (d[0][w] ^ inv[0]) & (d[1][w] ^ inv[1]) & (d[2][w] ^ inv[2]) & (d[3][w] ^ inv[3]) &
+                   (w == w0 || w == w1 ? win16(16 * w, lo, hi) : 0xFFFF);
+        }
+    } else {
+        for (int w = w0; w <= w1; w++) {
+            any |= (d[0][w] ^ inv[0]) & (d[1][w] ^ inv[1]) & (d[2][w] ^ inv[2]) & (d[3][w] ^ inv[3]) &
+                   (d[4][w] ^ inv[4]) & (d[5][w] ^ inv[5]) & (d[6][w] ^ inv[6]) & (d[7][w] ^ inv[7]) &
+                   (w == w0 || w == w1 ? win16(16 * w, lo, hi) : 0xFFFF);
+        }
+    }
+    return (any & flat) != 0;
+}
+
+/* One playfield's (side: 0 odd, 1 even) matches over the lores pixels
+ * q..q+15 of the window (bit 15: q), as pf_line()'s at those pixels: each
+ * enabled plane's bits there (0 outside the fetch) at its MVBP value */
+static uint16_t pf_span(int side, int q)
+{
+    int planes = s.fetched ? s.planes : 0, words = s.words;
+    int enbp = ((s.clxcon >> 6) & 63) | ((s.clxcon2 >> 6) & 3) << 6;
+    int mvbp = (s.clxcon & 63) | (s.clxcon2 & 3) << 6;
+    int r = !planes ? 1 : (s.con0 & BPLCON0_SHRES) ? 4 : (s.con0 & BPLCON0_HIRES) ? 2 : 1;
+    int x = r * (q - s.first - (side ? (s.con1 >> 4) & 15 : s.con1 & 15));
+    uint32_t v[2] = { 0xFFFFFFFFu, 0xFFFFFFFFu };   /* 32 raw pixels each (r 4: 64) */
+    for (int p = side; p < MAX_PLANES; p += 2) {
+        if (!(enbp & (1 << p))) {
+            continue;
+        }
+        uint32_t inv = (mvbp & (1 << p)) ? 0 : 0xFFFFFFFFu;
+        if (p >= planes) {
+            v[0] &= inv;
+            v[1] &= inv;
+            continue;
+        }
+        const uint16_t *d = s.data + p * words;
+        v[0] &= bits32(d, words, 0, x) ^ inv;
+        if (r == 4) {
+            v[1] &= bits32(d, words, 0, x + 32) ^ inv;
+        }
+    }
+    return r == 1 ? (uint16_t)(v[0] >> 16) : r == 2 ? lores16(v[0])
+                  : lores16((uint32_t)lores16(v[0]) << 16 | lores16(v[1]));
+}
+
 /* 16 of the window's match bits from lores pixel off (from hstart) on */
 static uint16_t pf16(const uint16_t *m, int n, int off)
 {
@@ -960,25 +1095,73 @@ static uint16_t pf16(const uint16_t *m, int n, int off)
 
 static void collide(void)
 {
+    if (s.clxdat & 1) {
+        /* (the playfields' bit found: a line without a sprite armed has
+         * nothing left to find) */
+        int i = 0;
+        while (i < 8 && !s.spr[i].armed) {
+            i++;
+        }
+        if (i == 8) {
+            return;
+        }
+    }
     int vstart, vstop, hstart, hstop;
     diw(&vstart, &vstop, &hstart, &hstop);
     if (hstart >= hstop) {
         return;
     }
     uint16_t clx = s.clxdat;
+    CLXS(3);
     int nwin = (hstop - hstart + 15) >> 4;
     nwin = nwin > CLX_WORDS ? CLX_WORDS : nwin;
     uint16_t mo[CLX_WORDS], me[CLX_WORDS];
     bool pf = false;                    /* mo, me worked out */
+#ifndef ESP_PLATFORM
+    int spans0 = 0, pfs = 0;
+    uint16_t clx0 = clx;
+#endif
     /* odd planes against even ones */
     if (!(clx & 1)) {
-        pf_line(hstart, nwin, mo, me);
-        pf = true;
-        for (int k = 0; k < nwin; k++) {
-            if (mo[k] & me[k] & win16(hstart + 16 * k, hstart, hstop)) {
-                clx |= 1;
-                break;
+        CLXS(4);
+        int both = pf_both(hstart, hstop);
+#ifndef ESP_PLATFORM
+        static int check = -1, slow;
+        if (check < 0) {
+            check = clx_env("AMI_CLXCHECK");
+            slow = clx_env("AMI_CLXSLOW");
+        }
+        if (slow) {
+            both = -1;
+        }
+        clx_stat[11] += both >= 0;
+        if (both >= 0 && check) {
+            int full = 0;
+            pf_line(hstart, nwin, mo, me);
+            for (int k = 0; k < nwin; k++) {
+                full |= (mo[k] & me[k] & win16(hstart + 16 * k, hstart, hstop)) != 0;
             }
+            if (full != both) {
+                fprintf(stderr, "clx: bit 0 %d, the full way %d (line %d, con0 %04x con1 %04x clxcon %04x planes %d "
+                        "words %d first %d window %d-%d)\n", both, full, ami.line, s.con0, s.con1, s.clxcon,
+                        s.fetched ? s.planes : 0, s.words, s.first, hstart, hstop);
+                abort();
+            }
+        }
+#endif
+        if (both < 0) {
+            pf_line(hstart, nwin, mo, me);
+            pf = true;
+            for (int k = 0; k < nwin; k++) {
+                if (mo[k] & me[k] & win16(hstart + 16 * k, hstart, hstop)) {
+                    both = 1;
+                    break;
+                }
+            }
+        }
+        if (both > 0) {
+            clx |= 1;
+            CLXS(5);
         }
     }
     /* the sprite pairs (their sprites' pixels in spans of 16 lores ones: a
@@ -1019,15 +1202,45 @@ static void collide(void)
             sx[g][spans[g]] = L;
             sm[g][spans[g]] = mk;
             spans[g]++;
+#ifndef ESP_PLATFORM
+            spans0++;
+            clx_stat[7]++;
+            if ((clx0 & (0x22 << g)) != (0x22 << g)) {
+                pfs++;
+            }
+#endif
             if ((clx & (0x22 << g)) == (0x22 << g)) {
                 continue;               /* (both found already) */
             }
-            if (!pf) {
-                pf_line(hstart, nwin, mo, me);
-                pf = true;
+            /* (the playfields at the sprite's 16 pixels; pf_line() past
+             * its 32 words: none there) */
+            uint16_t po, pe;
+            if (pf) {
+                po = pf16(mo, nwin, L - hstart);
+                pe = pf16(me, nwin, L - hstart);
+            } else {
+                uint16_t in = win16(L, hstart, hstart + 16 * CLX_WORDS);
+                po = pf_span(0, L) & in;
+                pe = pf_span(1, L) & in;
+#ifndef ESP_PLATFORM
+                static int check = -1;
+                if (check < 0) {
+                    check = clx_env("AMI_CLXCHECK");
+                }
+                if (check) {
+                    pf_line(hstart, nwin, mo, me);
+                    if ((po & mk) != (pf16(mo, nwin, L - hstart) & mk) || (pe & mk) != (pf16(me, nwin, L - hstart) & mk)) {
+                        fprintf(stderr, "clx: sprite %d at %d: %04x %04x, the full way %04x %04x (line %d, con0 %04x "
+                                "con1 %04x clxcon %04x)\n", i, L, po & mk, pe & mk, pf16(mo, nwin, L - hstart) & mk,
+                                pf16(me, nwin, L - hstart) & mk, ami.line, s.con0, s.con1, s.clxcon);
+                        abort();
+                    }
+                }
+#endif
+                CLXS(8);
             }
-            clx |= (uint16_t)((mk & pf16(mo, nwin, L - hstart)) ? 2 << g : 0);
-            clx |= (uint16_t)((mk & pf16(me, nwin, L - hstart)) ? 0x20 << g : 0);
+            clx |= (uint16_t)((mk & po) ? 2 << g : 0);
+            clx |= (uint16_t)((mk & pe) ? 0x20 << g : 0);
         }
     }
     /* pairs against pairs: bits 9-14 (0-1, 0-2, 0-3, 1-2, 1-3, 2-3) */
@@ -1046,6 +1259,10 @@ static void collide(void)
         }
     }
     s.clxdat = clx;
+#ifndef ESP_PLATFORM
+    clx_stat[6] += spans0 > 0;
+    clx_stat[9] += (clx0 & 1) && !pfs;
+#endif
 }
 
 /* ---- The line's record ---- */

@@ -24,9 +24,9 @@ instructions a frame; the interpreter managed ~15-20k at full speed. With
 the translating core (`docs/jit-design-2026-11-27.md`) these still fall
 behind in their slowest stretches (median, slowest; `board_pass.py`):
 
-- Deluxe Galaga 99.6% (94.1%: its later windows, the chips'; its
-  credits, an idle loop that polls the joystick and keyboard through the
-  OS, 92-95%, collisions 12% of core 1 there).
+- Deluxe Galaga 99.8% (95.3%: past its credits, frames ~3950; its
+  credits 95-100%, the collisions 4% of core 1 there; 2 windows under
+  97.5%, the other at ~11150, 96.7%).
 - Leading Lap 99.8% (99.5%).
 - Gea Lux 100% (98.9%), AmiBee 99.9% (99.5%), Virtual Karting 2 99.9%
   (99.5%).
@@ -61,19 +61,13 @@ What: fewer P4 instructions per 68020 instruction.
   and 60-84% of the exits go to a fixed PC whose block exists (linked
   since: see "Done so far"; the computed exits keep their targets too).
   Next, in that order:
+  - The dispatcher's resumes (~2.5 points of core 1 where slices end
+    inside blocks often): the exit's block in its record (the top bytes
+    of its pc, ppc and fe words are free) instead of two lookups.
   - The handlers left, last: Virtual Karting 2's BFINS, MULS.L and DIVS.L
     (~350 a frame), Leading Lap's DIVS.W and DIVU.W (~160). Handlers are
     esp32emu's Musashi: the ST and the Macs must be built and checked if
     it changes.
-  - Deluxe Galaga: collisions are 12% of core 1 in its credits (worked
-    out on every line while it reads CLXDAT: `pf_line()`, `bits32()`,
-    `collide()`), and its later slow windows (~89-91%) run ~6700
-    instructions a frame: the chips', not the CPU's. A line with no
-    sprite armed and the playfields' bit already set (or not enabled)
-    needs no work; profile the later windows on the board first.
-  - The dispatcher's resumes (~2.5 points of core 1 where slices end
-    inside blocks often): the exit's block in its record (the top bytes
-    of its pc, ppc and fe words are free) instead of two lookups.
 - PSRAM: with the A1200's 8 MB of fast RAM and the 2 MB arena ~2.2 MB are
   free with two floppies in. A high-density ADF's 1.72 MB buffer fits; an
   extended ADF's 2.5 MB may not in one piece, even with the arena given
@@ -91,6 +85,16 @@ What: fewer P4 instructions per 68020 instruction.
   by the profiles.
 
 Done so far:
+
+- Deluxe Galaga's collisions (2026-11-28, `display.c`,
+  `docs/collisions-2026-11-28.md`): it reads CLXDAT once a frame, and
+  each line with the playfields' bit still clear (164 a frame) worked
+  both playfields out over the window. That bit now comes from the
+  fetched words in place when the playfields lie alike (lores, the same
+  scroll), a sprite's playfields from the words under its 16 pixels, and
+  a line with the bit found and no sprite armed returns at once. The
+  credits 91.5-99.4% → 95.3-100.4%, its windows under 97.5% 14 → 2, the
+  collisions 9.5% → 4.2% of core 1.
 
 - Slices resumed inside blocks (2026-11-28, `jit.c`, `jit_rv.c`,
   `docs/jit-design-2026-11-27.md`, "Slices resumed inside blocks"): the

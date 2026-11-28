@@ -894,6 +894,12 @@ int main(int argc, char **argv)
             jitstat_reset();
         }
 #endif
+        /* AMI_CLXSTAT=<frame>: the collision counters from that frame on */
+        if (getenv("AMI_CLXSTAT") && strtoul(getenv("AMI_CLXSTAT"), NULL, 10) == s_frame) {
+            extern unsigned long clx_stat[12];
+            memset(clx_stat, 0, 2 * sizeof(clx_stat[0]));
+            memset(clx_stat + 3, 0, 9 * sizeof(clx_stat[0]));
+        }
         amiga_run_frame();
         wav_drain();
         if (log_every && (s_frame + 1) % log_every == 0) {
@@ -964,6 +970,14 @@ int main(int argc, char **argv)
     }
     if (getenv("AMI_OPSTAT")) {
         opstat_write();
+    }
+    if (getenv("AMI_CLXSTAT")) {
+        extern unsigned long clx_stat[12];
+        printf("clx: %lu CLXDAT reads, %lu CLXCON writes (the last %04lx); %lu lines worked out, %lu with bit 0 clear "
+               "(%lu found it), %lu with sprites shown (%lu spans, %lu worked the playfields out); %lu lines where nothing "
+               "could change; bit 0 on the fetched words %lu times\n", clx_stat[0], clx_stat[1],
+               clx_stat[2], clx_stat[3], clx_stat[4], clx_stat[5], clx_stat[6], clx_stat[7], clx_stat[8], clx_stat[9],
+               clx_stat[11]);
     }
     if (getenv("AMI_JITSTAT")) {
             extern size_t jit_arena_size(size_t *routines);

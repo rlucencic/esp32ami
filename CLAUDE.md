@@ -521,8 +521,13 @@ images.
   fetched is 0), odd planes against even, inside the window; AGA's
   planes 7-8 through CLXCON2 (cleared by a CLXCON write), wide sprites
   all their pixels, hires and super-hires sprite pixels (SPRES) to the
-  lores pixel they're in; each line's playfield matches worked out once
-  (`pf_line()`), a word a 16 window pixels. Sprite DMA:
+  lores pixel they're in; the odd and even playfields' bit on the fetched
+  words in place when their pixels lie alike (lores, the same scroll:
+  `pf_both()`, every enabled plane at its value), a sprite's 16 pixels'
+  playfields from the planes' words there (`pf_span()`), else a line's
+  playfield matches worked out once (`pf_line()`), a word a 16 window
+  pixels; a line with that bit found and no sprite armed has nothing to
+  do. Sprite DMA:
   control words on the line before the first bitplane line (25 PAL) and
   at each VSTOP, data words from VSTART (also a VSTART written while the
   DMA was off at line 25: Aerial Racers' cars). **Interlace**: a frame with
@@ -1060,6 +1065,11 @@ the top two bits do nothing, Aerial Racers' race sets them),
   `AMI_DISKDUMP=<folder>` (each read's words, `read-<n>.bin`),
   `AMI_DISKSEED=<n>` (another sequence of the drives' speeds),
   `AMI_EXC` (exceptions; `all` with interrupts),
+  `AMI_CLXSTAT=<frame>` (the collisions from that frame on: CLXDAT's
+  reads, CLXCON's writes, the lines worked out, the ways bit 0 and the
+  sprites went), `AMI_CLXCHECK` (`pf_both()`'s and `pf_span()`'s answers
+  against `pf_line()`'s on every line, the run stopped at a difference),
+  `AMI_CLXSLOW` (bit 0 the old way, `pf_line()`),
   `AMI_EXCSTOP=<vector>[:<frame>]` (stop at that exception, as `AMI_STOP`),
   `AMI_DEBUG=<port>` (the debugger, real time), `AMI_DF0`/`AMI_DF1` (ADF
   images: they get written, use copies), `AMI_INSERT=<frame>:<drive>:<adf>

@@ -1496,6 +1496,24 @@ TODO item 19: the 68EC020's blocks in RISC-V on the board
   input lands within a frame there), so exactness rests on the host,
   which runs the same code.
 
+### Deluxe Galaga's collisions, 2026-11-28
+
+TODO item 19 (`collisions-2026-11-28.md`).
+
+- **Measured first**: Deluxe Galaga reads CLXDAT once a frame; 164 lines
+  a frame with the playfields' bit still clear worked both playfields out
+  over the window and almost never found it (664 times in 805 frames):
+  107 M of the credits' 143 M host cycles in collisions.
+- **The code**: that bit from the fetched words in place when both
+  playfields lie alike (lores, the same scroll: every enabled plane at its
+  value), a sprite's playfields from the words under its 16 pixels, an
+  early return for a line with nothing left to find.
+- **Results**: the credits on the Tab5 91.5-99.4% → 95.3-100.4%, windows
+  under 97.5% 14 → 2, the collisions 9.5% → 4.2% of core 1. The host: 160
+  collision test disks and the AGA cases the same as before, every line
+  of Deluxe Galaga, the survey and the collection checked against the
+  full way (`AMI_CLXCHECK`), the pictures the same.
+
 ### Slices resumed inside blocks, 2026-11-28
 
 TODO item 19 (`jit-design-2026-11-27.md`, "Slices resumed inside
