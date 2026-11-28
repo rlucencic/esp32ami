@@ -24,9 +24,9 @@ instructions a frame; the interpreter managed ~15-20k at full speed. With
 the translating core (`docs/jit-design-2026-11-27.md`) these still fall
 behind in their slowest stretches (median, slowest; `board_pass.py`):
 
-- Deluxe Galaga 99.8% (95.3%: past its credits, frames ~3950; its
-  credits 95-100%, the collisions 4% of core 1 there; 2 windows under
-  97.5%, the other at ~11150, 96.7%).
+- Deluxe Galaga 99.8% (98.8%, in play; its credits 99.4-100%, none
+  under 97.5%; the blitter 5-9% of core 1 in its busy stretches, `wait.c`
+  ~8% while it waits for its blits).
 - Leading Lap 99.8% (99.5%).
 - Gea Lux 100% (98.9%), AmiBee 99.9% (99.5%), Virtual Karting 2 99.9%
   (99.5%).
@@ -60,11 +60,9 @@ What: fewer P4 instructions per 68020 instruction.
   3.9 instructions a block run) plus the C dispatcher's 8-10% of core 1,
   and 60-84% of the exits go to a fixed PC whose block exists (linked
   since: see "Done so far"; the computed exits keep their targets too).
-  Next, in that order:
-  - The handlers left, last: Virtual Karting 2's BFINS, MULS.L and DIVS.L
-    (~350 a frame), Leading Lap's DIVS.W and DIVU.W (~160). Handlers are
-    esp32emu's Musashi: the ST and the Macs must be built and checked if
-    it changes.
+  Left as handlers: Virtual Karting 2's bit fields (BFINS, BFEXTS, ~150
+  a frame), divisors in memory (Leading Lap's DIVU.W (d16,An), ~11 a
+  frame), 64-bit dividends and the privileged instructions.
 - PSRAM: with the A1200's 8 MB of fast RAM and the 2 MB arena ~2.2 MB are
   free with two floppies in. A high-density ADF's 1.72 MB buffer fits; an
   extended ADF's 2.5 MB may not in one piece, even with the arena given
@@ -82,6 +80,23 @@ What: fewer P4 instructions per 68020 instruction.
   by the profiles.
 
 Done so far:
+
+- Deluxe Galaga's dips (2026-11-28, `blitter.c`,
+  `docs/blitter-loops-2026-11-28.md`): profiled in the dips on the board,
+  the blitter 10.8-16% of core 1 (clears and cookie cuts of narrow bobs,
+  ~5600 words a frame in play), `wait.c` ~8%. A clear (D alone, $00 or
+  $FF) and the cookie cut ($FCA ascending) got loops of their own, the
+  same as the general loop in `host/blit_test.c`: the blitter 5-9%, the
+  slowest window 94.1-97.2% → 98.8%.
+
+- The divides and the long multiply (2026-11-28, `jit_rv.c`,
+  `docs/jit-design-2026-11-27.md`, "The divides and the long
+  multiply"): DIVU/DIVS .W and .L by a register or an immediate and
+  MULU/MULS .L translated, their rare cases (a zero divisor, DIVS.W's
+  $80000000 / -1) by the handler from the translated code. The handler
+  calls in Leading Lap's stretch 279940 → 22129, Virtual Karting 2's
+  98950 → 46574; on the Tab5 `jit_fallback()` 0.4% → 0.1% of core 1,
+  inside the runs' spread.
 
 - The resumes' records (2026-11-28, `jit.c`, `jit_rv.c`,
   `docs/jit-design-2026-11-27.md`, "The resumes' records"): an exit's

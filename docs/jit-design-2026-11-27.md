@@ -787,3 +787,63 @@ spread: Deluxe Galaga 99.8% (94.5%, frame ~9970 in play; 2 windows under
 97.5% as before), Virtual Karting 2 99.9% (99.3%). Deluxe Galaga's game
 differs from run to run on the board (its pictures at the pass's fixed
 frames differ), and core 1's median in play with it (83-91%).
+
+## The divides and the long multiply (2026-11-28)
+
+The handlers the translated code still called in the six stretches
+(`AMI_JITSTAT`'s handler lines): Leading Lap's DIVS.W and DIVU.W between
+data registers (162 a frame; DIVU.W (d16,An) ~5% of them), Virtual
+Karting 2's MULS.L/MULU.L, DIVS.L/DIVU.L and its bit fields (323 a
+frame), Deluxe Galaga's DIVS.W (23 a frame), and the privileged ones
+(RTE, MOVE to and from SR, ORI to SR). Each call stored the pending
+flags, went through `jit_fallback()`, and the next opcode's fetch came
+from the fetch state in memory.
+
+**The code** (`jit_rv.c`), each as Musashi's 64-bit handler does it:
+
+- DIVU.W, DIVS.W by a data register or an immediate: div and rem. A
+  quotient past 16 bits sets V alone (the pending flags to memory first,
+  N, Z and C as they were); else Dn gets the quotient and the remainder,
+  N from bit 15, Z the quotient, V and C clear, to memory too (both ways
+  meet with no flags pending). First version: the overflow by the
+  handler too, and out of the block after it; Leading Lap's DIVU.W D7,D6
+  overflows a quarter of its runs, the slice couldn't resume after it
+  (the flags not what the next instruction's code expects) and its
+  stretch interpreted 25% more.
+- MULU.L, MULS.L from any data operand (its extension word fetched
+  first): mul and mulh(u); the 32-bit form's V when the product doesn't
+  fit, the 64-bit form's N its top bit and Z both longs; C clear; the
+  flags to memory; Dh before Dl.
+- DIVU.L, DIVS.L of a 32-bit dividend by a register or an immediate: div
+  and rem ($80000000 / -1 as Musashi's 64-bit arithmetic: $80000000, no
+  overflow), the remainder before the quotient (Dr = Dq keeps the
+  quotient), N and Z pending.
+- A zero divisor (the trap) and DIVS.W's $80000000 / -1 (Musashi's own
+  result) call the handler from the translated code (`handler_case()`)
+  before anything changed or was fetched past the opcode (an immediate's
+  fetch after those checks: the division touches no bus), then leave the
+  block. A divisor in memory (its read would come twice), a 64-bit
+  dividend (no 64-bit division on RV32) and the bit fields stay handlers.
+
+**The host**: the handler calls in Leading Lap's stretch 279940 → 22129,
+Virtual Karting 2's 98950 → 46574 (its bit fields left), Deluxe
+Galaga's later stretch 38173 → 5373; translations, interpreted
+instructions and resumes as before. `jit_test` makes these instructions
+(a register or immediate divisor mostly, zero or $80000000 / -1 at
+times, after a CMP.L at times: flags pending) and caught six planted
+errors: a signed remainder taken unsigned, the multiply's V left clear,
+the quotient written before the remainder, the handler's path without
+the pending flags, an overflow without them, an immediate's fetch
+charged before the handler's cases (the handler's path and the fetch
+only once the generator put a CMP.L before the division at times and
+chose register and immediate divisors mostly: no flags were ever
+pending as a division began, and an immediate divisor came up once in
+~1300 cases). The collection, the survey and the replays the same as
+the interpreter. (The commit's message says seven: six.)
+
+**The Tab5** (Leading Lap, Virtual Karting 2, Deluxe Galaga; the
+profiles at the pass's fixed frame): `jit_fallback()` 0.4% → 0.1% of core
+1 in Leading Lap and Virtual Karting 2, Musashi's handlers in Virtual
+Karting 2 0.5% → 0.0%. Leading Lap 99.9% (99.3%), Virtual Karting 2
+99.8% (99.5%), Deluxe Galaga 99.8% (97.2%, 2 windows under 97.5%): the
+same within the runs' spread, as expected of half a point.

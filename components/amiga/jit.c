@@ -95,6 +95,7 @@ bool jit_heat_all;                          /* (host/jit_test.c: every case tran
 struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills, fills, resumes; } jit_stats;
 uint32_t jit_fb_count[65536];               /* (the handlers called, by opcode: mem.c) */
 uint32_t jit_interp_count[65536];           /* (the instructions run outside blocks, by opcode) */
+unsigned long jit_interp_total;             /* (AMI_FRAMESTAT: all of them) */
 /* (AMI_JITSTAT) lookups, their chain steps; the exits that came to the
  * dispatcher by kind (JIT_EXIT_*), with the slice going on and over */
 unsigned long jit_lookups, jit_probes, jit_exits[4][2];
@@ -975,6 +976,7 @@ int AMI_HOT jit_run(void)
             if (a <= 0xFFFFFF) {
                 jit_interp_count[amiga_peek16(a)]++;
             }
+            jit_interp_total++;
 #endif
             s_cont = a <= 0xFFFFFF && (s_failed[hash(a) >> 3] & (1u << (hash(a) & 7)));
             mem_interp_one();

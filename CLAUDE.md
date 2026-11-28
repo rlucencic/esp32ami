@@ -478,8 +478,12 @@ images.
   sprites) run ahead of the CPU up to the line's end or its fetch; others
   wait for the CPU to get there (`copper_next()` is the write's time).
 - **Blitter** (`blitter.c`): area mode (minterms with fast paths, shifts,
-  masks, descending, inclusive/exclusive fill through tables), line mode
-  (octants as SUD/SUL/AUL, SING, texture), ECS BLTSIZV/BLTSIZH/BLTCON0L.
+  masks, descending, inclusive/exclusive fill through tables; loops of
+  their own for an unshifted A-to-D copy, a clear (D alone, $00 or $FF:
+  a row a `memset`) and the cookie cut ($FCA ascending: Deluxe Galaga's
+  bobs), each the same as the general loop in `host/blit_test.c`), line
+  mode (octants as SUD/SUL/AUL, SING, texture), ECS
+  BLTSIZV/BLTSIZH/BLTCON0L.
   Done at once; BBUSY and the interrupt wait for the real duration: words
   x colour clocks per word by channels (lines 4 a pixel), each a bus slot
   it gets only where the line's other DMA leaves one (`plan_end()`: a
@@ -1016,7 +1020,13 @@ the top two bits do nothing, Aerial Racers' race sets them),
   pending flags, an overflow without them and an immediate's fetch
   charged before the handler's cases.
   Every case is translated at once: `jit_hot` 1 and `jit_heat_all`, every
-  PC heating). `rv.h`'s
+  PC heating), and the blitter (`blit_test.c [cases] [seed]`: random
+  blits over a 256 KB chip RAM, rows wrapping round its end, D over C or
+  a word beside it at times, each by the special loops and by
+  `blit_area()`'s own; the memory, the pointers, the data registers,
+  BZERO and the colour clocks compared; it caught a clear's row a word
+  short, a descending clear two bytes off, the cookie cut's shift words
+  dropped at each row and C read a word ahead of D's write). `rv.h`'s
   encodings against the GNU assembler: `host/rv_enc_test.c` (2360
   instructions the same as `riscv32-esp-elf-as -march=rv32im`'s). `make
   test` builds the tests, not `build/ami_host`: `make build/ami_host` for
@@ -1074,6 +1084,10 @@ the top two bits do nothing, Aerial Racers' race sets them),
   `AMI_DISKDUMP=<folder>` (each read's words, `read-<n>.bin`),
   `AMI_DISKSEED=<n>` (another sequence of the drives' speeds),
   `AMI_EXC` (exceptions; `all` with interrupts),
+  `AMI_BLITSTAT=<frame>` (the blits from that frame on by kind:
+  channels and minterm, shifts, descending, fill, line; their number and
+  words), `AMI_FRAMESTAT=<from>:<to>` (each frame's RISC-V instructions,
+  instructions interpreted, translations and the host's time),
   `AMI_CLXSTAT=<frame>` (the collisions from that frame on: CLXDAT's
   reads, CLXCON's writes, the lines worked out, the ways bit 0 and the
   sprites went), `AMI_CLXCHECK` (`pf_both()`'s and `pf_span()`'s answers

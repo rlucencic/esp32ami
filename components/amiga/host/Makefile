@@ -29,11 +29,12 @@ run: $(BUILD)/ami_host
 $(BUILD)/ami_host: host_main.c $(AMI_OBJS) $(M68K_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ -lm -lpthread -lz -o $@
 
-test: $(BUILD)/floppy_test $(BUILD)/mem_test $(BUILD)/wait_test $(BUILD)/jit_test
+test: $(BUILD)/floppy_test $(BUILD)/mem_test $(BUILD)/wait_test $(BUILD)/jit_test $(BUILD)/blit_test
 	./$(BUILD)/floppy_test
 	./$(BUILD)/mem_test
 	./$(BUILD)/wait_test
 	./$(BUILD)/jit_test
+	./$(BUILD)/blit_test
 
 $(BUILD)/floppy_test: floppy_test.c $(AMI_OBJS) $(M68K_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ -lm -lpthread -lz -o $@
@@ -45,6 +46,9 @@ $(BUILD)/wait_test: wait_test.c $(AMI_OBJS) $(M68K_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ -lm -lpthread -lz -o $@
 
 $(BUILD)/jit_test: jit_test.c $(AMI_OBJS) $(M68K_OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ -lm -lpthread -lz -o $@
+
+$(BUILD)/blit_test: blit_test.c $(AMI_OBJS) $(M68K_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ -lm -lpthread -lz -o $@
 
 $(BUILD)/ami/%.o: $(AMI)/%.c $(wildcard $(AMI)/*.h $(AMI)/include/*.h)

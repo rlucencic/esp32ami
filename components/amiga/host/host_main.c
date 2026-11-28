@@ -56,6 +56,8 @@
 #include "amiga.h"
 #include "m68k.h"
 #include "emudbg.h"
+/* (blitter.c, AMI_BLITSTAT) */
+extern struct blit_stat { uint32_t key; unsigned long n, words; } blit_stat[256];
 #ifdef AMI_JIT
 #include "jit.h"
 #endif
@@ -895,13 +897,44 @@ int main(int argc, char **argv)
             jitstat_reset();
         }
 #endif
+        /* AMI_BLITSTAT=<frame>: the blits by kind from that frame on */
+        if (getenv("AMI_BLITSTAT") && strtoul(getenv("AMI_BLITSTAT"), NULL, 10) == s_frame) {
+            memset(blit_stat, 0, sizeof(blit_stat));
+        }
         /* AMI_CLXSTAT=<frame>: the collision counters from that frame on */
         if (getenv("AMI_CLXSTAT") && strtoul(getenv("AMI_CLXSTAT"), NULL, 10) == s_frame) {
             extern unsigned long clx_stat[12];
             memset(clx_stat, 0, 2 * sizeof(clx_stat[0]));
             memset(clx_stat + 3, 0, 9 * sizeof(clx_stat[0]));
         }
+        /* AMI_FRAMESTAT=<from>:<to>: each frame's work (RISC-V instructions
+         * run, instructions interpreted, translations, the host's time) */
+        static long fs_from = -2, fs_to;
+        if (fs_from == -2) {
+            const char *v = getenv("AMI_FRAMESTAT");
+            fs_from = v ? strtol(v, NULL, 10) : -1;
+            fs_to = v && strchr(v, ':') ? strtol(strchr(v, ':') + 1, NULL, 10) : 0;
+        }
+        bool fs = fs_from >= 0 && (long)s_frame >= fs_from && (long)s_frame <= fs_to;
+        unsigned long long fs_rv = 0;
+        unsigned long fs_in = 0, fs_tr = 0;
+        struct timespec fs_t0;
+        if (fs) {
+            extern uint64_t rvsim_steps;
+            extern unsigned long jit_interp_total;
+            fs_rv = rvsim_steps, fs_in = jit_interp_total, fs_tr = jit_stats.translations;
+            clock_gettime(CLOCK_MONOTONIC, &fs_t0);
+        }
         amiga_run_frame();
+        if (fs) {
+            extern uint64_t rvsim_steps;
+            extern unsigned long jit_interp_total;
+            struct timespec t1;
+            clock_gettime(CLOCK_MONOTONIC, &t1);
+            printf("frame %lu: RISC-V %llu, interpreted %lu, translations %lu, host %ld us\n", (unsigned long)s_frame,
+                   (unsigned long long)(rvsim_steps - fs_rv), jit_interp_total - fs_in, jit_stats.translations - fs_tr,
+                   (long)((t1.tv_sec - fs_t0.tv_sec) * 1000000 + (t1.tv_nsec - fs_t0.tv_nsec) / 1000));
+        }
         wav_drain();
         if (log_every && (s_frame + 1) % log_every == 0) {
             amiga_status_t st;
@@ -971,6 +1004,30 @@ int main(int argc, char **argv)
     }
     if (getenv("AMI_OPSTAT")) {
         opstat_write();
+    }
+    if (getenv("AMI_BLITSTAT")) {
+        unsigned long all = 0;
+        for (int i = 0; i < 256; i++) {
+            all += blit_stat[i].words;
+        }
+        for (int k = 0; k < 12; k++) {
+            int best = -1;
+            for (int i = 0; i < 256; i++) {
+                if (blit_stat[i].n && (best < 0 || blit_stat[i].words > blit_stat[best].words)) {
+                    best = i;
+                }
+            }
+            if (best < 0) {
+                break;
+            }
+            uint32_t key = blit_stat[best].key;
+            printf("blit %s con0 %03x%s%s%s%s: %lu blits, %lu words (%.1f%%), %.0f a blit\n",
+                   key & 0x10000 ? "line" : "area", key & 0xFFF, key & 0x1000 ? " A shifted" : "",
+                   key & 0x2000 ? " B shifted" : "", key & 0x4000 ? " descending" : "", key & 0x8000 ? " fill" : "",
+                   blit_stat[best].n, blit_stat[best].words, 100.0 * blit_stat[best].words / all,
+                   (double)blit_stat[best].words / blit_stat[best].n);
+            blit_stat[best].n = 0;
+        }
     }
     if (getenv("AMI_CLXSTAT")) {
         extern unsigned long clx_stat[12];

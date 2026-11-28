@@ -9,6 +9,7 @@
  * sprites, the bitplanes: 4 hires planes leave none in the fetch window).
  * The copper's few slots aren't counted.
  */
+#include <string.h>
 #include "amiga_internal.h"
 #include "jit.h"
 
@@ -114,11 +115,89 @@ static int blit_copy(void)
     return (int)(w * h) * s_word_cck[9];
 }
 
+/* D alone with minterm $00 or $FF (no fill): every word the same, a row
+ * at a time where it doesn't wrap chip RAM (Deluxe Galaga's clears: 42% of
+ * its words in play) */
+static int blit_const(void)
+{
+    bool desc = blit.con1 & DESC;
+    uint16_t v = (blit.con0 & 0xFF) ? 0xFFFF : 0;
+    int32_t inc = desc ? -2 : 2, dmod = desc ? -blit.mod[D] : blit.mod[D];
+    uint32_t dpt = blit.pt[D], w = blit.width, h = blit.height, m = ami.chip_mask;
+    for (uint32_t y = 0; y < h; y++) {
+        uint32_t a = dpt & m & ~1u, lo = desc ? a - 2 * (w - 1) : a;
+        if (desc ? a >= 2 * (w - 1) : a + 2 * w <= m + 1) {
+            memset(ami.chip + lo, v & 0xFF, 2 * w);         /* ($0000 or $FFFF: either byte order) */
+            dpt += (uint32_t)inc * w;
+        } else {
+            for (uint32_t x = 0; x < w; x++) {
+                chip_write16(dpt, v);
+                dpt += (uint32_t)inc;
+            }
+        }
+        dpt += (uint32_t)dmod;
+    }
+    blit.pt[D] = dpt;
+    blit.zero = v == 0;
+    return (int)(w * h) * s_word_cck[1];
+}
+
+/* A, B, C and D with minterm $CA (the cookie cut: A's mask picks B over
+ * C), ascending, no fill: blit_area()'s steps without its tests (the
+ * reads A, B, C, then D's write, word by word; the shifts' words carried
+ * across rows as there) */
+static int blit_cookie(void)
+{
+    int ash = blit.con0 >> 12, bsh = blit.con1 >> 12;
+    uint32_t apt = blit.pt[A], bpt = blit.pt[B], cpt = blit.pt[C], dpt = blit.pt[D];
+    int32_t amod = blit.mod[A], bmod = blit.mod[B], cmod = blit.mod[C], dmod = blit.mod[D];
+    uint16_t adat = blit.dat[A], bdat = blit.dat[B], cdat = blit.dat[C], aold = 0, bold = 0, any = 0;
+    uint16_t fw = blit.afwm, lw = blit.alwm;
+    uint32_t w = blit.width, h = blit.height;
+    for (uint32_t y = 0; y < h; y++) {
+        for (uint32_t x = 0; x < w; x++) {
+            adat = chip_read16(apt);
+            bdat = chip_read16(bpt);
+            cdat = chip_read16(cpt);
+            apt += 2, bpt += 2, cpt += 2;
+            uint16_t am = adat & (x == 0 ? fw : 0xFFFF) & (x == w - 1 ? lw : 0xFFFF);
+            uint16_t a = (uint16_t)((((uint32_t)aold << 16) | am) >> ash);
+            uint16_t b = (uint16_t)((((uint32_t)bold << 16) | bdat) >> bsh);
+            aold = am;
+            bold = bdat;
+            uint16_t d = (uint16_t)((a & b) | (~a & cdat));
+            any |= d;
+            chip_write16(dpt, d);
+            dpt += 2;
+        }
+        apt += (uint32_t)amod, bpt += (uint32_t)bmod, cpt += (uint32_t)cmod, dpt += (uint32_t)dmod;
+    }
+    blit.pt[A] = apt, blit.pt[B] = bpt, blit.pt[C] = cpt, blit.pt[D] = dpt;
+    blit.dat[A] = adat, blit.dat[B] = bdat, blit.dat[C] = cdat;
+    blit.zero = any == 0;
+    return (int)(w * h) * s_word_cck[15];
+}
+
+#ifndef ESP_PLATFORM
+bool blit_generic;                          /* (host/blit_test.c: blit_area()'s own loop alone) */
+#endif
+
 static int blit_area(void)
 {
     uint16_t con0 = blit.con0, con1 = blit.con1;
-    if (con0 == (USEA | USED | 0xF0) && !(con1 & (LINE | IFE | EFE))) {
-        return blit_copy();
+#ifndef ESP_PLATFORM
+    if (!blit_generic)
+#endif
+    {
+        if (con0 == (USEA | USED | 0xF0) && !(con1 & (LINE | IFE | EFE))) {
+            return blit_copy();
+        }
+        if ((con0 & 0x0F00) == USED && ((con0 & 0xFF) == 0x00 || (con0 & 0xFF) == 0xFF) && !(con1 & (IFE | EFE))) {
+            return blit_const();
+        }
+        if ((con0 & 0x0FFF) == (USEA | USEB | USEC | USED | 0xCA) && !(con1 & (DESC | IFE | EFE))) {
+            return blit_cookie();
+        }
     }
     bool desc = con1 & DESC;
     int ash = con0 >> 12, bsh = con1 >> 12;
@@ -305,6 +384,14 @@ static void plan_end(int from)
     }
 }
 
+#ifndef ESP_PLATFORM
+/* (host/blit_test.c) the blit set up in `blit` done, its colour clocks */
+int blitter_test_run(void)
+{
+    return (blit.con1 & LINE) ? blit_line() : blit_area();
+}
+#endif
+
 void blitter_line_start(void)
 {
     if (blit.busy && blit.left > 0) {
@@ -312,9 +399,34 @@ void blitter_line_start(void)
     }
 }
 
+#ifndef ESP_PLATFORM
+/* (AMI_BLITSTAT) the blits by kind: BLTCON0's channels and minterm, a shift
+ * of A or B, descending, fill, line; their number and words */
+struct blit_stat { uint32_t key; unsigned long n, words; } blit_stat[256];
+static void blit_count(void)
+{
+    uint16_t c0 = blit.con0, c1 = blit.con1;
+    uint32_t key = (c1 & LINE) ? 0x10000u | (c0 & 0xFFF) :
+                   (uint32_t)(c0 & 0xFFF) | ((c0 >> 12) ? 0x1000u : 0) | ((c1 >> 12) ? 0x2000u : 0) |
+                   ((c1 & DESC) ? 0x4000u : 0) | ((c1 & (IFE | EFE)) ? 0x8000u : 0);
+    uint32_t h = (key * 2654435761u) >> 24;
+    for (int i = 0; i < 256; i++, h = (h + 1) & 255) {
+        if (!blit_stat[h].n || blit_stat[h].key == key) {
+            blit_stat[h].key = key;
+            blit_stat[h].n++;
+            blit_stat[h].words += (c1 & LINE) ? blit.height : blit.width * blit.height;
+            return;
+        }
+    }
+}
+#endif
+
 static void start(int at)
 {
     blit.pending = false;
+#ifndef ESP_PLATFORM
+    blit_count();
+#endif
     uint32_t d0 = blit.pt[D];
     int cck = (blit.con1 & LINE) ? blit_line() : blit_area();
 #ifdef AMI_JIT

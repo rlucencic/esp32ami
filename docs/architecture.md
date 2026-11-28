@@ -1496,6 +1496,30 @@ TODO item 19: the 68EC020's blocks in RISC-V on the board
   input lands within a frame there), so exactness rests on the host,
   which runs the same code.
 
+### Deluxe Galaga's dips: the blitter, 2026-11-28
+
+TODO item 19 (`blitter-loops-2026-11-28.md`). Profiles taken in the dips
+on the board (the host's CPU work fell after the game's start, the board's
+core 1 didn't): the blitter 10.8-16% of core 1, `wait.c` ~8%. Clears (D
+alone, $00 or $FF) and cookie cuts ($FCA ascending), 92% of the game's
+blitted words in play, got loops of their own; `host/blit_test.c`
+compares them with the general loop on random blits (wrapping, in place).
+The blitter 5-9% of core 1 in those stretches; Deluxe Galaga's slowest
+window 94.1-97.2% → 98.8%, none under 97.5%. The collection, the survey
+and the replays the same.
+
+### The divides and the long multiply, 2026-11-28
+
+TODO item 19 (`jit-design-2026-11-27.md`, "The divides and the long
+multiply"). DIVU/DIVS .W and .L by a register or an immediate and MULU/
+MULS .L run as RISC-V (div, rem, mul, mulh), flags as Musashi's; a zero
+divisor and DIVS.W's $80000000 / -1 go to the handler from the
+translated code, before anything changed. The handler calls in the
+stretches down 53-92%; the Tab5's `jit_fallback()` 0.4% → 0.1% of core 1,
+inside the runs' spread. The host: the collection, the survey and the
+replays the same; `jit_test` makes these instructions and caught six
+planted errors.
+
 ### The resumes' records, 2026-11-28
 
 TODO item 19 (`jit-design-2026-11-27.md`, "The resumes' records"). An
