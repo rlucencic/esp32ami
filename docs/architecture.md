@@ -1496,6 +1496,64 @@ TODO item 19: the 68EC020's blocks in RISC-V on the board
   input lands within a frame there), so exactness rests on the host,
   which runs the same code.
 
+### A faster 68EC020: TODO 19 done, 2026-11-28
+
+TODO item 19, closed. The A1200 load survey (item 17) found titles that
+compute all frame (24-56k instructions a frame) falling behind: the
+interpreter managed ~15-20k at full speed. Its steps, each measured on
+the host first and on the Tab5 after, are the entries below from "A
+faster 68EC020, the first steps" (2026-11-25) to "Deluxe Galaga's dips:
+the blitter" (2026-11-28): the interpreter's work around each
+instruction, the chips' share, a translating core for the 68EC020
+(`jit-design-2026-11-27.md`: blocks into RISC-V, linked to each other,
+computed exits' targets kept, writes beside code masked, slices resumed
+inside blocks, the divides and the long multiply), Deluxe Galaga's
+collisions and its blits.
+
+| Title | Survey, 2026-11-25 | Now (median, slowest window) |
+|---|---|---|
+| Deluxe Galaga | ~60% in play | 99.8% (98.8%) |
+| Leading Lap | 53-66% | 99.9% (99.3%) |
+| Virtual Karting 2 | 53-66% | 99.8% (99.5%) |
+| Gea Lux | 53-66% | 100% (98.9%) |
+| AmiBee | 53% in play | 99.9% (99.5%) |
+
+(The slowest window leaves out those holding the board pass's own
+pictures and profiles; the last passes, 2026-11-28.) The A500 titles no
+slower at any step; the collection, the survey and the replays the same
+as the interpreter at each.
+
+Left, none needed for speed now:
+
+- Handlers: Virtual Karting 2's bit fields (BFINS, BFEXTS, ~150 a
+  frame), divisors in memory (Leading Lap's DIVU.W (d16,An), ~11 a
+  frame), 64-bit dividends, the privileged instructions.
+- `wait.c` ~8% of core 1 while Deluxe Galaga waits for its blits; the
+  fill copy ($9F0, 7% of its blitted words) on the general loop.
+- PSRAM: with the A1200's 8 MB of fast RAM and the 2 MB arena ~2.2 MB are
+  free with two floppies in. A high-density ADF's 1.72 MB buffer fits; an
+  extended ADF's 2.5 MB may not in one piece, even with the arena given
+  back (seen once: 5 MB free, no 2.5 MB block). Extended ADFs are OCS
+  games' (the A500: no arena); if one is wanted on the A1200, size its
+  buffer from the file or take the arena's 2 MB for it.
+
+What the item taught:
+
+- On the P4 the cost is the instruction count: core 1 retires 0.62-0.78
+  instructions a clock in the slow stretches as elsewhere; code in
+  internal RAM gained 1-2 points, in the TCM it lost 25-40%. Not levers
+  either: this P4 (revision 1.x) tops out at 360 MHz; a 512 KB L2 cache
+  needs 256 KB of internal RAM.
+- Measure what the arena holds before shrinking its code (Leading Lap's
+  blocks held each instruction ~5 times: slices resumed inside blocks,
+  not denser code, made it fit), and profile the board inside a dip, not
+  after it (Deluxe Galaga's dips were the blitter over PSRAM, which the
+  host's caches hide).
+- Board runs take 40 minutes a build: measure steps too small to show
+  above the runs' spread (a point or two) together, and tell them apart
+  by the profiles. Profile an A500 title too: a test in front of the
+  68000's path costs every A500 game.
+
 ### Deluxe Galaga's dips: the blitter, 2026-11-28
 
 TODO item 19 (`blitter-loops-2026-11-28.md`). Profiles taken in the dips

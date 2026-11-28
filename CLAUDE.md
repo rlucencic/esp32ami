@@ -1400,8 +1400,8 @@ the top two bits do nothing, Aerial Racers' race sets them),
 ## Open items
 
 - [TODO.md](TODO.md) tracks the next Tab5 and host checks and the work
-  waiting on hardware, media or a reproducible case. Items 1–8, 10–18,
-  20 and 21 are complete.
+  waiting on hardware, media or a reproducible case. Items 1–8 and 10–21
+  are complete; item 9 waits.
 - Public on GitHub (`github.com/rlucencic/esp32ami`, pushed to `main`,
   since 2026-10-21). Licence: MIT (`LICENSE`). README images
   (`docs/images`, 2026-10-21): `workbench31.png` (A600, 3.1 from an HDF,
@@ -1540,6 +1540,10 @@ the top two bits do nothing, Aerial Racers' race sets them),
     (`jit-design`'s "The larger arena"): Leading Lap 99.4% (its slowest
     90.2%; 95.6% and 86.3% with 1 MB), its code fitting better (33
     flushes in 15000 frames on the host, 211 before).
+  - Done (TODO 19 closed 2026-11-28, `docs/architecture.md`, "A faster
+    68EC020: TODO 19 done"): after the translating core, slices resumed
+    inside blocks, the divides, Deluxe Galaga's collisions and blits; the
+    five titles at 99.8-100% median, their slowest windows 98.8-99.5%.
 
   Done: `chip_read16()` inline
   (every DMA word) and read directly in `display_fetch()`, `beam()` (VPOSR
