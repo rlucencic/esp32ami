@@ -24,11 +24,11 @@ instructions a frame; the interpreter managed ~15-20k at full speed. With
 the translating core (`docs/jit-design-2026-11-27.md`) these still fall
 behind in their slowest stretches (median, slowest; `board_pass.py`):
 
-- Deluxe Galaga 99.5% (88.9%: its later windows, the chips'; its
+- Deluxe Galaga 99.7% (92.3%: its later windows, the chips'; its
   credits, an idle loop that polls the joystick and keyboard through the
-  OS, 90-94%, collisions 12% of core 1 there).
-- Leading Lap 99.6% (94.3%).
-- Gea Lux 100% (97.1%), AmiBee 99.9% (99.5%), Virtual Karting 2 99.9%
+  OS, 92-95%, collisions 12% of core 1 there).
+- Leading Lap 99.8% (96.8%).
+- Gea Lux 100% (97.9%), AmiBee 100% (99.0%), Virtual Karting 2 99.8%
   (99.6%).
 - (Metal Kombat's 82.8% was the board pass's own: a screenshot and a
   profile in that window, a disk insert in the next slowest; otherwise
@@ -61,13 +61,12 @@ What: fewer P4 instructions per 68020 instruction.
   and 60-84% of the exits go to a fixed PC whose block exists (linked
   since: see "Done so far"; the computed exits keep their targets too).
   Next, in that order:
-  - Leading Lap's `jit_written()` (4.1% of core 1 in its profile): its
-    writes land in pages with code; finer pages or a cheaper walk. Its
-    link exits that keep coming back unlinked (~33 a frame) may be the
-    same story (their target dropped and made again).
   - Denser code (Leading Lap still flushes its 2 MB arena 25 times in
-    15000 frames on the host: the exits' table in 8 bytes, the P4's
-    compressed instructions).
+    15000 frames on the host: each flush is followed by its working set
+    run 64 times in the interpreter and made again, which is most of its
+    link exits that come back unlinked: 75679 of 85431 in its slow
+    stretch; the exits' records smaller, the P4's compressed
+    instructions).
   - The handlers left, last: Virtual Karting 2's BFINS, MULS.L and DIVS.L
     (~350 a frame), Leading Lap's DIVS.W and DIVU.W (~160). Handlers are
     esp32emu's Musashi: the ST and the Macs must be built and checked if
@@ -95,6 +94,16 @@ What: fewer P4 instructions per 68020 instruction.
   by the profiles.
 
 Done so far:
+
+- Writes beside code (2026-11-28, `jit.c`, `docs/jit-design-2026-11-27.md`,
+  "Writes beside code"): each page has a mask of the words its blocks
+  cover; a write looks at the mask before the page's blocks, the CPU's
+  in `jit_cpu_wrote()` alone. Measured first: Leading Lap's writes into
+  pages with code walked 31 blocks each (14.1 M in 1637 frames) and
+  never touched code. Its slowest window 94.3% → 96.8%, its slow stretch
+  94-96% → 97-100%; Deluxe Galaga's credits 1-2 points; `jit_written()`
+  3.0-4.8% of Leading Lap's core 1 → 0.5%. `jit_test` writes at more
+  places and sizes, twice a case, with blocks on two pages.
 
 - The computed exits' targets (2026-11-27, `jit.c`, `jit_rv.c`,
   `docs/jit-design-2026-11-27.md`, "The computed exits' targets" and

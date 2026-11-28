@@ -27,6 +27,7 @@ static uint8_t chip[CHIP], kick[256 * 1024], rom[256 * 1024];
 static uint8_t snap[CHIP], after_interp[CHIP];
 static uint32_t s_rng;
 static int failures, natives, cases_run;
+static int s_case, s_trace = -1;               /* (the case running; JIT_TEST_TRACE=<case>: its interpreted path) */
 
 void m68k_host_instruction(unsigned int pc)
 {
@@ -400,7 +401,7 @@ static void show(const char *what, const insn_t *i, const setup_t *u)
     for (int k = 0; k < i->n; k++) {
         fprintf(stderr, "%s%04x", k ? " " : "", i->w[k]);
     }
-    fprintf(stderr, "] rem %d fetch %d cacr %u sr %04x\n", u->rem, u->fetch, u->cacr, u->sr);
+    fprintf(stderr, "] rem %d fetch %d cacr %u sr %04x (case %d)\n", u->rem, u->fetch, u->cacr, u->sr, s_case);
 }
 
 static void run_interp(void)
@@ -410,6 +411,13 @@ static void run_interp(void)
     for (int k = 0; k < 1000 && m68ki_remaining_cycles > 0 && !m68ki_tracing; k++) {
         if (m68k_get_reg(NULL, M68K_REG_PC) & 1) {
             break;
+        }
+        if (s_case == s_trace) {
+            char text[100];
+            unsigned pc = m68k_get_reg(NULL, M68K_REG_PC);
+            m68k_disassemble(text, pc, M68K_CPU_TYPE_68EC020);
+            fprintf(stderr, "  %06x %-36s rem %4d sr %04x\n", pc, text, m68ki_remaining_cycles,
+                    m68k_get_reg(NULL, M68K_REG_SR));
         }
         mem_interp_one();
     }
@@ -485,7 +493,8 @@ static bool one_case(void)
     bool pair = add_reader(&i);
     memset(&u, 0, sizeof(u));
     u.pc = rn(3) ? CODE_CHIP : CODE_ROM;
-    u.pc += 2 * rn(4);                          /* (either half of a longword) */
+    u.pc += rn(2) ? 2 * rn(4) : 0xE0 + 2 * rn(16);   /* (either half of a longword; or a page's last
+                                                         * bytes: blocks on two pages) */
     for (int r = 0; r < 4; r++) {
         u.r[r] = rnd();
     }
@@ -508,7 +517,19 @@ static bool one_case(void)
     for (int k = 0; k < 64; k++) {
         u.tag[k] = rn(4) ? 0 : (((u.pc & ~0xFFu) | (uint32_t)k * 4) | 1);
     }
-    place(u.pc, &i, (int)rn(3));
+    /* the code's area cleared first (ori.b #0, D0): a branch back from the
+     * case's code lands in no earlier case's leftovers (code that may read
+     * a CIA, whose state the two runs don't share) */
+    for (uint32_t k = 0; k < 0x200; k += 2) {
+        uint32_t a = (u.pc & ~0xFFu) + k;
+        if (a >= 0xF80000) {
+            *(uint16_t *)(ami.rom + ((a - 0xF80000) & (ami.rom_size - 1))) = 0;
+        } else {
+            chip_write16(a, 0);
+        }
+    }
+    int loop = (int)rn(3);
+    place(u.pc, &i, loop);
     /* an RTS's or a JSR/JMP (An)'s target mostly the code after it (a
      * computed exit with a block there: its targets kept, then taken) */
     if (rn(4)) {
@@ -521,6 +542,12 @@ static bool one_case(void)
         }
     }
 
+    if (s_case == s_trace) {
+        for (int r = 0; r < 16; r++) {
+            fprintf(stderr, "%s%c%d %08x", r ? " " : "  ", r < 8 ? 'D' : 'A', r & 7, u.r[r]);
+        }
+        fprintf(stderr, "\n");
+    }
     memcpy(snap, chip, CHIP);
     apply(&u);
     run_interp();
@@ -545,11 +572,31 @@ static bool one_case(void)
         capture(&b);
         ok = same("linked", &i, &u, &a, &b);
     }
-    /* the word after it (its first BRA.S *) written over by the CPU: the
-     * block there dropped, its entries killed */
-    if (ok && u.pc < 0xF80000) {
+    /* a word of the code written over by the CPU, twice (the second after
+     * the first's drops made the page's mask again): the opcode or the
+     * filler's words, some beside any block; a word (moveq #n, D7), its
+     * high byte ($7E: a moveq whatever the low one) or a long, the blocks
+     * there dropped, their entries killed */
+    for (int k = 0; ok && u.pc < 0xF80000 && k < 2; k++) {
         restore();
-        m68k_write_memory_16(u.pc + 2 * (uint32_t)i.n, (uint16_t)(0x7E00 | rn(256)));   /* moveq #n, D7 */
+        int nops = loop == 1 ? 1 : loop == 2 ? 20 : 0;
+        bool op = i.n == 1 && !rn(4);          /* (the opcode only when it has no extension words:
+                                                 * they'd become instructions, any address) */
+        uint32_t at = op ? u.pc : u.pc + 2 * ((uint32_t)i.n + rn((uint32_t)nops + 4));
+        switch (rn(3)) {
+        case 0:
+            m68k_write_memory_16(at, (uint16_t)(0x7E00 | rn(256)));
+            break;
+        case 1:
+            m68k_write_memory_8(at, 0x7E);
+            break;
+        default:
+            /* two moveqs: over the filler, or the word before the code
+             * and the opcode (only the second word over a block) */
+            at = i.n == 1 && (op || !rn(3)) ? u.pc - 2 : at;
+            m68k_write_memory_32(at, 0x7E007E00u | rn(256) << 16 | rn(256));
+            break;
+        }
         memcpy(snap, chip, CHIP);
         apply(&u);
         run_interp();
@@ -559,7 +606,7 @@ static bool one_case(void)
         apply(&u);
         jit_run();
         capture(&b);
-        ok = same("killed", &i, &u, &a, &b);
+        ok = same(k ? "killed again" : "killed", &i, &u, &a, &b);
     }
     if (!ok) {
         failures++;
@@ -589,7 +636,11 @@ int main(int argc, char **argv)
     mem_jit_env(&s_env);
     extern uint8_t jit_hot;
     jit_hot = 1;                                    /* (every case translated at once) */
+    if (getenv("JIT_TEST_TRACE")) {
+        s_trace = atoi(getenv("JIT_TEST_TRACE"));
+    }
     for (int k = 0; k < cases && failures < 20; k++) {
+        s_case = k;
         one_case();
     }
     extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills, fills; } jit_stats;

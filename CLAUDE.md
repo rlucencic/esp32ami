@@ -123,7 +123,7 @@ images.
 | `main/settings.c` | NVS `ami`, which Kickstart and RAM each model takes, its defaults (A2000: 1 MB chip, 2 MB fast) |
 | `main/jit_probe.c` | The console's `X`: runs code written into PSRAM (TODO 19's translating core: does the P4 allow it, how fast) |
 | `components/amiga/` | The machine, platform independent (`include/amiga.h`) |
-| `components/amiga/jit.c`, `jit.h` | The 68EC020's translated blocks (TODO 19, `docs/jit-design-2026-11-27.md`): the arena (2044 KB, less while PSRAM is short; given back when a disk's buffer needs the room: `ami_malloc_big()`), the block cache, invalidation (per-bank page tables in the arena), the dispatcher (code translated once it ran 64 times; an exit's flow on to a fixed PC linked to that block's entry the first time it comes back, a computed exit's (RTS, JSR/JMP (An)) last two targets' blocks kept after its record, a dropped block's entries sent back to the dispatcher) |
+| `components/amiga/jit.c`, `jit.h` | The 68EC020's translated blocks (TODO 19, `docs/jit-design-2026-11-27.md`): the arena (2044 KB, less while PSRAM is short; given back when a disk's buffer needs the room: `ami_malloc_big()`), the block cache, invalidation (per-bank page tables in the arena: each 256-byte page's blocks and a mask of the words they cover, looked at first; the CPU's writes in `jit_cpu_wrote()`), the dispatcher (code translated once it ran 64 times; an exit's flow on to a fixed PC linked to that block's entry the first time it comes back, a computed exit's (RTS, JSR/JMP (An)) last two targets' blocks kept after its record, a dropped block's entries sent back to the dispatcher) |
 | `components/amiga/jit_rv.c`, `rv.h` | The translation into RISC-V: the instructions it knows, the shared routines (memory accesses, the flags to memory, a handler's call), pending flags; `rv.h` the encoder |
 | `components/amiga/host/rvsim.c` | The host's RV32IM interpreter: the host runs the very code the board runs (the build not position independent, the heap low: every address in 32 bits) |
 | `components/amiga/host/` | Host build for testing on the Mac (see Testing) |
@@ -967,15 +967,21 @@ the top two bits do nothing, Aerial Racers' race sets them),
   by the interpreter and by the translated code, registers, SR, PC, PPC,
   IR, the cycles left, the fetch state, the tags and chip RAM compared;
   then again without a flush, the exits the first run linked taken, and
-  in chip RAM after the word behind it was written over, its block's
-  entries killed; the code after it a `bra.s *`, a loop that counts the
+  in chip RAM twice after a write over the code (the opcode of a one-word
+  instruction, the filler's words, words beside any block; a word, a
+  byte or a long), the blocks there dropped and their entries killed;
+  the code at a page's end in half the cases (blocks on two pages), its
+  area cleared first; `JIT_TEST_TRACE=<case>` prints a case's
+  interpreted path; the code after it a `bra.s *`, a loop that counts the
   cycles down, or twenty NOPs looping (blocks cut at 16 instructions, so
   links into the next in sequence); an RTS's or JSR/JMP (An)'s target
   mostly that code (its targets kept, then taken); it caught a planted
   cycle and a planted V flag error at once, and a link to the wrong
   entry, a dropped block not killed, a link without its cycles check, a
   kept target's wrong entry and a kept target taken without its
-  compare). `rv.h`'s
+  compare; and five mask errors: a write's last word, the mask not made
+  again after a drop, a block's second page, the CPU's fast path's last
+  word and its page). `rv.h`'s
   encodings against the GNU assembler: `host/rv_enc_test.c` (2360
   instructions the same as `riscv32-esp-elf-as -march=rv32im`'s). `make
   test` builds the tests, not `build/ami_host`: `make build/ami_host` for
@@ -1011,7 +1017,9 @@ the top two bits do nothing, Aerial Racers' race sets them),
   `AMI_JITSTAT[=<frame>]` (translations, flushes, distinct blocks, time,
   the arena, the handlers called; the exits by kind, the lookups, the
   RISC-V instructions run, how often a computed exit's target repeats;
-  counted from that frame on; with `AMI_OPSTAT`
+  the writes looked at (into pages with code, over code's words, the
+  blocks walked and dropped, the writing PCs), what a link exit back at
+  the dispatcher found; counted from that frame on; with `AMI_OPSTAT`
   over the same frames each opcode's runs, handler calls and runs
   outside blocks as `jitop` lines),
   `AMI_JITARENA=<KB>` (a smaller arena, 256 at least),

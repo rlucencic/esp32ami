@@ -87,7 +87,8 @@ moment. So:
 - How much the fetch timing costs in translated code (a tag check per
   longword); a block whose lines stay in the cache could skip it.
 - Self-modifying loops writing next to their code: 256-byte pages, the
-  blocks on a page checked by address, may need finer pages.
+  blocks on a page checked by address, may need finer pages. (Answered by
+  a mask of each page's words with code: "Writes beside code".)
 - How big the code cache needs to be (PSRAM: ~3.4 MB free with the
   A1200's 8 MB of fast RAM; 2 MB since, "The larger arena").
 
@@ -551,3 +552,86 @@ code 34%, the chips 34% (Lisa's fetch 7.5%, Paula 6.9%, the line's end
 each: worked out on every line while it reads CLXDAT), `memcpy` 4%. Its
 later slow windows (~89-91%) do little on the CPU. So its next lever is
 the collisions, not the CPU.
+
+## Writes beside code (2026-11-28)
+
+Leading Lap's profile had `jit_written()` at 3.0-4.8% of core 1, Deluxe
+Galaga's 1.2-1.3%, Virtual Karting 2's 1.7%. **Counted on the host**
+(`AMI_JITSTAT`'s write lines, Leading Lap's slow stretch, frames
+6290-7927):
+
+- 1.39 M CPU writes came to `jit_written()` (their 2 KB has code: ~850 a
+  frame), 450000 of them into a 256-byte page with code. Each walked the
+  page's list: 14.1 M blocks, 31 a write (a block starts at every branch
+  target and runs on up to 16 instructions, so many overlap). Not one
+  write touched code: the game's variables sit between its routines
+  (`move.w d0,$2208fe` beside code ending a few bytes before).
+- Masks of the code's bytes in pieces of 2, 4, 8 and 16 bytes would
+  leave 0, 5843, 10867 and 263450 of those writes walking. So a bit a
+  word.
+- The link exits that came back unlinked (~33 a frame) were not drops
+  (there were none): 75679 of 85431 went to code not yet translated, the
+  working set made again after each of the stretch's 8 arena flushes (64
+  runs in the interpreter first). That is the arena's size, not writes.
+
+**The code** (`jit.c`):
+
+- Each page has a mask of the words its blocks cover (128 bits), beside
+  its list in the bank's table (5 KB a bank on the board instead of 1
+  KB: Leading Lap makes 7 a fill, 28 KB more of the 2 MB arena). A block
+  is 256 bytes at most (`MAX_BYTES`), so it lies on one or two pages and
+  is on both lists: a page's list holds every block over it, and the
+  mask is exact.
+- A block's words are set as it goes on a list; a dropped block's page
+  gets its mask made again from the blocks left.
+- `jit_written()` looks at the mask's bits for the written words and
+  walks the list only if one is set.
+- `jit_cpu_wrote()` (the CPU's write of 1-4 bytes in one page) does it
+  all itself, a leaf: 18 instructions back for a page without code, ~40
+  with the mask, the walk a tail call.
+
+**Checked on the host**: in all six stretches no write walks a list any
+more (Deluxe Galaga's credits: 339000 writes into pages with code, all
+beside it). The collection 96 of 96, the survey 26 of 26 and the replays
+4 of 4 the same as the interpreter, with and without the fast path.
+`jit_test` now writes over the code at more places: the opcode (of a
+one-word instruction: an extension word made an opcode could address
+anything), the filler's words and words beside any block, as a word, a
+byte or a long (the word before the code and the opcode: only the second
+word over a block), twice a case (the second after the first's drops
+made the mask again), with the code at a page's end in half the cases
+(blocks on two pages). It catches a write's last word left out, the mask
+not made again after a drop, a block's second page unmasked, the fast
+path's last word left out and its mask from the wrong page. The new
+cases first showed two failures that were the test's own: a branch back
+into an earlier case's leftover code, and an extension word made an
+opcode, read CIA-B's TOD and timer, which the interpreter's run and the
+translated run don't share. The code's area is cleared before each case
+now: 3 seeds x 100000 cases, none failing.
+
+**The Tab5** (median, slowest window without a mark; links and kept
+targets → the masks → the fast path too):
+
+| Title | Before | Masks | Fast path |
+|---|---|---|---|
+| Leading Lap | 99.6% (94.3%) | 99.7% (96.4%) | 99.8% (96.8%) |
+| Deluxe Galaga | 99.5% (88.9%) | 99.6% (92.6%) | 99.7% (92.3%) |
+| AmiBee | 99.9% (99.5%) | 100% (99.3%) | 100% (99.0%) |
+| Gea Lux | 100% (97.1%) | 100% (96.5%) | 100% (97.9%) |
+| Virtual Karting 2 | 99.9% (99.6%) | 99.8% (99.4%) | 99.8% (99.6%) |
+
+- Leading Lap's slow stretch (frames ~6800-8000): 94.3-96.0% → 96.4-99.4%
+  → 96.8-100.4%; 4 of 39 windows under 97.5% → 2 of 42 → 2 of 41.
+- Deluxe Galaga's credits, the four windows holding the same screenshots
+  and profiles in each run: 92.8, 94.4, 90.1, 93.1% → 92.8, 94.1, 90.3,
+  93.4% → 93.9, 94.9, 92.2, 94.6%. Its windows under 97.5% 10 → 10 → 7.
+- The profiles: `jit_written()` 3.0-4.8% of Leading Lap's core 1 → 1.4%
+  → `jit_cpu_wrote()` 0.5%; Deluxe Galaga's 1.2-1.3% → 1.3% → 0.5-0.6%;
+  Virtual Karting 2's 1.7% → 0.7% → under 0.4%. With the masks alone the
+  calls themselves were the cost (~850 a frame).
+- Left of the writes: `m68k_write_memory_16` ~1% (the translated code
+  sends a write in a 2 KB with code to it, the interpreter's too).
+
+**Next**: Leading Lap's arena (25 flushes in 15000 frames on the host,
+each followed by its working set run 64 times in the interpreter and
+made again): denser code. Deluxe Galaga: its collisions.

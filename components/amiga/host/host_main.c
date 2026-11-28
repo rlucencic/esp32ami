@@ -175,8 +175,37 @@ static void opstat_write(void)
 #ifdef AMI_JIT
 /* (AMI_JITSTAT=<frame>) the translated code's counters from here on */
 extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills, fills; } jit_stats;
+typedef struct { uint32_t pc; unsigned long n, m; } jit_pc_count_t;
+extern jit_pc_count_t jit_wr_pcs[4096], jit_drop_pcs[4096], jit_untrans_pcs[4096];
+extern unsigned long jit_after_link[4];
+extern unsigned long jit_wr[2][5], jit_bank_tables;
+
+/* (AMI_JITSTAT) a PC table's most counted */
+static void top_pcs(const char *what, jit_pc_count_t *t, int k)
+{
+    for (int i = 0; i < k; i++) {
+        int best = -1;
+        for (int j = 0; j < 4096; j++) {
+            if (t[j].pc && t[j].n && (best < 0 || t[j].n > t[best].n)) {
+                best = j;
+            }
+        }
+        if (best < 0) {
+            break;
+        }
+        printf("jit %s %06x %10lu  (last at %06lx)\n", what, t[best].pc - 1, t[best].n, t[best].m);
+        t[best].n = 0;
+    }
+}
+
 static void jitstat_reset(void)
 {
+    memset(jit_wr, 0, sizeof(jit_wr));
+    jit_bank_tables = 0;
+    memset(jit_wr_pcs, 0, sizeof(jit_wr_pcs));
+    memset(jit_drop_pcs, 0, sizeof(jit_drop_pcs));
+    memset(jit_untrans_pcs, 0, sizeof(jit_untrans_pcs));
+    memset(jit_after_link, 0, sizeof(jit_after_link));
     extern uint32_t jit_fb_count[65536], jit_interp_count[65536];
     extern uint64_t rvsim_steps, rvsim_calls;
     extern double jit_t_decode, jit_t_emit;
@@ -971,6 +1000,16 @@ int main(int argc, char **argv)
                    "after a handler %lu / %lu\n",
                    jit_lookups, jit_probes, jit_stats.links, jit_stats.kills, jit_exits[3][0], jit_exits[3][1],
                    jit_exits[0][0], jit_exits[0][1], jit_exits[1][0], jit_exits[1][1], jit_exits[2][0], jit_exits[2][1]);
+            printf("jit: writes looked at: the CPU's (its 2 KB with code) %lu, %lu into a 256-byte page with code, %lu over "
+                   "its code's words (%lu blocks looked at), %lu blocks dropped; DMA's and helpers' %lu, %lu, %lu (%lu), %lu; "
+                   "%lu banks' tables made\n",
+                   jit_wr[0][0], jit_wr[0][1], jit_wr[0][2], jit_wr[0][3], jit_wr[0][4], jit_wr[1][0], jit_wr[1][1],
+                   jit_wr[1][2], jit_wr[1][3], jit_wr[1][4], jit_bank_tables);
+            top_pcs("writer", jit_wr_pcs, 12);
+            top_pcs("dropped", jit_drop_pcs, 12);
+            printf("jit: after a link exit: a block there %lu, none (not hot yet) %lu, none made %lu, made now %lu\n",
+                   jit_after_link[0], jit_after_link[1], jit_after_link[2], jit_after_link[3]);
+            top_pcs("untranslated", jit_untrans_pcs, 8);
             extern unsigned long jit_dyn[3][6];
             static const char *const dk[3] = { "RTS", "JSR", "JMP" };
             for (int k = 0; k < 3; k++) {

@@ -74,6 +74,34 @@ unsigned long jit_lookups, jit_probes, jit_exits[4][2];
  * (of 1, 2, 4 kept per exit, the latest first), the last one and a block
  * there */
 unsigned long jit_dyn[3][6];
+/* (AMI_JITSTAT) the writes looked at, by the CPU (its 2 KB had code) and by
+ * DMA and helpers: their number, those with code in their 256-byte page,
+ * those over a word of code there (the page's blocks looked at), the blocks
+ * looked at, the blocks dropped; the CPU's writes over code by the writing
+ * instruction, the dropped blocks by their PC; the banks' tables made */
+unsigned long jit_wr[2][5];
+unsigned long jit_bank_tables;
+/* (AMI_JITSTAT) after a link exit back at the dispatcher: a block there,
+ * none yet (not hot), none made (translate() failed), one made now; the
+ * PCs translate() failed at */
+unsigned long jit_after_link[4];
+static int s_wr_cpu;
+#define PC_SLOTS        4096
+typedef struct { uint32_t pc; unsigned long n, m; } jit_pc_count_t;
+jit_pc_count_t jit_wr_pcs[PC_SLOTS], jit_drop_pcs[PC_SLOTS], jit_untrans_pcs[PC_SLOTS];
+
+static jit_pc_count_t *pc_count(jit_pc_count_t *t, uint32_t pc)
+{
+    uint32_t h = (pc >> 1) & (PC_SLOTS - 1);
+    for (int i = 0; i < PC_SLOTS; i++, h = (h + 1) & (PC_SLOTS - 1)) {
+        if (t[h].pc == pc + 1 || !t[h].pc) {
+            t[h].pc = pc + 1;
+            return &t[h];
+        }
+    }
+    static jit_pc_count_t spare;
+    return &spare;
+}
 #define TGT_SLOTS       65536
 static struct {
     const jit_exit_t *e;
@@ -276,10 +304,56 @@ void jit_flush(void)
 
 /* ---- Pages ---- */
 
+/* Each page's blocks: a list, and a mask of the words they cover (a bit a
+ * 68k word): a write beside code (a game's variables between its routines)
+ * looks at the mask, not the blocks (Leading Lap: 31 blocks a write, 450000
+ * such writes in 1637 frames and none into code). Blocks are 256 bytes at
+ * most (jit_rv.c's MAX_BYTES): each is on the lists of the one or two pages
+ * it touches, so a page's list holds every block over it. */
+#define MASK_WORDS      (1u << (JIT_PAGE_SHIFT - 6))    /* 32-bit words of a page's mask */
+#define PAGE_WORDS      (1u << (JIT_PAGE_SHIFT - 1))
+
 /* page p's list (its bank's table made already) */
 static inline jit_block_t **page_list(uint32_t p)
 {
     return &s_dir[p / BANK_PAGES][p % BANK_PAGES];
+}
+
+/* page p's mask (after its bank's lists) */
+static inline uint32_t *page_mask(uint32_t p)
+{
+    return (uint32_t *)(s_dir[p / BANK_PAGES] + BANK_PAGES) + (p % BANK_PAGES) * MASK_WORDS;
+}
+
+/* the words of page p the bytes [lo, hi) touch: [*w0, *w1) */
+static inline void page_words(uint32_t p, uint32_t lo, uint32_t hi, unsigned *w0, unsigned *w1)
+{
+    uint32_t base = p << JIT_PAGE_SHIFT;
+    *w0 = lo > base ? (lo - base) >> 1 : 0;
+    *w1 = hi < base + (1u << JIT_PAGE_SHIFT) ? (hi - base + 1) >> 1 : PAGE_WORDS;
+}
+
+/* mask word i's bits of the words [w0, w1) */
+static inline uint32_t span_bits(unsigned i, unsigned w0, unsigned w1)
+{
+    int a = (int)w0 - 32 * (int)i, z = (int)w1 - 32 * (int)i;
+    a = a < 0 ? 0 : a;
+    z = z > 32 ? 32 : z;
+    if (z <= a) {
+        return 0;
+    }
+    return (z == 32 ? ~0u : (1u << z) - 1) & ~((1u << a) - 1);
+}
+
+/* b's words in page p's mask */
+static void mask_add(uint32_t p, const jit_block_t *b)
+{
+    unsigned w0, w1;
+    page_words(p, b->pc, b->end, &w0, &w1);
+    uint32_t *m = page_mask(p);
+    for (unsigned i = w0 >> 5; i <= (w1 - 1) >> 5; i++) {
+        m[i] |= span_bits(i, w0, w1);
+    }
 }
 
 /* the tables of the banks page[0] and page[1] are in, made at *at (up to
@@ -289,13 +363,16 @@ static bool page_tables(const uint32_t page[2], uint8_t **at, uint8_t *end)
     for (int i = 0; i < 2; i++) {
         uint32_t k = page[i] / BANK_PAGES;
         if (!s_dir[k]) {
-            size_t n = BANK_PAGES * sizeof(jit_block_t *);
+            size_t n = BANK_PAGES * (sizeof(jit_block_t *) + MASK_WORDS * 4);
             if ((size_t)(end - *at) < n) {
                 return false;
             }
             s_dir[k] = (jit_block_t **)*at;
             memset(s_dir[k], 0, n);
             *at += n;
+#ifndef ESP_PLATFORM
+            jit_bank_tables++;
+#endif
         }
     }
     return true;
@@ -307,9 +384,11 @@ static void page_add(jit_block_t *b, int i)
     jit_block_t **l = page_list(p);
     b->page_next[i] = *l;
     *l = b;
+    mask_add(p, b);
     jit_code_pages[p >> 3] |= (uint8_t)(1u << (p & 7));
 }
 
+/* b off page p's list, the mask made again from the blocks left */
 static void page_remove(jit_block_t *b, int i)
 {
     uint32_t p = b->page[i];
@@ -322,6 +401,10 @@ static void page_remove(jit_block_t *b, int i)
             break;
         }
         l = &o->page_next[k];
+    }
+    memset(page_mask(p), 0, MASK_WORDS * 4);
+    for (jit_block_t *o = *head; o; o = o->page_next[o->page[0] == p ? 0 : 1]) {
+        mask_add(p, o);
     }
     if (!*head) {
         jit_code_pages[p >> 3] &= (uint8_t)~(1u << (p & 7));
@@ -377,6 +460,13 @@ void jit_written(uint32_t lo, uint32_t hi)
     lo &= 0xFFFFFF;
     hi = hi - lo > 0x1000000 ? lo + 0x1000000 : hi;
     uint32_t last = ((hi - 1) & 0xFFFFFF) >> JIT_PAGE_SHIFT;
+#ifndef ESP_PLATFORM
+    int src = s_wr_cpu ? 0 : 1;
+    bool paged = false, walked = false;
+    if (src) {
+        jit_wr[1][0]++;                     /* (the CPU's counted by jit_cpu_wrote()) */
+    }
+#endif
     for (uint32_t p = lo >> JIT_PAGE_SHIFT; p <= last && p < JIT_PAGES; p++) {
         uint32_t w;
         if (!(p & 31) && (memcpy(&w, &jit_code_pages[p >> 3], 4), !w)) {
@@ -386,19 +476,87 @@ void jit_written(uint32_t lo, uint32_t hi)
         if (!(jit_code_pages[p >> 3] & (1u << (p & 7)))) {
             continue;
         }
+#ifndef ESP_PLATFORM
+        paged = true;
+#endif
+        unsigned w0, w1;
+        page_words(p, lo, hi, &w0, &w1);
+        const uint32_t *m = page_mask(p);
+        uint32_t any = 0;
+        for (unsigned i = w0 >> 5; i <= (w1 - 1) >> 5; i++) {
+            any |= m[i] & span_bits(i, w0, w1);
+        }
+        if (!any) {
+            continue;                       /* (beside the page's code) */
+        }
+#ifndef ESP_PLATFORM
+        walked = true;
+#endif
         for (jit_block_t *b = *page_list(p); b; ) {
             jit_block_t *next = b->page_next[b->page[0] == p ? 0 : 1];
+#ifndef ESP_PLATFORM
+            jit_wr[src][3]++;
+#endif
             if (b->pc < hi && lo < b->end) {
+#ifndef ESP_PLATFORM
+                jit_wr[src][4]++;
+                pc_count(jit_drop_pcs, b->pc)->n++;
+#endif
                 drop(b);
             }
             b = next;
         }
     }
+#ifndef ESP_PLATFORM
+    if (src) {
+        jit_wr[1][1] += paged;
+    }
+    jit_wr[src][2] += walked;
+    if (src == 0 && walked) {
+        uint32_t pc = s_running ? m68k_get_reg(NULL, M68K_REG_PC) : m68k_get_reg(NULL, M68K_REG_PPC);
+        jit_pc_count_t *c = pc_count(jit_wr_pcs, pc);
+        c->n++;
+        c->m = lo;
+    }
+#endif
 }
 
+/* The CPU's write of 1-4 bytes at a (jit_check_write(): its 2 KB has
+ * code). Most land beside code, in the same page: the page's bit or its
+ * mask says so here, without jit_written()'s loop (Leading Lap: ~850 such
+ * writes a frame, 1.4% of core 1 through the loop) */
 void jit_cpu_wrote(uint32_t a, int bytes)
 {
-    jit_written(a & 0xFFFFFF, (a & 0xFFFFFF) + (uint32_t)bytes);
+    a &= 0xFFFFFF;
+    uint32_t z = a + (uint32_t)bytes - 1, p = a >> JIT_PAGE_SHIFT;
+#ifndef ESP_PLATFORM
+    jit_wr[0][0]++;
+#endif
+    if (p == z >> JIT_PAGE_SHIFT) {
+        if (!(jit_code_pages[p >> 3] & (1u << (p & 7)))) {
+            return;
+        }
+#ifndef ESP_PLATFORM
+        jit_wr[0][1]++;
+#endif
+        const uint32_t *m = page_mask(p);
+        unsigned w = (a & ((1u << JIT_PAGE_SHIFT) - 1)) >> 1, last = (z & ((1u << JIT_PAGE_SHIFT) - 1)) >> 1;
+        for (; w <= last; w++) {
+            if (m[w >> 5] & (1u << (w & 31))) {
+                break;
+            }
+        }
+        if (w > last) {
+            return;                         /* (beside the page's code) */
+        }
+    }
+#ifndef ESP_PLATFORM
+    s_wr_cpu = 1;
+    jit_written(a, a + (uint32_t)bytes);
+    s_wr_cpu = 0;
+#else
+    jit_written(a, a + (uint32_t)bytes);
+#endif
 }
 
 /* ---- Translation and the dispatcher ---- */
@@ -613,10 +771,24 @@ int AMI_HOT jit_run(void)
             return 1;                       /* (Musashi's: the address error) */
         }
         jit_block_t *b = a <= 0xFFFFFF ? lookup(a) : NULL;
+#ifndef ESP_PLATFORM
+        int how = b ? 0 : 1;
+#endif
         if (!b && a <= 0xFFFFFF && ++s_heat[hash(a)] >= jit_hot) {
             s_heat[hash(a)] = 0;
             b = translate(a);
+#ifndef ESP_PLATFORM
+            how = b ? 3 : 2;
+#endif
         }
+#ifndef ESP_PLATFORM
+        if (from && from->kind == JIT_EXIT_LINK) {
+            jit_after_link[how]++;
+            if (how == 2) {
+                pc_count(jit_untrans_pcs, a)->n++;
+            }
+        }
+#endif
         if (!b) {
 #ifndef ESP_PLATFORM
             if (a <= 0xFFFFFF) {

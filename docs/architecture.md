@@ -1496,6 +1496,25 @@ TODO item 19: the 68EC020's blocks in RISC-V on the board
   input lands within a frame there), so exactness rests on the host,
   which runs the same code.
 
+### Writes beside code, 2026-11-28
+
+TODO item 19 (`jit-design-2026-11-27.md`, "Writes beside code").
+
+- **Measured first**: Leading Lap's CPU writes into pages with translated
+  code (450000 in 1637 frames) each walked the page's blocks (31 on
+  average) and none touched code: its variables sit between its
+  routines. A mask of the code's words would leave none walking (4-byte
+  pieces 5843, 16-byte 263450).
+- **The code**: each page's blocks also set a mask of the words they
+  cover (made again from the blocks left when one is dropped); a write
+  looks at the mask first, the CPU's in `jit_cpu_wrote()` alone.
+- **Results**: Leading Lap's slowest window 94.3% → 96.8% (its slow
+  stretch 94-96% → 97-100%), Deluxe Galaga's credits 1-2 points;
+  `jit_written()` 3.0-4.8% of Leading Lap's core 1 → 0.5%. The host: the
+  collection, the survey and the replays the same as the interpreter;
+  `jit_test` writes at more places and sizes, twice a case, with blocks
+  on two pages, and catches five planted mask errors.
+
 ### The computed exits' targets, 2026-11-27
 
 TODO item 19 (`jit-design-2026-11-27.md`, "The computed exits' targets"
