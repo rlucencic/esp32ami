@@ -92,10 +92,24 @@ static struct {
     int pk, psize;                          /* the pending flags (PK_NONE: in memory) */
     jit_fb_t *fb;
     int nfb;
+    uint32_t *res;                          /* the instructions' resume words (JIT_RES) */
     int common;
 } T;
 
 #define R (&T.r)
+
+#ifndef ESP_PLATFORM
+/* (AMI_JITSTAT) the arena's bytes by what they are for: counted in an
+ * attempt (s_bt), kept when the block is made (jit_bytes); the outermost
+ * part counts what it holds */
+unsigned long jit_bytes[JB_N];
+static unsigned long s_bt[JB_N];
+static int s_btd;
+#define BT(cat, stmt) do { uint32_t *bt0_ = R->p; s_btd++; stmt; if (--s_btd == 0) { \
+        s_bt[cat] += (unsigned long)(R->p - bt0_) * 4; } } while (0)
+#else
+#define BT(cat, stmt) do { stmt; } while (0)
+#endif
 
 /* values across calls: an address, a source, a destination, a result */
 #define RA_ S3
@@ -138,7 +152,8 @@ static void st_rem(void) { abs_access(2, true, S1, addr32(&m68ki_remaining_cycle
 
 /* ---- The shared routines ---- */
 
-enum { ST_PROLOGUE, ST_EXIT, ST_BAIL, ST_RD8, ST_RD16, ST_RD32, ST_WR8, ST_WR16, ST_WR32, ST_FB, ST_N };
+enum { ST_PROLOGUE, ST_EXIT, ST_EXIT_RF, ST_BAIL, ST_RD8, ST_RD16, ST_RD32, ST_WR8, ST_WR16, ST_WR32, ST_FB, ST_RESUME,
+       ST_N };
 static uint32_t s_stub[ST_N];
 enum { PK_NONE, PK_LOGIC, PK_SUB, PK_ADD, PK_Z };   /* pending flags (below) */
 static uint32_t s_mat[5][5];                /* their routines, by kind and size */
@@ -207,8 +222,15 @@ static int new_link(uint32_t pc, uint32_t fe, int chk)
 
 /* ---- The fetch timing ---- */
 
+static void charge_longword_(uint32_t a);
+
 /* ic_longword() for the longword holding a */
 static void charge_longword(uint32_t a)
+{
+    BT(JB_FETCH, charge_longword_(a));
+}
+
+static void charge_longword_(uint32_t a)
 {
     uint32_t wait = T.u->wait;
     int32_t tag = (int32_t)((a & ~3u) - (T.in[0].pc & ~3u));   /* (from s2: the block's first's) */
@@ -236,7 +258,14 @@ static void charge_longword(uint32_t a)
 
 /* The opcode at a: reached after code whose last word ends at fe (static),
  * or (dyn) as the fetch state in memory says */
+static void opcode_charge_(uint32_t a, bool dyn, uint32_t fe);
+
 static void opcode_charge(uint32_t a, bool dyn, uint32_t fe)
+{
+    BT(JB_FETCH, opcode_charge_(a, dyn, fe));
+}
+
+static void opcode_charge_(uint32_t a, bool dyn, uint32_t fe)
 {
     if (!(a & 2)) {
         charge_longword(a);
@@ -262,10 +291,9 @@ static void hook(uint32_t a)
     if (!jit_hooks) {
         return;
     }
-    st_rem();
-    rv_li(R, A0, a);
-    rv_sw(R, A0, OFF(pc), S0);              /* (the host's debugging reads it) */
-    rv_call(R, addr32((const void *)m68k_host_instruction));
+    BT(JB_HOOK, st_rem(); rv_li(R, A0, a);
+       rv_sw(R, A0, OFF(pc), S0);           /* (the host's debugging reads it) */
+       rv_call(R, addr32((const void *)m68k_host_instruction)));
 #else
     (void)a;
 #endif
@@ -301,9 +329,9 @@ static void set_ppc(void)
     }
     int32_t d = (int32_t)(a - (uint32_t)T.s5);
     if (T.s5 >= 0 && imm12(d)) {
-        rv_addi(R, S5, S5, d);
+        BT(JB_PPC, rv_addi(R, S5, S5, d));
     } else {
-        rv_li(R, S5, a);
+        BT(JB_PPC, rv_li(R, S5, a));
     }
     T.s5 = a;
 }
@@ -312,7 +340,7 @@ static void set_ppc(void)
 static void mem_routine(int stub)
 {
     set_ppc();
-    jal_abs(RA, s_stub[stub]);
+    BT(JB_MEMCALL, jal_abs(RA, s_stub[stub]));
     if (stub >= ST_WR8) {
         T.wrote = true;
     }
@@ -555,7 +583,7 @@ static int nshift(int size) { return size == 1 ? 0 : size == 2 ? 8 : 24; }
 static void materialize(void)
 {
     if (T.pk != PK_NONE) {
-        jal_abs(T0, s_mat[T.pk][T.psize]);
+        BT(JB_MAT, jal_abs(T0, s_mat[T.pk][T.psize]));
         T.pk = PK_NONE;
     }
 }
@@ -882,7 +910,7 @@ static void branch_to(uint32_t a, uint32_t fe)
         rv_jl(R, new_link(a, fe, CHK_S1));
         return;
     }
-    rv_blez(R, S1, new_exit(JIT_EXIT_PC, a, fe));
+    BT(JB_CHECK, rv_blez(R, S1, new_exit(JIT_EXIT_PC, a, fe)));
     int pk = T.pk, ps = T.psize;
     materialize();                          /* (the target takes the flags from memory) */
     hook(a);
@@ -894,7 +922,7 @@ static void branch_to(uint32_t a, uint32_t fe)
 static void cycles(int32_t c)
 {
     if (c) {
-        rv_addi(R, S1, S1, -c);
+        BT(JB_CYCLES, rv_addi(R, S1, S1, -c));
     }
 }
 
@@ -2005,9 +2033,7 @@ static void fallback(void)
     f->op = u->op;
     f->len = (uint8_t)(u->next - u->pc);
     f->wait = u->wait;
-    rv_li(R, A0, addr32(f));
-    jal_abs(RA, s_stub[ST_FB]);
-    rv_bnez(R, A0, new_exit(JIT_EXIT_FB, 0, 0));
+    BT(JB_FB, rv_li(R, A0, addr32(f)); jal_abs(RA, s_stub[ST_FB]); rv_bnez(R, A0, new_exit(JIT_EXIT_FB, 0, 0)));
     T.fe_dyn = true;
 }
 
@@ -2054,24 +2080,26 @@ static bool emit_block(void)
      * (s2: charge_longword()) and the first opcode's fetch */
     uint32_t pc0 = T.in[0].pc;
     T.u = &T.in[0];
-    jal_abs(T0, s_stub[ST_PROLOGUE]);
+#ifndef ESP_PLATFORM
+    memset(s_bt, 0, sizeof(s_bt));
+    s_btd = 0;
+#endif
+    BT(JB_ENTRY, jal_abs(T0, s_stub[ST_PROLOGUE]));
     T.entry_l[1] = -1;
     if (pc0 & 2) {
         T.entry_l[1] = rv_new_label(R);
-        rv_lw(R, T0, T.ic_next_off, S0);
-        rv_li(R, T1, pc0);
-        rv_bcc(R, RV_BEQ, T0, T1, T.entry_l[1]);
+        BT(JB_ENTRY, rv_lw(R, T0, T.ic_next_off, S0); rv_li(R, T1, pc0); rv_bcc(R, RV_BEQ, T0, T1, T.entry_l[1]));
     }
     T.entry_l[0] = rv_new_label(R);
     rv_place(R, T.entry_l[0]);
     hook(pc0);
-    rv_li(R, S2, (pc0 & ~3u) | 1);
+    BT(JB_ENTRY, rv_li(R, S2, (pc0 & ~3u) | 1));
     charge_longword(pc0);
     if (pc0 & 2) {
-        rv_jl(R, T.in[0].body);
+        BT(JB_ENTRY, rv_jl(R, T.in[0].body));
         rv_place(R, T.entry_l[1]);
         hook(pc0);
-        rv_li(R, S2, (pc0 & ~3u) | 1);
+        BT(JB_ENTRY, rv_li(R, S2, (pc0 & ~3u) | 1));
     }
     for (int i = 0; i < T.n; i++) {
         tinsn_t *u = &T.in[i];
@@ -2089,12 +2117,22 @@ static bool emit_block(void)
         if (u->target) {
             T.s5 = -1;                      /* (reached from elsewhere too) */
         }
+        if (i > 0) {
+            /* (the state here, for a slice resumed at this instruction) */
+            uint32_t body = (uint32_t)(R->p - R->start);
+            T.res[i] = body > 0x7FF ? 0 : JIT_RES(body, u->pc - pc0, T.s5 < 0 ? 0xFF : (uint32_t)T.s5 - pc0,
+                                                    T.pk, T.psize == 1 ? 0 : T.psize == 2 ? 1 : 2);
+        }
         s_cyc = (*m68k_loop.cycles)[u->op];
         /* the translation, or the handler */
         uint32_t *p0 = R->p;
         int nl = R->nlabels, nf = R->nfixups, ne = T.nexits;
         int64_t s5 = T.s5;
         int pk = T.pk, ps = T.psize;
+#ifndef ESP_PLATFORM
+        unsigned long bt[JB_N];
+        memcpy(bt, s_bt, sizeof(bt));
+#endif
         bool flow = false, done = false, ok = false;
         bool native = (*m68k_loop.handlers)[u->op] != illegal;
         if (native) {
@@ -2126,15 +2164,17 @@ static bool emit_block(void)
             T.pk = pk, T.psize = ps;
             T.wrote = false;
             flow = false;
+#ifndef ESP_PLATFORM
+            memcpy(s_bt, bt, sizeof(bt));
+#endif
             fallback();
         } else {
             T.fe_dyn = false;
             if (!flow) {
                 int ex = new_exit(JIT_EXIT_PC, u->next, T.fe);
-                rv_blez(R, S1, ex);
+                BT(JB_CHECK, rv_blez(R, S1, ex));
                 if (T.wrote) {
-                    abs_access(4, false, T0, addr32((const void *)&jit_stop));
-                    rv_bnez(R, T0, ex);
+                    BT(JB_CHECK, abs_access(4, false, T0, addr32((const void *)&jit_stop)); rv_bnez(R, T0, ex));
                 }
             }
         }
@@ -2153,38 +2193,46 @@ static bool emit_block(void)
         /* (after a handler its state stands; else on to the next block, the
          * last instruction's checks done) */
         int ex = T.fe_dyn ? new_exit(JIT_EXIT_FB, T.u->next, 0) : new_link(T.u->next, T.fe, 0);
-        rv_jl(R, ex);
+        BT(JB_XJAL, rv_jl(R, ex));
     } else if (T.fe_dyn) {
         /* (a handler ended it: its own exit) */
-        rv_jl(R, new_exit(JIT_EXIT_FB, 0, 0));
+        BT(JB_XJAL, rv_jl(R, new_exit(JIT_EXIT_FB, 0, 0)));
     }
+#ifndef ESP_PLATFORM
+    {
+        unsigned long body = (unsigned long)(R->p - R->start) * 4;
+        for (int c = JB_ENTRY; c < JB_REST; c++) {
+            body -= s_bt[c];
+        }
+        s_bt[JB_REST] = body - s_bt[JB_XJAL];
+    }
+#endif
     /* the exits: the flags to memory, a link's checks and its two words
      * (nothing until linked), then on to the shared exit with the record's
      * address in a0 (it follows the jal) */
     for (int k = 0; k < T.nexits; k++) {
         rv_place(R, T.exit_label[k]);
         if (T.exit_pk[k] != PK_NONE) {
-            jal_abs(T0, s_mat[T.exit_pk[k]][T.exit_ps[k]]);
+            BT(JB_XMAT, jal_abs(T0, s_mat[T.exit_pk[k]][T.exit_ps[k]]));
         }
         int kind = T.exit[k].kind;
         int out = rv_new_label(R);
         if (kind == JIT_EXIT_LINK || kind == JIT_EXIT_DYN) {
             if (T.exit_chk[k] & CHK_S1) {
-                rv_blez(R, S1, out);
+                BT(JB_XCHK, rv_blez(R, S1, out));
             }
             if (T.exit_chk[k] & CHK_STOP) {
-                abs_access(4, false, T0, addr32((const void *)&jit_stop));
-                rv_bnez(R, T0, out);
+                BT(JB_XCHK, abs_access(4, false, T0, addr32((const void *)&jit_stop)); rv_bnez(R, T0, out));
             }
         }
         if (kind == JIT_EXIT_LINK) {
-            rv_word(R, RV_NOP);
-            rv_word(R, RV_NOP);
+            BT(JB_XNOPS, rv_word(R, RV_NOP); rv_word(R, RV_NOP));
         } else if (kind == JIT_EXIT_DYN) {
             /* the PC one of the targets kept after the record (JIT_DYN_*
              * from the auipc: words 14-17), a0 the jal to the exit (as a
              * link's: ST_BAIL) */
             int hit = rv_new_label(R);
+            uint32_t *x0 = R->p;
             rv_lw(R, T1, OFF(pc), S0);
             rv_word(R, (uint32_t)T2 << 7 | 0x17);              /* auipc t2, 0 */
             rv_lw(R, T0, JIT_DYN_PC0, T2);
@@ -2196,19 +2244,22 @@ static bool emit_block(void)
             rv_place(R, hit);
             rv_lw(R, T0, 0, T3);
             rv_jalr(R, A0, T0, 0);
+#ifndef ESP_PLATFORM
+            s_bt[JB_XDYN] += (unsigned long)(R->p - x0) * 4;
+#else
+            (void)x0;
+#endif
         }
         rv_place(R, out);
-        jal_abs(A0, s_stub[ST_EXIT]);
+        /* (a slice may resume after a slice's, a write's or a handler's exit:
+         * the registers kept) */
+        BT(JB_XJAL, jal_abs(A0, s_stub[kind == JIT_EXIT_PC || kind == JIT_EXIT_FB ? ST_EXIT_RF : ST_EXIT]));
         uint32_t w[4];
         memcpy(w, &T.exit[k], sizeof(w));
-        for (int i = 0; i < 4; i++) {
-            rv_word(R, w[i]);
-        }
+        BT(JB_RECORD, for (int i = 0; i < 4; i++) { rv_word(R, w[i]); });
         if (kind == JIT_EXIT_DYN) {
-            rv_word(R, 1);                  /* (no target yet: an odd PC never matches) */
-            rv_word(R, 0);
-            rv_word(R, 1);
-            rv_word(R, 0);
+            /* (no target yet: an odd PC never matches) */
+            BT(JB_DYNTGT, rv_word(R, 1); rv_word(R, 0); rv_word(R, 1); rv_word(R, 0));
         }
     }
     return !R->full && rv_link(R);
@@ -2248,6 +2299,26 @@ enum { CTX_RMAP, CTX_WMAP, CTX_WAIT, CTX_PAGES };
 static int32_t ctx_off(int i)
 {
     return (int32_t)(addr32(&jit_ctx[i]) - T.cpu);
+}
+
+/* jit_rf's and jit_rs's words from s0 */
+static int32_t rf_off(int i)
+{
+    return (int32_t)(addr32(&jit_rf[i]) - T.cpu);
+}
+
+static int32_t rs_off(int i)
+{
+    return (int32_t)(addr32(&jit_rs[i]) - T.cpu);
+}
+
+/* the fetch state's offsets from s0 (AMI_SDATA keeps it within reach) */
+static bool fetch_offsets(void)
+{
+    T.ic_next_off = (int32_t)(addr32(T.env.ic_next) - T.cpu);
+    T.ic_tag_off = (int32_t)(addr32(T.env.ic_tag) - T.cpu);
+    T.ic_cacr_off = (int32_t)(addr32(T.env.ic_cacr) - T.cpu);
+    return imm12(T.ic_next_off) && imm12(T.ic_tag_off) && imm12(T.ic_tag_off + 252) && imm12(T.ic_cacr_off);
 }
 
 /* t2 = the bank's pointer from a map (t1 = the bank); to slow when NULL */
@@ -2355,6 +2426,14 @@ bool jit_rv_stubs(uint8_t **at, uint8_t *end)
             return false;
         }
     }
+    for (int i = 0; i < JIT_RS_N; i++) {
+        if (!imm12(rs_off(i)) || (i < 4 && !imm12(rf_off(i)))) {
+            return false;
+        }
+    }
+    if (!fetch_offsets()) {
+        return false;
+    }
     R->start = R->p = (uint32_t *)*at;
     R->end = (uint32_t *)end;
     R->full = false;
@@ -2386,7 +2465,14 @@ bool jit_rv_stubs(uint8_t **at, uint8_t *end)
         return false;                       /* (its branch: before the routines' labels start again) */
     }
 
-    /* the exit (a0 = the exit's number) */
+    /* the exit (a0 = the exit's record); before it, for an exit a slice may
+     * resume after, the pending flags' registers and s2 kept (jit_rf:
+     * jit_rv_resume()) */
+    s_stub[ST_EXIT_RF] = addr32(R->p);
+    for (int i = 0; i < 3; i++) {
+        rv_sw(R, F_S + i, rf_off(i), S0);
+    }
+    rv_sw(R, S2, rf_off(3), S0);
     s_stub[ST_EXIT] = addr32(R->p);
     st_rem();
     rv_lw(R, RA, 60, SP);
@@ -2413,6 +2499,56 @@ bool jit_rv_stubs(uint8_t **at, uint8_t *end)
     rv_lw(R, RA, 12, SP);
     rv_addi(R, SP, SP, 16);
     rv_ret(R);
+
+    /* a slice resumed inside a block (jit_rs: jit_rv_resume()): the
+     * prologue, the code's state there (s2 its block's tags' base, s5, the
+     * pending flags' registers), the opcode's fetch as the fetch state says
+     * (opcode_charge(), its address in a0, the bank's wait in t3), then its
+     * body */
+    {
+        R->nlabels = R->nfixups = 0;
+        uint32_t *base = R->start;
+        R->start = R->p;
+        s_stub[ST_RESUME] = addr32(R->p);
+        int charge = rv_new_label(R), nowait = rv_new_label(R), miss = rv_new_label(R), go = rv_new_label(R);
+        jal_abs(T0, s_stub[ST_PROLOGUE]);
+        rv_lw(R, S2, rs_off(JIT_RS_S2), S0);
+        rv_lw(R, S5, rs_off(JIT_RS_S5), S0);
+        for (int i = 0; i < 3; i++) {
+            rv_lw(R, F_S + i, rs_off(JIT_RS_F + i), S0);
+        }
+        rv_lw(R, A0, rs_off(JIT_RS_PC), S0);
+        rv_andi(R, T0, A0, 2);
+        rv_beqz(R, T0, charge);
+        rv_lw(R, T0, T.ic_next_off, S0);
+        rv_bcc(R, RV_BEQ, T0, A0, go);      /* (its longword's second word, reached in sequence) */
+        rv_place(R, charge);
+        rv_lw(R, T3, rs_off(JIT_RS_WAIT), S0);
+        rv_andi(R, T1, A0, -4);
+        rv_ori(R, T1, T1, 1);               /* (its longword's tag) */
+        rv_andi(R, T2, A0, 0xFC);           /* (its line's) */
+        rv_add(R, T4, S9, T2);
+        rv_beqz(R, T3, nowait);
+        rv_lw(R, T0, T.ic_cacr_off, S0);
+        rv_andi(R, T0, T0, 1);
+        rv_beqz(R, T0, miss);
+        rv_add(R, T5, S0, T2);
+        rv_lw(R, T5, T.ic_tag_off, T5);
+        rv_bcc(R, RV_BEQ, T5, T1, go);
+        rv_sw(R, T1, 0, T4);
+        rv_place(R, miss);
+        rv_sub(R, S1, S1, T3);
+        rv_jl(R, go);
+        rv_place(R, nowait);
+        rv_sw(R, T1, 0, T4);
+        rv_place(R, go);
+        rv_lw(R, T0, rs_off(JIT_RS_BODY), S0);
+        rv_jalr(R, X0, T0, 0);
+        if (!rv_link(R)) {
+            return false;
+        }
+        R->start = base;
+    }
 
     /* reads: a0 = the address; the value in a0 (mem.c's callbacks' 68EC020
      * paths, plain memory inline) */
@@ -2533,6 +2669,77 @@ void jit_rv_kill(uint32_t *entry)
     *entry = rv_j((int32_t)(s_stub[ST_BAIL] - addr32(entry)), X0);
 }
 
+/* The flags in memory what the pending kind pk of size bytes makes of the
+ * registers f (s, d, r) where Musashi's tests look (mat_routine()) */
+static bool flags_match(int pk, int size, const uint32_t f[3])
+{
+    uint32_t s = f[0], d = f[1], r = f[2];
+    int sh = nshift(size);
+    if ((FLAG_Z == 0) != (r == 0)) {
+        return false;
+    }
+    if (pk == PK_Z) {
+        return true;
+    }
+    uint32_t n = r >> sh, v, c;
+    if (pk == PK_LOGIC) {
+        v = c = 0;
+    } else if (pk == PK_SUB) {
+        v = ((s ^ d) & (r ^ d)) >> sh;
+        c = (uint32_t)(d < s) << 8;
+    } else {
+        v = ((s ^ r) & (d ^ r)) >> sh;
+        c = (uint32_t)(r < s) << 8;
+    }
+    return !((FLAG_N ^ n) & 0x80) && !((FLAG_V ^ v) & 0x80) && !((FLAG_C ^ c) & 0x100);
+}
+
+#ifndef ESP_PLATFORM
+unsigned long jit_resume_no[3];             /* (AMI_JITSTAT) not resumed: dropped, no instruction there, the flags */
+#endif
+
+const uint32_t *jit_rv_resume(const jit_block_t *b, uint32_t pc, const uint32_t f[3])
+{
+    uint32_t off = pc - b->pc;
+    if (b->dead) {
+#ifndef ESP_PLATFORM
+        jit_resume_no[0]++;
+#endif
+        return NULL;
+    }
+    for (int j = 1; j < b->n; j++) {
+        uint32_t w = b->res[j];
+        if (JIT_RES_PC(w) != off) {
+            continue;
+        }
+        int pk = (int)JIT_RES_PK(w), size = 1 << JIT_RES_PS(w);
+        if (!JIT_RES_BODY(w) || (pk != PK_NONE && !flags_match(pk, size, f))) {
+#ifndef ESP_PLATFORM
+            jit_resume_no[2]++;
+#endif
+            return NULL;
+        }
+        jit_rs[JIT_RS_PC] = pc;
+        jit_rs[JIT_RS_BODY] = addr32(b->code + JIT_RES_BODY(w));
+        jit_rs[JIT_RS_S2] = (b->pc & ~3u) | 1;
+        jit_rs[JIT_RS_S5] = JIT_RES_S5(w) == 0xFF ? 0 : b->pc + JIT_RES_S5(w);
+        for (int i = 0; i < 3; i++) {
+            jit_rs[JIT_RS_F + i] = f[i];
+        }
+        jit_rs[JIT_RS_WAIT] = b->wait;
+#ifdef M68K_HOST_HOOK
+        if (jit_hooks) {
+            m68k_host_instruction(pc);      /* (as the code's hook before the opcode's fetch) */
+        }
+#endif
+        return (const uint32_t *)(uintptr_t)s_stub[ST_RESUME];
+    }
+#ifndef ESP_PLATFORM
+    jit_resume_no[1]++;
+#endif
+    return NULL;
+}
+
 #ifndef ESP_PLATFORM
 #include <time.h>
 double jit_t_decode, jit_t_emit, jit_t_all;
@@ -2552,11 +2759,7 @@ bool jit_translate(jit_block_t *b, uint32_t pc, uint8_t **at, uint8_t *end)
     int max = MAX_INSNS;
     mem_jit_env(&T.env);
     T.cpu = addr32(&m68ki_cpu);
-    /* (the fetch state from s0: AMI_SDATA keeps it within reach) */
-    T.ic_next_off = (int32_t)(addr32(T.env.ic_next) - T.cpu);
-    T.ic_tag_off = (int32_t)(addr32(T.env.ic_tag) - T.cpu);
-    T.ic_cacr_off = (int32_t)(addr32(T.env.ic_cacr) - T.cpu);
-    if (!imm12(T.ic_next_off) || !imm12(T.ic_tag_off) || !imm12(T.ic_tag_off + 252) || !imm12(T.ic_cacr_off)) {
+    if (!fetch_offsets()) {
 #ifndef ESP_PLATFORM
         fprintf(stderr, "jit: the fetch state out of s0's reach\n");
 #endif
@@ -2572,12 +2775,15 @@ bool jit_translate(jit_block_t *b, uint32_t pc, uint8_t **at, uint8_t *end)
         uint8_t *p = *at;
         T.fb = (jit_fb_t *)p;
         p += ((size_t)T.n * sizeof(jit_fb_t) + 3) & ~(size_t)3;
+        T.res = (uint32_t *)p;
+        p += (size_t)T.n * 4;
         T.exit = s_exits;
         T.max_exits = 2 * T.n + 8;
         if (p + 64 > end) {
             b->n = 0xFFFF;                  /* (no room) */
             return false;
         }
+        memset(T.res, 0, (size_t)T.n * 4);
         T.nexits = T.nfb = 0;
         R->full = false;
         R->nlabels = R->nfixups = 0;
@@ -2604,10 +2810,18 @@ bool jit_translate(jit_block_t *b, uint32_t pc, uint8_t **at, uint8_t *end)
         b->entry[0] = R->start + R->label[T.entry_l[0]];
         b->entry[1] = T.entry_l[1] >= 0 ? R->start + R->label[T.entry_l[1]] : b->entry[0];
         b->fb = T.fb;
+        b->res = T.res;
+        b->wait = T.in[0].wait;
         b->n = (uint16_t)T.n;
         b->nexits = (uint16_t)T.nexits;
         b->nfb = (uint16_t)T.nfb;
         *at = (uint8_t *)R->p;
+#ifndef ESP_PLATFORM
+        for (int c = 0; c < JB_N; c++) {
+            jit_bytes[c] += s_bt[c];
+        }
+        jit_bytes[JB_FBTAB] += (unsigned long)((uint8_t *)R->start - (uint8_t *)T.fb);
+#endif
         return true;
     }
     return false;

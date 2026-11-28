@@ -1496,6 +1496,30 @@ TODO item 19: the 68EC020's blocks in RISC-V on the board
   input lands within a frame there), so exactness rests on the host,
   which runs the same code.
 
+### Slices resumed inside blocks, 2026-11-28
+
+TODO item 19 (`jit-design-2026-11-27.md`, "Slices resumed inside
+blocks").
+
+- **Measured first**: denser code was the plan, but Leading Lap's slow
+  stretch ran 20 KB of 68k code from 3.2 MB of blocks, each instruction in
+  ~5 of them: 2.6 MB began where a slice had ended (a slice ends at any
+  instruction, ~480 a frame) or at code the interpreter ran on to from
+  there, every PC it met heating after a flush. Smaller code (8-byte
+  records, compressed instructions) would have saved ~40% at most.
+- **The code**: each instruction has a resume word (its body, the pending
+  flags' kind, s5); the exits a slice may resume after keep the flags'
+  registers and the block's first longword; the next slice there runs on
+  in that block (`jit_rv_resume()`, the flags in memory checked against
+  the registers), and only code reached by a jump heats.
+- **Results**: Leading Lap's stretch 8994 → 74 translations, no flush, its
+  working set 62 KB; on the Tab5 its slowest window 96.8% → 99.5%, core
+  1's median 87% → 79%; the five titles' pass 150600 → 17900 translations
+  (13.9 s → 1.9 s translating). The others the same or better. The host:
+  the collection, the survey and the replays the same as the interpreter;
+  `jit_test` resumes ~51000 slices in 20000 cases and catches four planted
+  resume errors.
+
 ### Writes beside code, 2026-11-28
 
 TODO item 19 (`jit-design-2026-11-27.md`, "Writes beside code").

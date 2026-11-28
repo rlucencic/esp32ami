@@ -123,8 +123,8 @@ images.
 | `main/settings.c` | NVS `ami`, which Kickstart and RAM each model takes, its defaults (A2000: 1 MB chip, 2 MB fast) |
 | `main/jit_probe.c` | The console's `X`: runs code written into PSRAM (TODO 19's translating core: does the P4 allow it, how fast) |
 | `components/amiga/` | The machine, platform independent (`include/amiga.h`) |
-| `components/amiga/jit.c`, `jit.h` | The 68EC020's translated blocks (TODO 19, `docs/jit-design-2026-11-27.md`): the arena (2044 KB, less while PSRAM is short; given back when a disk's buffer needs the room: `ami_malloc_big()`), the block cache, invalidation (per-bank page tables in the arena: each 256-byte page's blocks and a mask of the words they cover, looked at first; the CPU's writes in `jit_cpu_wrote()`), the dispatcher (code translated once it ran 64 times; an exit's flow on to a fixed PC linked to that block's entry the first time it comes back, a computed exit's (RTS, JSR/JMP (An)) last two targets' blocks kept after its record, a dropped block's entries sent back to the dispatcher) |
-| `components/amiga/jit_rv.c`, `rv.h` | The translation into RISC-V: the instructions it knows, the shared routines (memory accesses, the flags to memory, a handler's call), pending flags; `rv.h` the encoder |
+| `components/amiga/jit.c`, `jit.h` | The 68EC020's translated blocks (TODO 19, `docs/jit-design-2026-11-27.md`): the arena (2044 KB, less while PSRAM is short; given back when a disk's buffer needs the room: `ami_malloc_big()`), the block cache, invalidation (per-bank page tables in the arena: each 256-byte page's blocks and a mask of the words they cover, looked at first; the CPU's writes in `jit_cpu_wrote()`), the dispatcher (code reached by a jump, a link's or computed exit's flow or after code with no block of its own translated once it ran 64 times; a slice that ended inside a block resumes it there: the exit's pending flags' registers and s2 kept, `jit_rv_resume()` checks them against the flags in memory; an exit's flow on to a fixed PC linked to that block's entry the first time it comes back, a computed exit's (RTS, JSR/JMP (An)) last two targets' blocks kept after its record, a dropped block's entries sent back to the dispatcher) |
+| `components/amiga/jit_rv.c`, `rv.h` | The translation into RISC-V: the instructions it knows, the shared routines (memory accesses, the flags to memory, a handler's call, a slice's resume), pending flags, each instruction's resume word (its body, the state there); `rv.h` the encoder |
 | `components/amiga/host/rvsim.c` | The host's RV32IM interpreter: the host runs the very code the board runs (the build not position independent, the heap low: every address in 32 bits) |
 | `components/amiga/host/` | Host build for testing on the Mac (see Testing) |
 | `tools/adf.py` | Reads ADFs and patches files in them (test disks, see Testing) |
@@ -849,6 +849,22 @@ the top two bits do nothing, Aerial Racers' race sets them),
   most: 23 flushes in 12000 frames instead of 247 (`AMI_JITSTAT`'s
   distinct block addresses against its translations shows it).
 
+- **A slice ends at any instruction, and a block made where the next one
+  starts copies the code after it**: Leading Lap flushed its 2 MB arena
+  every ~400 frames though its slow stretch ran 20 KB of 68k code: its
+  blocks held each instruction ~5 times (3.2 MB). The CPU's slice ends at
+  the next event (~480 a frame), the dispatcher entered blocks only at
+  their start, so the next slice ran the interpreter from there, which
+  heated every PC it met: after a flush every instruction of a hot loop
+  reached 64 runs at once, each a block's start. A slice now resumes the
+  block it ended in and only code reached by a jump heats: 72
+  translations and no flush where there were 8994 and 4. The block the
+  dispatcher ran isn't always the one that left (links run on): s2 at the
+  exit says which. Look at what the arena holds (`AMI_JITSTAT`'s working
+  set: its 68k bytes against the distinct ones) before making the code
+  smaller (`docs/jit-design-2026-11-27.md`, "Slices resumed inside
+  blocks").
+
 - **An encoder and an interpreter of the same instructions can share a
   mistake**: the host runs the translated code through its own RISC-V
   interpreter, so a misread instruction format would agree with itself
@@ -981,7 +997,12 @@ the top two bits do nothing, Aerial Racers' race sets them),
   kept target's wrong entry and a kept target taken without its
   compare; and five mask errors: a write's last word, the mask not made
   again after a drop, a block's second page, the CPU's fast path's last
-  word and its page). `rv.h`'s
+  word and its page; then in four slices, each the next resuming the block
+  where the last ended, the flags sometimes changed between them (no
+  resume then): it caught a resume without the pending flags' registers,
+  without the flags' check, without the opcode's fetch, and with the
+  pending kind left out. Every case is translated at once: `jit_hot` 1 and
+  `jit_heat_all`, every PC heating). `rv.h`'s
   encodings against the GNU assembler: `host/rv_enc_test.c` (2360
   instructions the same as `riscv32-esp-elf-as -march=rv32im`'s). `make
   test` builds the tests, not `build/ami_host`: `make build/ami_host` for
@@ -1019,7 +1040,12 @@ the top two bits do nothing, Aerial Racers' race sets them),
   RISC-V instructions run, how often a computed exit's target repeats;
   the writes looked at (into pages with code, over code's words, the
   blocks walked and dropped, the writing PCs), what a link exit back at
-  the dispatcher found; counted from that frame on; with `AMI_OPSTAT`
+  the dispatcher found; the arena's bytes by what they are for (a 68k
+  instruction's share), the working set (each block made in those frames
+  once: its bytes, its 68k bytes against the distinct ones), how the
+  dispatcher came to the PCs it made blocks at, what a slice's first PC
+  had against how the slice before ended, the slices resumed and why
+  others weren't; counted from that frame on; with `AMI_OPSTAT`
   over the same frames each opcode's runs, handler calls and runs
   outside blocks as `jitop` lines),
   `AMI_JITARENA=<KB>` (a smaller arena, 256 at least),

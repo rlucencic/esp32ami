@@ -56,6 +56,19 @@ typedef struct {
     uint8_t kind;
 } jit_exit_t;
 
+/* A slice resumed inside a block (jit_rv_resume()): each instruction after
+ * the first has a word (the block's res) with its body's place in the code
+ * (32-bit words from its start; 0: none), its address less the block's, the
+ * code's state there: s5's instruction (its offset, $FF unknown), the
+ * pending flags' kind and size (0-2: 1, 2, 4 bytes) */
+#define JIT_RES(body, pcoff, s5off, pk, ps) \
+    ((uint32_t)(body) | (uint32_t)(pcoff) << 11 | (uint32_t)(s5off) << 19 | (uint32_t)(pk) << 27 | (uint32_t)(ps) << 30)
+#define JIT_RES_BODY(w)     ((w) & 0x7FF)
+#define JIT_RES_PC(w)       (((w) >> 11) & 0xFF)
+#define JIT_RES_S5(w)       (((w) >> 19) & 0xFF)
+#define JIT_RES_PK(w)       (((w) >> 27) & 7)
+#define JIT_RES_PS(w)       ((w) >> 30)
+
 typedef struct jit_block {
     uint32_t pc, end;                   /* the bytes it was made from: [pc, end) */
     struct jit_block *hash_next;
@@ -65,7 +78,9 @@ typedef struct jit_block {
     uint32_t *entry[2];                 /* a linked exit's: reached by a jump, in sequence
                                          * (the same unless pc & 2: the opcode's fetch) */
     jit_fb_t *fb;
+    const uint32_t *res;                /* the instructions' resume words (JIT_RES) */
     uint16_t n, nexits, nfb;            /* instructions, exits, handlers */
+    uint8_t wait;                       /* its bank's (the opcodes' fetch) */
     bool dead;
 } jit_block_t;
 
@@ -82,6 +97,13 @@ extern uint8_t jit_code_pages[JIT_PAGES / 8];
  * the memory map changed) */
 extern volatile bool jit_stop;
 extern uint32_t jit_ctx[4];
+/* the pending flags' registers (s6-s8) and s2 (the block's tags' base: its
+ * first longword | 1) as the last exit left them (the shared exit stores
+ * them); a resume's state for the shared routine (JIT_RS_*: jit_rv_resume()
+ * fills it) */
+extern uint32_t jit_rf[4];
+enum { JIT_RS_PC, JIT_RS_BODY, JIT_RS_S2, JIT_RS_S5, JIT_RS_F, JIT_RS_WAIT = JIT_RS_F + 3, JIT_RS_N };
+extern uint32_t jit_rs[JIT_RS_N];
 
 int jit_run(void);
 void jit_flush(void);
@@ -129,8 +151,24 @@ bool jit_rv_stubs(uint8_t **at, uint8_t *end);
  * dispatcher, as the exit that came there (the caller syncs the caches) */
 void jit_rv_link(uint32_t *site, const uint32_t *to);
 void jit_rv_kill(uint32_t *entry);
+/* b's code from its instruction at pc, as a slice left it there (the
+ * pending flags' registers f as the exit at pc saved them): the shared
+ * routine to run (jit_rs filled), or NULL (no instruction there, or the
+ * flags in memory no longer what f says) */
+const uint32_t *jit_rv_resume(const jit_block_t *b, uint32_t pc, const uint32_t f[3]);
 
 #ifndef ESP_PLATFORM
+/* (AMI_JITSTAT) the arena's bytes: the block's header, the handlers'
+ * table; in the code the entry, the opcodes' and extension words' fetch,
+ * the checks after an instruction, the cycles, REG_PPC for the memory
+ * routines, their calls, the flags to memory, the handlers' calls, the
+ * host's hooks, the rest (the instructions' work); in the exits the flags
+ * to memory, a link's checks, its two words, a computed exit's compares,
+ * the jal to the shared exit, the record, the kept targets; the padding,
+ * the banks' tables */
+enum { JB_HEADER, JB_FBTAB, JB_ENTRY, JB_FETCH, JB_CHECK, JB_CYCLES, JB_PPC, JB_MEMCALL, JB_MAT, JB_FB, JB_HOOK,
+       JB_REST, JB_XMAT, JB_XCHK, JB_XNOPS, JB_XDYN, JB_XJAL, JB_RECORD, JB_DYNTGT, JB_ALIGN, JB_PAGES, JB_N };
+extern unsigned long jit_bytes[JB_N];
 /* host/rvsim.c */
 uint32_t rvsim_call(uint32_t entry);
 void rvsim_arena(const void *base, size_t size);

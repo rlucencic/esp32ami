@@ -90,7 +90,9 @@ moment. So:
   blocks on a page checked by address, may need finer pages. (Answered by
   a mask of each page's words with code: "Writes beside code".)
 - How big the code cache needs to be (PSRAM: ~3.4 MB free with the
-  A1200's 8 MB of fast RAM; 2 MB since, "The larger arena").
+  A1200's 8 MB of fast RAM; 2 MB since, "The larger arena"; Leading Lap's
+  slow stretch needs 62 KB once slices resume inside blocks, "Slices
+  resumed inside blocks").
 
 ## Stage 1, done (2026-11-27)
 
@@ -634,4 +636,121 @@ targets → the masks → the fast path too):
 
 **Next**: Leading Lap's arena (25 flushes in 15000 frames on the host,
 each followed by its working set run 64 times in the interpreter and
-made again): denser code. Deluxe Galaga: its collisions.
+made again): denser code (done otherwise: "Slices resumed inside
+blocks"). Deluxe Galaga: its collisions.
+
+## Slices resumed inside blocks (2026-11-28)
+
+The plan was denser code: Leading Lap still flushed its 2 MB arena 25
+times in 15000 frames on the host. **Measured first** (`AMI_JITSTAT`'s
+new lines, the slow stretch at frames 6290-7927, the code without hooks:
+the board's):
+
+- 108 bytes of arena a 68k instruction: the instructions' own work 28,
+  the exits' records 19, the block's header 9, the handlers' table 8 (kept
+  for every instruction), the fetch's charges 8, the checks after each
+  instruction 6, the jumps to the shared exit 5, the cycles 5, the exits'
+  flags 4, the rest 16. Records in 8 bytes, the table only for handlers
+  and a smaller header would have saved ~20%, the P4's compressed
+  instructions about as much again.
+- But the stretch's blocks held 99658 bytes of 68k code over 20214
+  distinct bytes: each instruction in ~5 blocks. Its working set (each
+  block made in the stretch once): 3449 blocks, 3.2 MB. 2838 of them (2.6
+  MB) began where a slice had started (1136) or at an instruction the
+  interpreter ran on to from there (1702); 608 at a branch's, link's or
+  computed exit's target.
+- A slice ends at any instruction (the CPU's slice runs to the next event:
+  ~480 a frame). The dispatcher entered blocks only at their start, so the
+  next slice ran the interpreter from there, and every PC it met heated:
+  after each flush every instruction of a hot loop reached 64 runs at
+  once, each a block's start with the 15 instructions after it. So no
+  smaller encoding would have made it fit.
+
+**The code** (`jit.c`, `jit_rv.c`):
+
+- Each instruction after a block's first has a resume word (`JIT_RES`):
+  its body's place in the code and the translation's state there: s5's
+  instruction, the pending flags' kind and size.
+- The exits a slice may resume after (a slice's, a write's, a handler's)
+  enter the shared exit four stores early (`ST_EXIT_RF`): the pending
+  flags' registers (s6-s8) and s2 into `jit_rf`. s2 is the block's first
+  longword: links may have run on from the block the dispatcher started,
+  and the dispatcher finds the block that left from it
+  (`exit_block()`). The PC, that block and the registers go into a slot
+  by the PC's hash (256, in the arena after the directory).
+- A slice starting at a PC with no block but a slot: `jit_rv_resume()`
+  finds the instruction's word and checks that the registers make the
+  flags in memory what they are, where Musashi's tests look
+  (`flags_match()`; wait.c's passes may have changed the flags: no resume
+  then). It fills `jit_rs` and the shared routine `ST_RESUME` runs: the
+  prologue, s2, s5, the registers, the opcode's fetch as the fetch state
+  says (as a block's entry does), then the body. The host's hook is called
+  first (the PC log as before). A link's or computed exit's target gets a
+  block of its own when hot (one to link to): it resumes only meanwhile.
+- Only code reached by a jump heats: a PC that isn't the next word in
+  sequence (`s_ic.next`: a branch's target, an exception's, an exit's to
+  a PC its code doesn't run on to), a link's or computed exit's flow, or
+  code after code with no block of its own (an instruction `translate()`
+  failed at: Virtual Karting 2's across a 64 KB bank at $24FFFC; an exit
+  past its block, after a handler at the block's end). A slice resumed or
+  run on to in sequence never starts a block.
+
+**Checked on the host**: the collection 96 of 96, the survey 26 of 26 and
+the replays 4 of 4 the same as the interpreter. `jit_test` runs each case
+again in four slices, each the next resuming the block where the last
+ended (each slice starts with cycles, as `m68k_execute()` does: the test
+first added them to a slice already over, and the translated side ran an
+instruction the interpreter didn't), the flags sometimes changed between
+them; ~51000 resumes in 20000 cases, 3 seeds x 100000 cases none failing.
+It catches a resume without the flags' registers, without the flags'
+check, without the opcode's fetch, and with the pending kind left out.
+(`jit_heat_all` heats every PC there: every case is translated at once.)
+
+The six stretches (the build with the masks → resumes):
+
+| Stretch | Translations | Flushes | Interpreted | RISC-V run | Resumed |
+|---|---|---|---|---|---|
+| Deluxe Galaga 3133-3938 | 43 → 4 | 0 → 0 | 2196 → 1316 | 1025 → 1031 M | 377585 |
+| Leading Lap 6290-7927 | 8994 → 74 | 4 → 0 | 772390 → 35717 | 1216 → 1249 M | 723709 |
+| AmiBee 14015-14266 | 1352 → 16 | 1 → 0 | 157080 → 8236 | 67 → 72 M | 50989 |
+| Gea Lux 3850-4089 | 1633 → 135 | 1 → 0 | 203516 → 54672 | 33 → 38 M | 15623 |
+| Virtual Karting 2 13084-13341 | 17 → 1 | 0 → 0 | 617 → 283 | 275 → 277 M | 89018 |
+| Deluxe Galaga 10000-11400 | 1713 → 177 | 1 → 0 | 155770 → 102015 | 262 → 261 M | 182711 |
+
+Leading Lap's working set in its stretch 3.2 MB → 62 KB; its whole run
+(15000 frames) 74925 → 3542 translations, 33 flushes (22 full) → 3 (1
+full), 6.43 M → 1.22 M instructions interpreted. The RISC-V instructions
+run grow by what the interpreter no longer runs (and ~25 a resume).
+
+**The Tab5** (median, slowest window without the pass's pictures and
+profiles; core 1's median):
+
+| Title | Before | Resumes |
+|---|---|---|
+| Leading Lap | 99.8% (96.8%), core 1 87% | 99.8% (99.5%), core 1 79% |
+| Deluxe Galaga | 99.7% (92.3%), 88% | 99.6% (94.1%), 85% |
+| AmiBee | 100% (99.0%), 41% | 99.9% (99.5%), 40% |
+| Gea Lux | 100% (97.9%), 29% | 100% (98.9%), 30% |
+| Virtual Karting 2 | 99.8% (99.5%), 83% | 99.9% (99.5%), 80% |
+
+- Leading Lap's slow stretch (frames ~6800-8000): 96.8-100.4% →
+  99.6-100.0%; its windows under 97.5% 3 → 0.
+- Deluxe Galaga's credits (the windows with the pass's pictures and
+  profiles): 95.4, 93.9, 94.9, 92.2, 94.6% → 94.6, 93.9, 94.5, 91.5,
+  94.5%, the same within the runs' spread: collisions.
+- The board's counters over the pass: 150600 → 17900 translations, 76
+  flushes (52 full) → 24 (4 full), 13.9 s → 1.9 s translating, 3.1 s →
+  0.4 s syncing the caches; 15.3 M slices resumed.
+- The profiles: in Leading Lap the interpreter (2.7% of core 1) and the
+  translation (2.1%) gone. Where slices resume often (Deluxe Galaga's
+  credits, Virtual Karting 2) the dispatcher costs ~2.5 points more
+  (`jit_run` +1.5, `jit_rv_resume` ~1%: two lookups an exit for its block,
+  the slot, the resume word's search), the translated code ~3-4 points
+  less.
+
+The records in 8 bytes, the handlers' table, the header and compressed
+instructions: not needed now (no flush in the six stretches).
+
+**Next**: Deluxe Galaga's collisions; the handlers left. The dispatcher's
+resume could carry its block in the exit's record (the pc, ppc and fe
+words' top bytes are free) instead of two lookups.

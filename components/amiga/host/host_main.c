@@ -56,6 +56,9 @@
 #include "amiga.h"
 #include "m68k.h"
 #include "emudbg.h"
+#ifdef AMI_JIT
+#include "jit.h"
+#endif
 
 static uint32_t s_frame;
 static uint64_t s_insns;
@@ -174,7 +177,7 @@ static void opstat_write(void)
 
 #ifdef AMI_JIT
 /* (AMI_JITSTAT=<frame>) the translated code's counters from here on */
-extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills, fills; } jit_stats;
+extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills, fills, resumes; } jit_stats;
 typedef struct { uint32_t pc; unsigned long n, m; } jit_pc_count_t;
 extern jit_pc_count_t jit_wr_pcs[4096], jit_drop_pcs[4096], jit_untrans_pcs[4096];
 extern unsigned long jit_after_link[4];
@@ -218,6 +221,16 @@ static void jitstat_reset(void)
     memset(jit_dyn, 0, sizeof(jit_dyn));
     memset(jit_exits, 0, sizeof(jit_exits));
     jit_t_decode = jit_t_emit = 0;
+    memset(jit_bytes, 0, sizeof(jit_bytes));
+    extern unsigned long jit_resume_no[3];
+    memset(jit_resume_no, 0, sizeof(jit_resume_no));
+    extern unsigned long jit_first[6][5];
+    memset(jit_first, 0, sizeof(jit_first));
+    extern jit_pc_count_t jit_noslot_pcs[4096];
+    memset(jit_noslot_pcs, 0, sizeof(jit_noslot_pcs));
+    extern void jit_ws(unsigned long r[14], bool clear);
+    unsigned long ws[14];
+    jit_ws(ws, true);
 }
 #endif
 
@@ -963,6 +976,36 @@ int main(int argc, char **argv)
                jit_stats.distinct, (double)jit_stats.rv_words / jit_stats.insns, (double)jit_stats.exits / jit_stats.insns,
                (double)jit_stats.fbs / jit_stats.insns);
         {
+            /* the arena's bytes by what they're for (jit.h's JB_*), per
+             * 68k instruction; the working set */
+            static const char *what[JB_N] = { "header", "handlers' table", "entry", "fetch", "checks", "cycles",
+                "ppc", "memory calls", "flags", "handler calls", "hooks", "the work", "exits' flags",
+                "exits' checks", "links' words", "computed exits' compares", "jumps to the exit", "records",
+                "kept targets", "padding", "banks' tables" };
+            unsigned long all = 0;
+            for (int c = 0; c < JB_N; c++) {
+                all += jit_bytes[c];
+            }
+            printf("jit: bytes %lu, %.1f a 68k instruction:", all, (double)all / jit_stats.insns);
+            for (int c = 0; c < JB_N; c++) {
+                printf("%s %s %.1f (%.1f%%)", c ? ";" : "", what[c], (double)jit_bytes[c] / jit_stats.insns,
+                       100.0 * jit_bytes[c] / all);
+            }
+            printf("\n");
+            extern void jit_ws(unsigned long r[14], bool clear);
+            extern unsigned long jit_made_by[5];
+            unsigned long ws[14];
+            jit_ws(ws, false);
+            printf("jit: working set %lu blocks, %lu KB (their tables apart), over %lu bytes of 68k code, %lu distinct\n",
+                   ws[0], ws[1] / 1024, ws[2], ws[3]);
+            static const char *why[5] = { "a slice's first", "after a link exit", "after a computed exit",
+                                          "after an instruction interpreted", "after a handler's or a write's exit" };
+            for (int i = 0; i < 5; i++) {
+                printf("jit: made %s: %lu translations; in the working set %lu blocks, %lu KB\n", why[i],
+                       jit_made_by[i], ws[4 + 2 * i], ws[5 + 2 * i] / 1024);
+            }
+        }
+        {
             /* the handlers the translated code still calls, most first */
             extern uint32_t jit_fb_count[65536];
             static uint16_t ops[65536];
@@ -995,6 +1038,19 @@ int main(int argc, char **argv)
                    (unsigned long long)rvsim_steps, (unsigned long long)rvsim_calls);
             extern unsigned long jit_lookups, jit_probes, jit_exits[4][2];
             printf("jit: %lu computed exits' targets kept\n", jit_stats.fills);
+            extern unsigned long jit_first[6][5];
+            static const char *ends[6] = { "a slice's or a write's exit", "a computed exit", "a handler's exit",
+                                           "a link exit", "an instruction interpreted", "(none yet)" };
+            for (int i = 0; i < 6; i++) {
+                printf("jit: a slice after %s: a block %lu, resumed %lu, a slot not resumed %lu, no slot %lu, "
+                       "no slot, the last block's end %lu\n", ends[i], jit_first[i][0], jit_first[i][1], jit_first[i][2],
+                       jit_first[i][3], jit_first[i][4]);
+            }
+            extern jit_pc_count_t jit_noslot_pcs[4096];
+            top_pcs("no slot", jit_noslot_pcs, 12);
+            extern unsigned long jit_resume_no[3];
+            printf("jit: %lu slices resumed inside a block; not resumed: the block dropped %lu, no instruction there %lu, "
+                   "the flags %lu\n", jit_stats.resumes, jit_resume_no[0], jit_resume_no[1], jit_resume_no[2]);
             printf("jit: %lu lookups, %lu chain steps; %lu links made, %lu blocks' entries killed; exits to the dispatcher "
                    "(the slice going on / over): a link's %lu / %lu, the slice's or a write's %lu / %lu, computed %lu / %lu, "
                    "after a handler %lu / %lu\n",

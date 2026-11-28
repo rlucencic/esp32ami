@@ -30,8 +30,21 @@
 uint8_t jit_code_pages[JIT_PAGES / 8] __attribute__((aligned(4)));
 volatile bool jit_stop AMI_SDATA;          /* (beside Musashi's state: the code reaches it) */
 uint32_t jit_ctx[4] AMI_SDATA;              /* (the bases the code's memory routines take: jit_rv.c) */
+uint32_t jit_rf[4] AMI_SDATA;
+uint32_t jit_rs[JIT_RS_N] AMI_SDATA;
 
 static jit_block_t *s_hash[HASH_SIZE];
+/* Where slices ended inside blocks (an exit's PC and the pending flags'
+ * registers there), by the PC's hash: the next slice from there resumes
+ * that block's code (a slice ends anywhere: a block made at each such PC
+ * copied the code after it, Leading Lap's working set 2.6 MB of 3.2) */
+#define RES_SLOTS       256
+typedef struct {
+    uint32_t pc;
+    const jit_block_t *b;
+    uint32_t f[3];
+} jit_res_t;
+static jit_res_t *s_res;                    /* (in the arena, after the directory) */
 /* Per 64 KB bank, the block lists of its pages, made in the arena as a
  * block first lands there (all 16 MB's lists took 256 KB): the directory
  * in the arena's first bytes */
@@ -62,8 +75,23 @@ static int s_ndead;
  * (Virtual Karting 2's first 4000 frames: 305000 blocks, 560 flushes). */
 uint8_t jit_hot = 64;                       /* (host/jit_test.c: 1) */
 static uint8_t s_heat[HASH_SIZE];
+/* Only code reached by a jump heats (a branch's target, an exception's, an
+ * exit's to a PC the code doesn't run on to; a link's or computed exit's):
+ * a slice starts anywhere, and the interpreter running on from there made
+ * every instruction of a loop hot at once after a flush, each a block's
+ * start (Leading Lap: 1600 of its 3450 blocks) */
+static const uint32_t *s_ic_next;           /* (mem.c's: the next word in sequence) */
+/* ... or code after code with no block of its own (an instruction that
+ * can't be translated: one across a 64 KB bank; a block's end after a
+ * handler): s_failed marks PCs translate() failed at (by their hash), and
+ * s_cont says the PC follows such code */
+static uint8_t s_failed[HASH_SIZE / 8];
+static bool s_cont;
 #ifndef ESP_PLATFORM
-struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills, fills; } jit_stats;
+bool jit_heat_all;                          /* (host/jit_test.c: every case translated at once) */
+#endif
+#ifndef ESP_PLATFORM
+struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills, fills, resumes; } jit_stats;
 uint32_t jit_fb_count[65536];               /* (the handlers called, by opcode: mem.c) */
 uint32_t jit_interp_count[65536];           /* (the instructions run outside blocks, by opcode) */
 /* (AMI_JITSTAT) lookups, their chain steps; the exits that came to the
@@ -88,7 +116,8 @@ unsigned long jit_after_link[4];
 static int s_wr_cpu;
 #define PC_SLOTS        4096
 typedef struct { uint32_t pc; unsigned long n, m; } jit_pc_count_t;
-jit_pc_count_t jit_wr_pcs[PC_SLOTS], jit_drop_pcs[PC_SLOTS], jit_untrans_pcs[PC_SLOTS];
+jit_pc_count_t jit_wr_pcs[PC_SLOTS], jit_drop_pcs[PC_SLOTS], jit_untrans_pcs[PC_SLOTS], jit_noslot_pcs[PC_SLOTS];
+static uint32_t s_last_pc;                  /* (the last exit's PC) */
 
 static jit_pc_count_t *pc_count(jit_pc_count_t *t, uint32_t pc)
 {
@@ -102,6 +131,75 @@ static jit_pc_count_t *pc_count(jit_pc_count_t *t, uint32_t pc)
     static jit_pc_count_t spare;
     return &spare;
 }
+/* (AMI_JITSTAT) the working set: each PC's last block's bytes in the arena
+ * (its tables apart) and the 68k code under it, counted from the stats'
+ * start: what an arena would hold to make each block once */
+static uint16_t *s_ws_bytes;               /* by PC / 2 */
+static uint8_t *s_ws_cover;                 /* the 68k words under them, a bit each */
+static uint32_t *s_ws_end;                  /* by PC / 2: its block's end */
+static uint8_t *s_ws_why;                   /* by PC / 2: how the dispatcher came to it (s_why) */
+/* (AMI_JITSTAT) how the dispatcher came to a PC it made a block at: a
+ * slice's first, after a link exit, a computed exit, an instruction
+ * interpreted, a handler's or a write's exit */
+static int s_why;
+unsigned long jit_made_by[5];
+/* (AMI_JITSTAT) a slice's first PC: how the slice before ended (a block's
+ * exit by its kind, an instruction interpreted, an odd PC) against what the
+ * PC had (a block, resumed, a slot not resumed, no slot at the PC, no block
+ * or slot but inside the last block's bytes) */
+static int s_last_end = 5;
+unsigned long jit_first[6][5];
+
+static void ws_note(uint32_t pc, uint32_t end, unsigned long bytes)
+{
+    if (!s_ws_bytes) {
+        s_ws_bytes = calloc(1 << 23, 2);
+        s_ws_end = calloc(1 << 23, 4);
+        s_ws_cover = calloc(1 << 20, 1);
+        s_ws_why = calloc(1 << 23, 1);
+    }
+    uint32_t k = (pc & 0xFFFFFF) >> 1;
+    s_ws_bytes[k] = (uint16_t)(bytes > 0xFFFF ? 0xFFFF : bytes);
+    s_ws_end[k] = end;
+    s_ws_why[k] = (uint8_t)s_why;
+    jit_made_by[s_why]++;
+    for (uint32_t a = pc; a < end && a <= 0xFFFFFF; a += 2) {
+        s_ws_cover[a >> 4] |= (uint8_t)(1u << ((a >> 1) & 7));
+    }
+}
+
+/* (host_main.c) the blocks, their bytes, their 68k bytes and the distinct
+ * 68k bytes under them; then the blocks and bytes by s_why; clears it */
+void jit_ws(unsigned long r[14], bool clear)
+{
+    memset(r, 0, 14 * sizeof(*r));
+    if (!s_ws_bytes) {
+        if (clear) {
+            memset(jit_made_by, 0, sizeof(jit_made_by));
+        }
+        return;
+    }
+    for (uint32_t k = 0; k < (1u << 23); k++) {
+        if (s_ws_bytes[k]) {
+            r[0]++;
+            r[1] += s_ws_bytes[k];
+            r[2] += s_ws_end[k] - (k << 1);
+            r[4 + 2 * s_ws_why[k]]++;
+            r[5 + 2 * s_ws_why[k]] += s_ws_bytes[k];
+        }
+    }
+    for (uint32_t i = 0; i < (1u << 20); i++) {
+        r[3] += 2 * (unsigned long)__builtin_popcount(s_ws_cover[i]);
+    }
+    if (clear) {
+        memset(s_ws_bytes, 0, (size_t)2 << 23);
+        memset(s_ws_end, 0, (size_t)4 << 23);
+        memset(s_ws_cover, 0, 1 << 20);
+        memset(s_ws_why, 0, 1 << 23);
+        memset(jit_made_by, 0, sizeof(jit_made_by));
+    }
+}
+
 #define TGT_SLOTS       65536
 static struct {
     const jit_exit_t *e;
@@ -150,7 +248,7 @@ static void dyn_count(const jit_exit_t *e, uint32_t to)
 }
 #define STAT(x) (jit_stats.x)
 #else
-static struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, links, kills, fills; } jit_stats;
+static struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, links, kills, fills, resumes; } jit_stats;
 #define STAT(x) (jit_stats.x)
 static uint64_t s_us_translate, s_us_sync;
 
@@ -160,10 +258,10 @@ static size_t s_size;
 void jit_report(void)
 {
     printf("JIT: %lu translations (%lu instructions, %lu bytes of code), %lu flushes (%lu full), %lu drops, "
-           "%lu blocks run, %lu links, %lu kills, %lu targets kept; %llu us translating, %llu us syncing; the "
+           "%lu blocks run, %lu resumed, %lu links, %lu kills, %lu targets kept; %llu us translating, %llu us syncing; the "
            "arena %u KB, %u KB of PSRAM free\n",
            jit_stats.translations, jit_stats.insns, jit_stats.code_bytes, jit_stats.flushes, jit_stats.full,
-           jit_stats.drops, jit_stats.blocks_run, jit_stats.links, jit_stats.kills, jit_stats.fills,
+           jit_stats.drops, jit_stats.blocks_run, jit_stats.resumes, jit_stats.links, jit_stats.kills, jit_stats.fills,
            (unsigned long long)s_us_translate,
            (unsigned long long)s_us_sync,
            (unsigned)(s_size / 1024), (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
@@ -224,6 +322,7 @@ static void arena_free(void)
     free(s_arena);
     s_arena = NULL;
     s_dir = NULL;
+    s_res = NULL;
     s_size = 0;
 }
 
@@ -241,7 +340,9 @@ static bool ready(void)
         }
         s_dir = (jit_block_t ***)s_arena;
         memset(s_dir, 0, BANKS * sizeof(*s_dir));
-        s_start = (BANKS * sizeof(*s_dir) + 15) & ~(size_t)15;
+        s_res = (jit_res_t *)(s_arena + BANKS * sizeof(*s_dir));
+        memset(s_res, 0, RES_SLOTS * sizeof(*s_res));
+        s_start = (BANKS * sizeof(*s_dir) + RES_SLOTS * sizeof(*s_res) + 15) & ~(size_t)15;
         s_mid = ((s_size - STUB_ROOM) / 2) & ~(size_t)127;
         uint8_t *at = s_arena + s_mid;
         if (!jit_rv_stubs(&at, s_arena + s_mid + STUB_ROOM)) {
@@ -266,9 +367,11 @@ static void flush_now(void)
     memset(s_hash, 0, sizeof(s_hash));
     if (s_dir) {
         memset(s_dir, 0, BANKS * sizeof(*s_dir));
+        memset(s_res, 0, RES_SLOTS * sizeof(*s_res));
     }
     memset(jit_code_pages, 0, sizeof(jit_code_pages));
     memset(s_heat, 0, sizeof(s_heat));
+    memset(s_failed, 0, sizeof(s_failed));
     s_used = s_start;
     s_flush_pending = false;
     s_ndead = 0;
@@ -372,6 +475,7 @@ static bool page_tables(const uint32_t page[2], uint8_t **at, uint8_t *end)
             *at += n;
 #ifndef ESP_PLATFORM
             jit_bank_tables++;
+            jit_bytes[JB_PAGES] += n;
 #endif
         }
     }
@@ -616,6 +720,9 @@ static jit_block_t *translate_(uint32_t pc)
         b->page[0] = pc >> JIT_PAGE_SHIFT;
         b->page[1] = (b->end - 1) >> JIT_PAGE_SHIFT;
         at = (uint8_t *)(((uintptr_t)at + 15) & ~(uintptr_t)15);
+#ifndef ESP_PLATFORM
+        unsigned long pages0 = jit_bytes[JB_PAGES];
+#endif
         if (!page_tables(b->page, &at, end)) {
             if (s_used < s_mid) {
                 s_used = s_mid_end;         /* (the bank's table: after the routines) */
@@ -633,6 +740,10 @@ static jit_block_t *translate_(uint32_t pc)
         jit_stats.exits += b->nexits;
         jit_stats.fbs += b->nfb;
         jit_stats.rv_words += (unsigned long)(code_end - (const uint8_t *)b->code) / 4 - 4ul * b->nexits;
+        jit_bytes[JB_HEADER] += (unsigned long)(code - (uint8_t *)b);
+        jit_bytes[JB_ALIGN] += (unsigned long)((s_arena + s_used) - code_end) -
+                               (jit_bytes[JB_PAGES] - pages0);
+        ws_note(pc, b->end, (unsigned long)(s_arena + s_used - (uint8_t *)b) - (jit_bytes[JB_PAGES] - pages0));
 #endif
 #ifndef ESP_PLATFORM
         {
@@ -710,13 +821,36 @@ static inline void exit_state(const jit_exit_t *e)
 }
 
 /* (the record of the exit the code left by) */
-static inline const jit_exit_t *run_block(const jit_block_t *b)
+static inline const jit_exit_t *run_code(const uint32_t *code)
 {
 #ifdef ESP_PLATFORM
-    return (const jit_exit_t *)((uint32_t (*)(void))b->code)();
+    return (const jit_exit_t *)((uint32_t (*)(void))code)();
 #else
-    return (const jit_exit_t *)(uintptr_t)rvsim_call((uint32_t)(uintptr_t)b->code);
+    return (const jit_exit_t *)(uintptr_t)rvsim_call((uint32_t)(uintptr_t)code);
 #endif
+}
+
+static inline jit_res_t *res_slot(uint32_t pc)
+{
+    return &s_res[(pc >> 1) & (RES_SLOTS - 1)];
+}
+
+/* The block whose exit e is (links may have gone on from the one run): of
+ * the blocks from its first longword (s2 as it left: jit_rf[3]) the last
+ * made before e. (Any block with an instruction at the PC would do: a
+ * resume takes the registers as the exit left them, checked against the
+ * flags in memory) */
+static const jit_block_t *exit_block(const jit_exit_t *e)
+{
+    uint32_t base = jit_rf[3] & 0xFFFFFC;
+    const jit_block_t *best = NULL;
+    for (int k = 0; k < 2; k++) {
+        const jit_block_t *c = lookup(base + 2 * (uint32_t)k);
+        if (c && (const void *)c < (const void *)e && (!best || c > best)) {
+            best = c;
+        }
+    }
+    return best;
 }
 
 /* A link exit (its record) made a jump to b's entry: the one for an
@@ -761,27 +895,73 @@ int AMI_HOT jit_run(void)
         } while (*m68k_loop.remaining > 0 && !*m68k_loop.tracing);
         return 1;
     }
+    if (__builtin_expect(!s_ic_next, 0)) {
+        jit_env_t env;
+        mem_jit_env(&env);
+        s_ic_next = env.ic_next;
+    }
     unsigned int *pcr = m68k_loop.pc;
     int *remaining = m68k_loop.remaining;
     const unsigned int *tracing = m68k_loop.tracing;
     const jit_exit_t *from = NULL;          /* a link or computed exit the PC came by: on to its block next time */
+#ifndef ESP_PLATFORM
+    s_why = 0;
+    bool first = true;
+    static const jit_block_t *last_b;
+#endif
     do {
         uint32_t a = *pcr;
         if (a & 1) {
             return 1;                       /* (Musashi's: the address error) */
         }
         jit_block_t *b = a <= 0xFFFFFF ? lookup(a) : NULL;
+        const uint32_t *code = b ? b->code : NULL;
+        bool resumed = false;
 #ifndef ESP_PLATFORM
         int how = b ? 0 : 1;
 #endif
-        if (!b && a <= 0xFFFFFF && ++s_heat[hash(a)] >= jit_hot) {
-            s_heat[hash(a)] = 0;
-            b = translate(a);
+        if (!b && a <= 0xFFFFFF) {
+            /* inside a block a slice ended in: on from there (a link's or
+             * computed exit's target gets a block of its own when hot: one
+             * to link to) */
+            jit_res_t *r = s_res ? res_slot(a) : NULL;
+            if (!from && r && r->b && r->pc == a && (code = jit_rv_resume(r->b, a, r->f)) != NULL) {
+                b = (jit_block_t *)(uintptr_t)r->b;
+                resumed = true;
+            } else if ((from || a != *s_ic_next || s_cont
 #ifndef ESP_PLATFORM
-            how = b ? 3 : 2;
+                        || jit_heat_all
 #endif
+                       ) && ++s_heat[hash(a)] >= jit_hot) {
+                s_heat[hash(a)] = 0;
+                b = translate(a);
+                code = b ? b->code : NULL;
+                if (!b) {
+                    s_failed[hash(a) >> 3] |= (uint8_t)(1u << (hash(a) & 7));
+                }
+#ifndef ESP_PLATFORM
+                how = b ? 3 : 2;
+#endif
+            }
+            r = s_res ? res_slot(a) : NULL;     /* (translate() may have flushed) */
+            if (!b && from && r && r->b && r->pc == a && (code = jit_rv_resume(r->b, a, r->f)) != NULL) {
+                b = (jit_block_t *)(uintptr_t)r->b;
+                resumed = true;
+            }
         }
 #ifndef ESP_PLATFORM
+        if (first && a <= 0xFFFFFF) {
+            jit_res_t *r = s_res ? res_slot(a) : NULL;
+            int k = how == 0 ? 0 : resumed ? 1 : r && r->b && r->pc == a ? 2
+                  : last_b && a == last_b->end ? 4 : 3;
+            jit_first[s_last_end][k]++;
+            if (k == 3 && s_last_end == 0) {
+                jit_pc_count_t *c = pc_count(jit_noslot_pcs, a);
+                c->n++;
+                c->m = s_last_pc;
+            }
+        }
+        first = false;
         if (from && from->kind == JIT_EXIT_LINK) {
             jit_after_link[how]++;
             if (how == 2) {
@@ -795,11 +975,16 @@ int AMI_HOT jit_run(void)
                 jit_interp_count[amiga_peek16(a)]++;
             }
 #endif
+            s_cont = a <= 0xFFFFFF && (s_failed[hash(a) >> 3] & (1u << (hash(a) & 7)));
             mem_interp_one();
             from = NULL;
+#ifndef ESP_PLATFORM
+            s_why = 3;
+            s_last_end = 4;
+#endif
             continue;
         }
-        if (from) {
+        if (from && !resumed) {
             if (from->kind == JIT_EXIT_LINK) {
                 link(from, b);
             } else {
@@ -809,9 +994,27 @@ int AMI_HOT jit_run(void)
         s_running = true;
         jit_stop = false;
         STAT(blocks_run)++;
-        const jit_exit_t *e = run_block(b);
+        if (resumed) {
+            STAT(resumes)++;
+        }
+        const jit_exit_t *e = run_code(code);
         exit_state(e);
         s_running = false;
+        s_cont = false;
+        if ((e->kind == JIT_EXIT_PC || e->kind == JIT_EXIT_FB) && s_res) {
+            /* (ended inside the block that left: the next slice resumes it
+             * there; else the code after it may start a block) */
+            const jit_block_t *x = exit_block(e);
+            uint32_t pc = *pcr;
+            if (x && pc - x->pc - 1 < x->end - x->pc - 1 && !x->dead) {
+                jit_res_t *r = res_slot(pc);
+                r->pc = pc;
+                r->b = x;
+                memcpy(r->f, jit_rf, sizeof(r->f));
+            } else {
+                s_cont = true;
+            }
+        }
 #ifndef ESP_PLATFORM
         jit_exits[e->kind][*remaining <= 0 || *tracing]++;
         if (e->kind == JIT_EXIT_DYN && *remaining > 0 && !*tracing) {
@@ -823,6 +1026,12 @@ int AMI_HOT jit_run(void)
         }
         s_ndead = 0;
         from = e->kind == JIT_EXIT_LINK || e->kind == JIT_EXIT_DYN ? e : NULL;
+#ifndef ESP_PLATFORM
+        s_why = e->kind == JIT_EXIT_LINK ? 1 : e->kind == JIT_EXIT_DYN ? 2 : 4;
+        s_last_end = e->kind;
+        last_b = b;
+        s_last_pc = *pcr;
+#endif
         if (s_flush_pending) {
             flush_now();
             mem_fetch_reset();              /* (the exit's state is the old map's) */

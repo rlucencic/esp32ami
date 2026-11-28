@@ -572,6 +572,36 @@ static bool one_case(void)
         capture(&b);
         ok = same("linked", &i, &u, &a, &b);
     }
+    /* in slices: each the next resumes the block where the last ended (the
+     * pending flags' registers as its exit kept them); the flags sometimes
+     * changed between them (as wait.c's passes may): not resumed then */
+    if (ok) {
+        int extra[3];
+        uint32_t ccr[3];
+        for (int k = 0; k < 3; k++) {
+            extra[k] = 1 + (int)rn(rn(2) ? 8 : 60);
+            ccr[k] = rn(4) ? 0 : 1 + rn(31);
+        }
+        extern int m68ki_remaining_cycles;
+        for (int side = 0; side < 2; side++) {
+            restore();
+            apply(&u);
+            side ? (void)jit_run() : run_interp();
+            for (int k = 0; k < 3; k++) {
+                if (ccr[k]) {
+                    m68k_set_reg(M68K_REG_SR, m68k_get_reg(NULL, M68K_REG_SR) ^ ccr[k]);
+                }
+                m68ki_remaining_cycles = extra[k];   /* (a slice starts with cycles: m68k_execute()) */
+                side ? (void)jit_run() : run_interp();
+            }
+            if (!side) {
+                capture(&a);
+                memcpy(after_interp, chip, CHIP);
+            }
+        }
+        capture(&b);
+        ok = same("resumed", &i, &u, &a, &b);
+    }
     /* a word of the code written over by the CPU, twice (the second after
      * the first's drops made the page's mask again): the opcode or the
      * filler's words, some beside any block; a word (moveq #n, D7), its
@@ -636,6 +666,8 @@ int main(int argc, char **argv)
     mem_jit_env(&s_env);
     extern uint8_t jit_hot;
     jit_hot = 1;                                    /* (every case translated at once) */
+    extern bool jit_heat_all;
+    jit_heat_all = true;
     if (getenv("JIT_TEST_TRACE")) {
         s_trace = atoi(getenv("JIT_TEST_TRACE"));
     }
@@ -643,8 +675,8 @@ int main(int argc, char **argv)
         s_case = k;
         one_case();
     }
-    extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills, fills; } jit_stats;
-    printf("jit_test: %d cases, %d translated, %lu links, %lu targets kept, %lu entries killed, %d failed\n", cases_run,
-           natives, jit_stats.links, jit_stats.fills, jit_stats.kills, failures);
+    extern struct { unsigned long translations, flushes, full, drops, blocks_run, code_bytes, insns, distinct, exits, fbs, rv_words, links, kills, fills, resumes; } jit_stats;
+    printf("jit_test: %d cases, %d translated, %lu links, %lu targets kept, %lu entries killed, %lu slices resumed, "
+           "%d failed\n", cases_run, natives, jit_stats.links, jit_stats.fills, jit_stats.kills, jit_stats.resumes, failures);
     return failures != 0;
 }

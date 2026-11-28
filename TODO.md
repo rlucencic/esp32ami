@@ -24,12 +24,12 @@ instructions a frame; the interpreter managed ~15-20k at full speed. With
 the translating core (`docs/jit-design-2026-11-27.md`) these still fall
 behind in their slowest stretches (median, slowest; `board_pass.py`):
 
-- Deluxe Galaga 99.7% (92.3%: its later windows, the chips'; its
+- Deluxe Galaga 99.6% (94.1%: its later windows, the chips'; its
   credits, an idle loop that polls the joystick and keyboard through the
   OS, 92-95%, collisions 12% of core 1 there).
-- Leading Lap 99.8% (96.8%).
-- Gea Lux 100% (97.9%), AmiBee 100% (99.0%), Virtual Karting 2 99.8%
-  (99.6%).
+- Leading Lap 99.8% (99.5%).
+- Gea Lux 100% (98.9%), AmiBee 99.9% (99.5%), Virtual Karting 2 99.9%
+  (99.5%).
 - (Metal Kombat's 82.8% was the board pass's own: a screenshot and a
   profile in that window, a disk insert in the next slowest; otherwise
   99.4% or more.)
@@ -61,12 +61,6 @@ What: fewer P4 instructions per 68020 instruction.
   and 60-84% of the exits go to a fixed PC whose block exists (linked
   since: see "Done so far"; the computed exits keep their targets too).
   Next, in that order:
-  - Denser code (Leading Lap still flushes its 2 MB arena 25 times in
-    15000 frames on the host: each flush is followed by its working set
-    run 64 times in the interpreter and made again, which is most of its
-    link exits that come back unlinked: 75679 of 85431 in its slow
-    stretch; the exits' records smaller, the P4's compressed
-    instructions).
   - The handlers left, last: Virtual Karting 2's BFINS, MULS.L and DIVS.L
     (~350 a frame), Leading Lap's DIVS.W and DIVU.W (~160). Handlers are
     esp32emu's Musashi: the ST and the Macs must be built and checked if
@@ -77,6 +71,9 @@ What: fewer P4 instructions per 68020 instruction.
     instructions a frame: the chips', not the CPU's. A line with no
     sprite armed and the playfields' bit already set (or not enabled)
     needs no work; profile the later windows on the board first.
+  - The dispatcher's resumes (~2.5 points of core 1 where slices end
+    inside blocks often): the exit's block in its record (the top bytes
+    of its pc, ppc and fe words are free) instead of two lookups.
 - PSRAM: with the A1200's 8 MB of fast RAM and the 2 MB arena ~2.2 MB are
   free with two floppies in. A high-density ADF's 1.72 MB buffer fits; an
   extended ADF's 2.5 MB may not in one piece, even with the arena given
@@ -94,6 +91,18 @@ What: fewer P4 instructions per 68020 instruction.
   by the profiles.
 
 Done so far:
+
+- Slices resumed inside blocks (2026-11-28, `jit.c`, `jit_rv.c`,
+  `docs/jit-design-2026-11-27.md`, "Slices resumed inside blocks"): the
+  plan was denser code, but Leading Lap's blocks held each instruction ~5
+  times (3.2 MB for 20 KB of 68k code). A slice ends at any instruction,
+  and the next slice's interpreter heated every PC it met: a block's
+  start each. A slice now resumes the block it ended in (the exit's
+  pending flags' registers kept, checked against the flags in memory),
+  and only code reached by a jump heats. Leading Lap's stretch 8994 → 74
+  translations, 4 → 0 flushes, its working set 62 KB; on the Tab5 its
+  slowest window 96.8% → 99.5%, core 1's median 87% → 79%; the pass's
+  translations 150600 → 17900 (13.9 s → 1.9 s translating).
 
 - Writes beside code (2026-11-28, `jit.c`, `docs/jit-design-2026-11-27.md`,
   "Writes beside code"): each page has a mask of the words its blocks
